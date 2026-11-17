@@ -18,6 +18,7 @@ const statusFor: Partial<Record<ErrorCode, number>> = {
   COUNTERSIGN_REQUIRED: 403,
   ESIGN_FAILED: 403,
   NOT_FOUND: 404,
+  ALREADY_EXISTS: 409,
   INVALID_TRANSITION: 409,
   DUPLICATE_REQUEST: 409,
 };
@@ -46,6 +47,12 @@ const knownCodes = new Set<string>(ErrorCodes);
 export function fromDbError(err: unknown): AppError | undefined {
   if (!(err instanceof Error)) return undefined;
   const pgCode = (err as Error & { code?: unknown }).code;
+  if (pgCode === '23505') {
+    // unique_violation: a code, username or similar already exists.
+    return new AppError('ALREADY_EXISTS', 'A record with the same unique value already exists', {
+      constraint: (err as Error & { constraint?: unknown }).constraint,
+    });
+  }
   if (pgCode !== 'P0001') return undefined;
   const match = /^([A-Z_]+): (.*)$/s.exec(err.message);
   if (!match?.[1]) return undefined;

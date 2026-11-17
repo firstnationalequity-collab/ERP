@@ -7,6 +7,8 @@ import { env } from './config/env';
 import { logger } from './core/logger';
 import { errorHandler, notFound } from './core/errors';
 import { authRouter } from './core/auth/auth.routes';
+import { authenticate, requireCurrentPassword } from './core/auth/middleware';
+import { accessRouter } from './core/access/access.routes';
 
 export function createApp(): express.Express {
   const app = express();
@@ -24,8 +26,8 @@ export function createApp(): express.Express {
 
   // Public auth endpoints (login/refresh/logout) and the password-change path.
   api.use('/core/auth', authRouter);
-  // Every other module router is mounted behind authenticate + requireCurrentPassword, e.g.:
-  // api.use('/core', authenticate, requireCurrentPassword, coreRouter);
+  // Every other router is mounted behind authenticate + requireCurrentPassword; each route checks its permission.
+  api.use('/core', authenticate, requireCurrentPassword, accessRouter);
 
   app.use('/api/v1', api);
   app.use(notFound);
