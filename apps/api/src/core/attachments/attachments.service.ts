@@ -32,6 +32,23 @@ export function registerAttachmentTarget(recordTable: string, target: Attachment
   targets.set(recordTable, target);
 }
 
+/** The permission key a record type needs for reading or writing attachments (for the route check). */
+export function attachmentPermission(recordTable: string, mode: 'read' | 'write'): PermissionKey {
+  const target = targets.get(recordTable);
+  if (!target) throw new AppError('NOT_FOUND', `Records of ${recordTable} do not take attachments`);
+  return mode === 'read' ? target.readPermission : target.writePermission;
+}
+
+/** Record type of a stored attachment (for the route check on downloads). */
+export async function attachmentRecordTable(auth: AuthContext, id: string): Promise<string> {
+  const [row] = await db
+    .select({ recordTable: attachments.recordTable })
+    .from(attachments)
+    .where(and(eq(attachments.companyId, auth.companyId), eq(attachments.id, id)));
+  if (!row) throw new AppError('NOT_FOUND', 'Attachment not found');
+  return row.recordTable;
+}
+
 async function checkAccess(auth: AuthContext, recordTable: string, recordId: string, mode: 'read' | 'write'): Promise<void> {
   const target = targets.get(recordTable);
   if (!target) throw new AppError('NOT_FOUND', `Records of ${recordTable} do not take attachments`);

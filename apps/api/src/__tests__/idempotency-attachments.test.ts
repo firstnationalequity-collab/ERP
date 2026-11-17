@@ -299,3 +299,19 @@ describe('attachments', () => {
     expect(rows[0].n).toBeGreaterThan(0);
   });
 });
+
+describe('attachment permission at the route (rules review C)', () => {
+  // (With a 21 MB body the server answers 403 and closes the socket before reading it; supertest then sees ECONNRESET.)
+  it('refuses a read-only user at the route, naming the write key of the record type', async () => {
+    const res = await upload('qcm', '/attachments/test.records/1', PDF, 'application/pdf', 'a.pdf');
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatchObject({ code: 'FORBIDDEN', details: { permission: 'qc.result.enter' } });
+  });
+
+  it('refuses a download by a user without the read key of the record type', async () => {
+    const up = await upload('a', '/attachments/test.records/1', PDF, 'application/pdf', 'route-check.pdf');
+    const res = await request(app).get(`/api/v1/core/attachment-files/${up.body.id}`).set('Authorization', `Bearer ${tokens.planner}`);
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatchObject({ code: 'FORBIDDEN', details: { permission: 'qc.view' } });
+  });
+});
