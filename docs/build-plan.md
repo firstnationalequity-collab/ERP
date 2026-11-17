@@ -24,7 +24,7 @@ Tasks:
 - [x] `core/idempotency` (24 h keys, `DUPLICATE_REQUEST` on a different request) and attachments (storage interface, local-disk driver).
 - [x] Fiscal periods: create, close and reopen (endpoints and service).
 - [x] CI: GitHub Actions — install, typecheck, test with a Postgres 16 service container.
-- [ ] Web: login page, change password, 30-min idle logout, app layout with permission-driven sidebar, users (incl. unlock) and roles admin, approval rules, number series, fiscal periods, audit trail viewer, my approvals inbox, e-signature dialog.
+- [x] Web: login page, change password, 30-min idle logout, app layout with permission-driven sidebar, users (incl. unlock) and roles admin, approval rules, number series, fiscal periods, audit trail viewer, my approvals inbox, e-signature dialog.
 
 Done when: login works; any change writes an `audit_log` row; `audit_log` never contains a password hash; a user without permission gets 403; e-signature with a wrong password is refused; `pnpm test` green locally and in CI.
 
