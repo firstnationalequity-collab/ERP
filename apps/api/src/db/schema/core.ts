@@ -265,6 +265,16 @@ export const attachments = core.table('attachments', {
   ...auditColumns(),
 });
 
+// ---- 0006_settings_audit_indexes.sql
+
+export const settings = core.table('settings', {
+  id: identityId(),
+  companyId: companyId(),
+  key: text('key').notNull(),
+  value: jsonb('value').notNull(),
+  ...auditColumns(),
+});
+
 export const auditLog = core.table('audit_log', {
   id: identityId(),
   tableName: text('table_name').notNull(),

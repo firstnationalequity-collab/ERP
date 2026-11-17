@@ -14,7 +14,7 @@ How to run a milestone with the agent (VS Code):
 Tasks:
 - [x] Docker Compose Postgres up; migrations run with `pnpm db:migrate`; seed with `pnpm db:seed`. Node 26 pinned (`.nvmrc`, `engines`).
 - [x] Apply `0000_foundation.sql` (schemas, audit trigger, immutability trigger) — already in the starter.
-- [ ] `core` tables: companies, users, user_credentials (no audit trigger), sessions, auth_events (insert-only), roles, permissions, role_permissions, user_roles, approval_rules, approvals, e_signatures, status_history (insert-only), idempotency_keys, audit_log, number_series, fiscal_periods, attachments, settings.
+- [x] `core` tables: companies, users, user_credentials (no audit trigger), sessions, auth_events (insert-only), roles, permissions, role_permissions, user_roles, approval_rules, approvals, e_signatures, status_history (insert-only), idempotency_keys, audit_log, number_series, fiscal_periods, attachments, settings.
 - [x] Auth: login by username, refresh (httpOnly cookie, 12 h, rotate on use, reuse revokes session), logout, change password; argon2; complexity + last-5 reuse block; lockout after 5 failures until admin unlock; 90-day expiry and forced first-login change; auth_events for every event.
 - [x] RBAC middleware `requirePermission(key)`; permission keys classed admin/view/action; seed roles from `docs/roles.md` (after review) plus the SYSTEM user and the first admin (`INITIAL_ADMIN_PASSWORD`).
 - [x] Role administration guards: no self role changes; admin roles hold no action keys; qc.* / qa.* role changes need a QA Manager e-signature.

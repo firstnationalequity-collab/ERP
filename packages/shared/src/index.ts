@@ -9,3 +9,4 @@ export * from './schemas/core/access';
 export * from './schemas/core/settings';
 export * from './schemas/core/approvals';
 export * from './schemas/core/attachments';
+export * from './schemas/core/audit';
