@@ -4,7 +4,7 @@ Current milestone: **M1 — Foundation**
 
 | Milestone | Status | Started | Finished | Notes |
 | --- | --- | --- | --- | --- |
-| M1 Foundation | In progress | 17-11-2026 | | Plan approved; tasks 0–9 of 12 done |
+| M1 Foundation | In progress | 17-11-2026 | | Plan approved; tasks 0–10 of 12 done |
 | M2 Masters & engines | Not started | | | |
 | M3 Procurement | Not started | | | |
 | M4 QC | Not started | | | |
@@ -27,3 +27,4 @@ Current milestone: **M1 — Foundation**
 - 17-11-2026 · M1 · Task 7 done: `0004_approvals.sql` (approval_rules, approvals, approval_steps; requester-cannot-approve and one-step-per-person in the DB; status via core/transition); approval engine (`startApproval`, `cancelApproval`, approve/reject as e-signatures, "then"/"and", routing to roles, module handlers), inbox + count, approval-rules admin; §3 matrix seeded as placeholders. 29 tests incl. every PO band boundary, USD conversion with exact decimals, FM+QA parallel, one person cannot fill both steps, rollback when the module fails; mutation-checked. Fixed 3 ordering bugs found by the DB guards; local dev DB rebuilt. 190/190 green. · Next: task 8 (idempotency + attachments).
 - 17-11-2026 · M1 · Task 8 done: `0005_idempotency_attachments.sql`; `idempotent()` middleware (claim, replay, 409 on different request or in progress, 5xx releases, per user, 24 h expiry, passwords never hashed or stored), optional on approve/reject; storage interface + local-disk driver (random write-once keys, no path escape); attachments upload/list/download with allow-list, 20 MB limit, SHA-256 re-checked on download, insert-only + audited, per-module targets. 19 tests incl. double-click race and tampered file; mutation-checked. 209/209 green. · Next: task 9 (audit trail and settings read APIs).
 - 17-11-2026 · M1 · Task 9 done: `0006_settings_audit_indexes.sql` (core.settings + audit indexes) — all 19 M1 core tables now exist (build-plan item ticked). Audit viewer API (audit log with field-level changes, tables, status history, e-signatures, auth events; Karachi-day date filters) behind core.audit.view; settings registry + list/update with reason. 13 tests incl. the Done-when "any change writes an audit_log row" through the API; mutation-checked. 222/222 green. · Next: task 10 (CI), then task 11 (web), task 12 (Done-when checks).
+- 17-11-2026 · M1 · Task 10 done: GitHub Actions CI (Node from .nvmrc, frozen lockfile, typecheck, tests on postgres:16). Simulating CI on a fresh clone + empty database found that `.gitignore` (`storage/`) had hidden `core/storage/storage.ts` since task 8 — fixed and committed; clean clone then passed 222/222. Repo is private, so the first Actions run must be checked by the owner. · Next: task 11 (web screens).
