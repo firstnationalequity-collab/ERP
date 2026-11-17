@@ -47,6 +47,12 @@ const knownCodes = new Set<string>(ErrorCodes);
 export function fromDbError(err: unknown): AppError | undefined {
   if (!(err instanceof Error)) return undefined;
   const pgCode = (err as Error & { code?: unknown }).code;
+  if (pgCode === '23P01') {
+    // exclusion_violation: e.g. a fiscal period overlapping an existing one.
+    return new AppError('ALREADY_EXISTS', 'This overlaps an existing record', {
+      constraint: (err as Error & { constraint?: unknown }).constraint,
+    });
+  }
   if (pgCode === '23505') {
     // unique_violation: a code, username or similar already exists.
     return new AppError('ALREADY_EXISTS', 'A record with the same unique value already exists', {

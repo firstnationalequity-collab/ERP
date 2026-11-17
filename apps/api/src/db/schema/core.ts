@@ -1,7 +1,14 @@
 // Drizzle description of the `core` schema. Source of truth: src/db/migrations/0001_core_identity.sql.
 import { sql } from 'drizzle-orm';
-import { boolean, integer, jsonb, pgSchema, text } from 'drizzle-orm/pg-core';
-import type { AuthEventType, PermissionClass, SessionRevokeReason, SignatureMeaning } from '@albert/shared';
+import { boolean, date, integer, jsonb, pgSchema, text } from 'drizzle-orm/pg-core';
+import type {
+  AuthEventType,
+  FiscalPeriodStatus,
+  NumberSeriesReset,
+  PermissionClass,
+  SessionRevokeReason,
+  SignatureMeaning,
+} from '@albert/shared';
 import { auditColumns, bigintString, companyId, identityId, tstz } from './columns';
 
 export const core = pgSchema('core');
@@ -139,6 +146,41 @@ export const statusHistory = core.table('status_history', {
   reason: text('reason'),
   at: tstz('at').notNull().defaultNow(),
   txId: bigintString('tx_id').notNull().default(sql`txid_current()`),
+});
+
+// ---- 0003_numbering_periods.sql
+
+export const numberSeries = core.table('number_series', {
+  id: identityId(),
+  companyId: companyId(),
+  docType: text('doc_type').notNull(),
+  name: text('name').notNull(),
+  prefix: text('prefix').notNull(),
+  pattern: text('pattern').notNull(),
+  reset: text('reset').$type<NumberSeriesReset>().notNull(),
+  isActive: boolean('is_active').notNull().default(true),
+  ...auditColumns(),
+});
+
+export const numberSeriesCounters = core.table('number_series_counters', {
+  id: identityId(),
+  companyId: companyId(),
+  seriesId: bigintString('series_id').notNull(),
+  periodKey: text('period_key').notNull(),
+  nextValue: bigintString('next_value').notNull(),
+  ...auditColumns(),
+});
+
+export const fiscalPeriods = core.table('fiscal_periods', {
+  id: identityId(),
+  companyId: companyId(),
+  fiscalYear: text('fiscal_year').notNull(),
+  periodNo: integer('period_no').notNull(),
+  name: text('name').notNull(),
+  startDate: date('start_date', { mode: 'string' }).notNull(),
+  endDate: date('end_date', { mode: 'string' }).notNull(),
+  status: text('status').$type<FiscalPeriodStatus>().notNull(),
+  ...auditColumns(),
 });
 
 export const auditLog = core.table('audit_log', {

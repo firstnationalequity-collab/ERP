@@ -6,9 +6,15 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { Permissions, PermissionKeys } from '@albert/shared';
 import { systemContext, withTransaction, type Tx } from '../client';
-import { permissions, rolePermissions, roles, userCredentials, userRoles, users } from '../schema/core';
+import { numberSeries, permissions, rolePermissions, roles, userCredentials, userRoles, users } from '../schema/core';
 import { assertPasswordPolicy, hashPassword } from '../../core/auth/password';
 import { FIRST_ADMIN_USERNAME, ROLE_SEEDS } from './roles';
+
+/** Decision Q16 defaults: PO-2627-00042 (resets each fiscal year), AP26-0001 (resets each calendar year). */
+export const DEFAULT_SERIES = [
+  { docType: 'PO', name: 'Purchase order', prefix: 'PO', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
+  { docType: 'BATCH', name: 'Batch number', prefix: 'AP', pattern: '{PREFIX}{YY}-{SEQ:4}', reset: 'CALENDAR_YEAR' },
+] as const;
 
 export interface SeedOptions {
   nodeEnv: 'development' | 'test' | 'production';
@@ -20,6 +26,7 @@ export interface SeedReport {
   permissionsUpdated: number;
   permissionsDeactivated: number;
   rolesCreated: string[];
+  seriesCreated: string[];
   adminCreated: boolean;
   /** Why the admin was not created, when it was not. */
   adminSkipped?: string;
@@ -38,10 +45,12 @@ export async function runSeed(opts: SeedOptions): Promise<SeedReport> {
       permissionsUpdated: 0,
       permissionsDeactivated: 0,
       rolesCreated: [],
+      seriesCreated: [],
       adminCreated: false,
     };
     await syncPermissions(tx, report);
     await createMissingRoles(tx, report);
+    await createMissingSeries(tx, report);
     await createFirstAdmin(tx, opts.initialAdminPassword, report);
     return report;
   });
@@ -90,6 +99,19 @@ async function createMissingRoles(tx: Tx, report: SeedReport): Promise<void> {
     });
     await tx.insert(rolePermissions).values(rows);
     report.rolesCreated.push(seed.code);
+  }
+}
+
+/**
+ * The two default series named in decision Q16. Other document types add their series in their own
+ * milestone. Existing series are never changed (the admin may have edited them).
+ */
+async function createMissingSeries(tx: Tx, report: SeedReport): Promise<void> {
+  const existing = new Set((await tx.select({ docType: numberSeries.docType }).from(numberSeries)).map((s) => s.docType));
+  for (const s of DEFAULT_SERIES) {
+    if (existing.has(s.docType)) continue;
+    await tx.insert(numberSeries).values(s);
+    report.seriesCreated.push(s.docType);
   }
 }
 

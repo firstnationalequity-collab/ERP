@@ -70,6 +70,7 @@ export type DeviationClass = (typeof DeviationClass)[number];
 export const SignatureMeaning = ['REVIEWED', 'APPROVED', 'RELEASED', 'REJECTED', 'WITNESSED', 'PERFORMED'] as const;
 export type SignatureMeaning = (typeof SignatureMeaning)[number];
 
+/** Changed only through core/transition (OPEN → CLOSED → OPEN, core.period.close). */
 export const FiscalPeriodStatus = ['OPEN', 'CLOSED'] as const;
 export type FiscalPeriodStatus = (typeof FiscalPeriodStatus)[number];
 

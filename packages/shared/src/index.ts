@@ -2,6 +2,8 @@ export * from './enums';
 export * from './permissions';
 export * from './errors';
 export * from './password';
+export * from './fiscal';
 export * from './schemas/core/auth';
 export * from './schemas/core/esign';
 export * from './schemas/core/access';
+export * from './schemas/core/settings';
