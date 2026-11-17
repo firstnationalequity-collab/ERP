@@ -1,0 +1,134 @@
+// Idempotent seed: running it twice changes nothing.
+// 1. Sync core.permissions with packages/shared/src/permissions.ts (insert new, update text, deactivate removed).
+// 2. Create missing roles with their bundles from seed/roles.ts (existing roles are never touched).
+// 3. Create the first admin from INITIAL_ADMIN_PASSWORD (forced change at first login).
+// Acts as the SYSTEM user. Refuses to run in production without INITIAL_ADMIN_PASSWORD (decision Q7).
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import { Permissions, PermissionKeys } from '@albert/shared';
+import { systemContext, withTransaction, type Tx } from '../client';
+import { permissions, rolePermissions, roles, userCredentials, userRoles, users } from '../schema/core';
+import { assertPasswordPolicy, hashPassword } from '../../core/auth/password';
+import { FIRST_ADMIN_USERNAME, ROLE_SEEDS } from './roles';
+
+export interface SeedOptions {
+  nodeEnv: 'development' | 'test' | 'production';
+  initialAdminPassword?: string;
+}
+
+export interface SeedReport {
+  permissionsCreated: number;
+  permissionsUpdated: number;
+  permissionsDeactivated: number;
+  rolesCreated: string[];
+  adminCreated: boolean;
+  /** Why the admin was not created, when it was not. */
+  adminSkipped?: string;
+}
+
+export async function runSeed(opts: SeedOptions): Promise<SeedReport> {
+  if (opts.nodeEnv === 'production' && !opts.initialAdminPassword) {
+    throw new Error('Seed refused: INITIAL_ADMIN_PASSWORD must be set in production');
+  }
+  // Check the policy before touching the database, so a bad password fails fast.
+  if (opts.initialAdminPassword) assertPasswordPolicy(opts.initialAdminPassword, FIRST_ADMIN_USERNAME);
+
+  return withTransaction(systemContext('seed'), async (tx) => {
+    const report: SeedReport = {
+      permissionsCreated: 0,
+      permissionsUpdated: 0,
+      permissionsDeactivated: 0,
+      rolesCreated: [],
+      adminCreated: false,
+    };
+    await syncPermissions(tx, report);
+    await createMissingRoles(tx, report);
+    await createFirstAdmin(tx, opts.initialAdminPassword, report);
+    return report;
+  });
+}
+
+async function syncPermissions(tx: Tx, report: SeedReport): Promise<void> {
+  const existing = await tx.select().from(permissions);
+  const byKey = new Map(existing.map((p) => [p.key, p]));
+
+  for (const key of PermissionKeys) {
+    const def = Permissions[key];
+    const row = byKey.get(key);
+    if (!row) {
+      await tx.insert(permissions).values({ key, class: def.class, description: def.description });
+      report.permissionsCreated += 1;
+    } else if (row.class !== def.class || row.description !== def.description || !row.isActive) {
+      // A class change on a key that roles already use is refused by the database (ROLE_ADMIN_CONFLICT).
+      await tx
+        .update(permissions)
+        .set({ class: def.class, description: def.description, isActive: true })
+        .where(eq(permissions.id, row.id));
+      report.permissionsUpdated += 1;
+    }
+  }
+
+  const codeKeys = new Set<string>(PermissionKeys);
+  const removed = existing.filter((p) => p.isActive && !codeKeys.has(p.key)).map((p) => p.id);
+  if (removed.length > 0) {
+    await tx.update(permissions).set({ isActive: false }).where(inArray(permissions.id, removed));
+    report.permissionsDeactivated = removed.length;
+  }
+}
+
+async function createMissingRoles(tx: Tx, report: SeedReport): Promise<void> {
+  const keyToId = new Map((await tx.select({ id: permissions.id, key: permissions.key }).from(permissions)).map((p) => [p.key, p.id]));
+  const existingCodes = new Set((await tx.select({ code: roles.code }).from(roles)).map((r) => r.code));
+
+  for (const seed of ROLE_SEEDS) {
+    if (existingCodes.has(seed.code)) continue;
+    const [role] = await tx.insert(roles).values({ code: seed.code, name: seed.name }).returning({ id: roles.id });
+    if (!role) throw new Error(`Seed: role ${seed.code} was not created`);
+    const rows = seed.keys.map((key) => {
+      const permissionId = keyToId.get(key);
+      if (!permissionId) throw new Error(`Seed: permission ${key} missing for role ${seed.code}`);
+      return { roleId: role.id, permissionId };
+    });
+    await tx.insert(rolePermissions).values(rows);
+    report.rolesCreated.push(seed.code);
+  }
+}
+
+async function createFirstAdmin(tx: Tx, password: string | undefined, report: SeedReport): Promise<void> {
+  const [existing] = await tx
+    .select({ id: users.id })
+    .from(users)
+    .where(sql`lower(${users.username}) = ${FIRST_ADMIN_USERNAME}`);
+  if (existing) {
+    report.adminSkipped = 'already exists';
+    return;
+  }
+  if (!password) {
+    report.adminSkipped = 'INITIAL_ADMIN_PASSWORD not set';
+    return;
+  }
+
+  const [adminRole] = await tx.select({ id: roles.id }).from(roles).where(eq(roles.code, 'SYSTEM_ADMIN'));
+  if (!adminRole) throw new Error('Seed: SYSTEM_ADMIN role missing');
+
+  const [admin] = await tx
+    .insert(users)
+    .values({ username: FIRST_ADMIN_USERNAME, fullName: 'System Administrator', mustChangePassword: true })
+    .returning({ id: users.id });
+  if (!admin) throw new Error('Seed: admin user was not created');
+
+  await tx.insert(userCredentials).values({ userId: admin.id, passwordHash: await hashPassword(password) });
+  await tx.update(users).set({ passwordChangedAt: new Date() }).where(eq(users.id, admin.id));
+  await tx.insert(userRoles).values({ userId: admin.id, roleId: adminRole.id });
+  report.adminCreated = true;
+}
+
+/** For tests and reports: the permission keys a role currently holds. */
+export async function roleKeys(tx: Tx, roleCode: string): Promise<string[]> {
+  const rows = await tx
+    .select({ key: permissions.key })
+    .from(rolePermissions)
+    .innerJoin(roles, eq(roles.id, rolePermissions.roleId))
+    .innerJoin(permissions, eq(permissions.id, rolePermissions.permissionId))
+    .where(and(eq(roles.code, roleCode), eq(permissions.isActive, true)));
+  return rows.map((r) => r.key).sort();
+}

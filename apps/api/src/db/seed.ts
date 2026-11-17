@@ -1,14 +1,22 @@
-// Seed data: permissions, roles with their permission bundles, first admin user,
-// chart of accounts, number series, fiscal periods. Built out in M1 and M2 (docs/build-plan.md).
-// Must be idempotent: running it twice changes nothing.
+// Entry point for `pnpm db:seed`. The seed itself lives in seed/run.ts (idempotent; acts as SYSTEM).
+import { env } from '../config/env';
 import { pool } from './client';
+import { runSeed } from './seed/run';
 
 async function main(): Promise<void> {
-  console.log('Seed: nothing to seed yet — implemented in milestone M1.');
+  const report = await runSeed({ nodeEnv: env.NODE_ENV, initialAdminPassword: env.INITIAL_ADMIN_PASSWORD });
+  console.log(
+    [
+      `Permissions: ${report.permissionsCreated} created, ${report.permissionsUpdated} updated, ${report.permissionsDeactivated} deactivated`,
+      `Roles created: ${report.rolesCreated.length ? report.rolesCreated.join(', ') : 'none'}`,
+      `First admin: ${report.adminCreated ? 'created (username "admin", must change password at first login)' : `not created (${report.adminSkipped ?? ''})`}`,
+    ].join('\n'),
+  );
   await pool.end();
 }
 
-main().catch((err: unknown) => {
-  console.error(err);
+main().catch(async (err: unknown) => {
+  console.error(err instanceof Error ? err.message : err);
+  await pool.end();
   process.exit(1);
 });

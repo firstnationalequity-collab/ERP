@@ -72,3 +72,24 @@ export type SignatureMeaning = (typeof SignatureMeaning)[number];
 
 export const FiscalPeriodStatus = ['OPEN', 'CLOSED'] as const;
 export type FiscalPeriodStatus = (typeof FiscalPeriodStatus)[number];
+
+/** Permission key classes (docs/roles.md). A role holding an ADMIN key may never hold an ACTION key. */
+export const PermissionClass = ['ADMIN', 'VIEW', 'ACTION'] as const;
+export type PermissionClass = (typeof PermissionClass)[number];
+
+/** Rows of the insert-only core.auth_events log. */
+export const AuthEventType = [
+  'LOGIN_OK',
+  'LOGIN_FAIL',
+  'LOGOUT',
+  'LOCKOUT',
+  'UNLOCK',
+  'PASSWORD_CHANGE',
+  'ESIGN_FAIL',
+  'TOKEN_REUSE',
+] as const;
+export type AuthEventType = (typeof AuthEventType)[number];
+
+/** Why a core.sessions row was revoked. */
+export const SessionRevokeReason = ['LOGOUT', 'TOKEN_REUSE', 'PASSWORD_CHANGE', 'LOCKOUT', 'ADMIN'] as const;
+export type SessionRevokeReason = (typeof SessionRevokeReason)[number];

@@ -9,6 +9,10 @@ const EnvSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(32).default('dev-only-refresh-secret-change-me-000000'),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
   COMPANY_TIMEZONE: z.string().default('Asia/Karachi'),
+  /** Password for the first admin created by the seed. Required in production (seed refuses without it). */
+  INITIAL_ADMIN_PASSWORD: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(10).optional()),
+  /** Root folder for the local-disk attachment storage driver. */
+  STORAGE_DIR: z.string().min(1).default('./storage'),
   FBR_MODE: z.enum(['sandbox', 'production']).default('sandbox'),
   FBR_API_URL: z.string().optional(),
   FBR_API_TOKEN: z.string().optional(),

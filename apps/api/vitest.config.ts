@@ -6,6 +6,8 @@ export default defineConfig({
     include: ['src/**/__tests__/**/*.test.ts'],
     // DB tests share one test database; run files one at a time.
     fileParallelism: false,
+    // Each test file starts from a freshly migrated albert_erp_test (guarded: *_test only).
+    setupFiles: ['src/test/setup.ts'],
     env: {
       NODE_ENV: 'test',
     },

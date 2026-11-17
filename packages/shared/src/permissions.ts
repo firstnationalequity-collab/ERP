@@ -1,80 +1,119 @@
 // Every permission key in the system. Format: <module>.<resource>.<action>.
-// Add keys here first; seed them into core.permissions; bundle them into roles (docs/architecture.md §3).
+// Add keys here first; the seed syncs them into core.permissions; roles bundle them (docs/roles.md).
+// Class (docs/roles.md): ADMIN = manage users/roles/settings; VIEW = read-only; ACTION = changes business data.
+// A role holding an ADMIN key never holds an ACTION key (enforced in the service and in the database).
+import type { PermissionClass } from './enums';
+
+interface PermissionDef {
+  readonly class: PermissionClass;
+  readonly description: string;
+}
+
+const admin = (description: string): PermissionDef => ({ class: 'ADMIN', description });
+const view = (description: string): PermissionDef => ({ class: 'VIEW', description });
+const action = (description: string): PermissionDef => ({ class: 'ACTION', description });
 
 export const Permissions = {
   // core
-  'core.user.manage': 'Create, change, deactivate users and assign roles',
-  'core.role.manage': 'Manage roles and permission bundles',
-  'core.settings.manage': 'Number series, approval rules, settings',
-  'core.audit.view': 'View audit trail',
-  'core.period.close': 'Close and reopen fiscal periods',
+  'core.user.manage': admin('Create, change, deactivate, unlock users; assign roles'),
+  'core.role.manage': admin('Manage roles and permission bundles'),
+  'core.settings.manage': admin('Number series, approval rules, settings'),
+  'core.audit.view': view('View audit trail'),
+  'core.approval.inbox': view('See "my approvals" inbox (acting still needs the document\'s approve key)'),
+  'core.period.manage': action('Create fiscal years and periods'),
+  'core.period.close': action('Close and reopen fiscal periods'),
 
   // masters
-  'master.item.manage': 'Items, categories, UoM',
-  'master.customer.manage': 'Create/edit customers (draft)',
-  'master.customer.approve': 'Activate customers',
-  'master.vendor.manage': 'Create/edit vendors (draft)',
-  'master.vendor.approve': 'Activate vendors',
-  'master.avl.approve': 'Add/block approved sources (QA)',
-  'master.formula.manage': 'Draft master formulas',
-  'master.formula.approve': 'Approve master formula versions (QA)',
-  'master.location.manage': 'Warehouses and locations',
+  'master.view': view('View all masters'),
+  'master.item.manage': action('Items, categories, UoM'),
+  'master.customer.manage': action('Create/edit customers (draft)'),
+  'master.customer.approve': action('Activate customers'),
+  'master.vendor.manage': action('Create/edit vendors (draft)'),
+  'master.vendor.approve': action('Activate vendors'),
+  'master.avl.approve': action('Add/block approved sources (QA)'),
+  'master.formula.manage': action('Draft master formulas'),
+  'master.formula.approve': action('Approve master formula versions (QA)'),
+  'master.location.manage': action('Warehouses and locations'),
 
   // inventory
-  'inv.stock.view': 'View stock, lots, movements',
-  'inv.movement.post': 'Put-away, transfers, issues',
-  'inv.adjustment.request': 'Request stock adjustments',
-  'inv.adjustment.approve': 'Approve stock adjustments',
-  'inv.label.print': 'Print labels',
+  'inv.stock.view': view('View stock, lots, movements'),
+  'inv.movement.post': action('Put-away, transfers, issues'),
+  'inv.adjustment.request': action('Request stock adjustments'),
+  'inv.adjustment.approve': action('Approve stock adjustments'),
+  'inv.label.print': action('Print labels'),
+  'inv.lot.dispose': action('Move a REJECTED lot to DESTROYED / RETURNED (needs QA witness)'),
 
   // sales
-  'sales.quotation.manage': 'Create/edit quotations',
-  'sales.quotation.approve': 'Approve quotations and discounts',
-  'sales.order.manage': 'Create/confirm sales orders',
-  'sales.order.credit_override': 'Release orders on credit hold',
+  'sales.view': view('View quotations, orders, customer ledger'),
+  'sales.quotation.manage': action('Create/edit quotations'),
+  'sales.quotation.approve': action('Approve quotations and discounts'),
+  'sales.order.manage': action('Create/confirm sales orders, delivery requests'),
+  'sales.order.credit_override': action('Release orders on credit hold'),
 
   // procurement
-  'purch.pr.manage': 'Create purchase requisitions',
-  'purch.po.manage': 'Create/edit purchase orders',
-  'purch.po.approve': 'Approve purchase orders',
-  'purch.grn.post': 'Post goods receipts',
-  'purch.landed_cost.manage': 'Enter landed costs',
+  'purch.view': view('View PRs, POs, GRNs, vendor ledger'),
+  'purch.pr.manage': action('Create purchase requisitions'),
+  'purch.po.manage': action('Create/edit purchase orders'),
+  'purch.po.approve': action('Approve purchase orders'),
+  'purch.grn.post': action('Post goods receipts'),
+  'purch.landed_cost.manage': action('Enter landed costs'),
 
   // qc
-  'qc.spec.manage': 'Draft specifications',
-  'qc.spec.approve': 'Approve specifications',
-  'qc.result.enter': 'Take samples, enter results',
-  'qc.result.review': 'Review results',
-  'qc.lot.change_status': 'Approve / reject / hold lots',
-  'qc.coa.issue': 'Issue certificates of analysis',
+  'qc.view': view('View specs, samples, results, CoAs'),
+  'qc.spec.manage': action('Draft specifications'),
+  'qc.spec.approve': action('Approve specifications'),
+  'qc.result.enter': action('Take samples, enter results'),
+  'qc.result.review': action('Review results'),
+  'qc.lot.change_status': action('Approve / reject lots'),
+  'qc.coa.issue': action('Issue certificates of analysis'),
 
   // production
-  'prod.order.manage': 'Create and release production orders',
-  'prod.stage.sign': 'Execute and sign batch stages',
-  'prod.batch.close': 'Close batch (send to QA)',
+  'prod.view': view('View production orders, stages, outputs'),
+  'prod.order.manage': action('Create, release, cancel production orders'),
+  'prod.stage.sign': action('Execute and sign batch stages, record yield and resource hours'),
+  'prod.batch.close': action('Submit batch close (Supervisor)'),
+  'prod.batch.approve_close': action('Approve batch close with e-signature (Production Manager)'),
 
   // qa
-  'qa.deviation.manage': 'Raise and investigate deviations',
-  'qa.deviation.close': 'Close deviations',
-  'qa.batch.release': 'Release or reject batches',
+  'qa.view': view('View deviations and batch releases'),
+  'qa.deviation.manage': action('Raise and investigate deviations'),
+  'qa.deviation.close': action('Close deviations'),
+  'qa.batch.release': action('Release or reject batches (and their FG lots)'),
+  'qa.lot.hold': action('Place or lift HOLD on a lot'),
+  'qa.lot.witness': action('Witness e-signature for lot destruction / return'),
+  'qa.access.countersign': action('Countersign role changes touching qc.* / qa.* action keys'),
 
-  // dispatch
-  'fg.delivery.manage': 'Delivery orders, picking',
-  'fg.dispatch.post': 'Post dispatch, gate pass',
+  // finished goods and dispatch
+  'fg.view': view('View delivery orders, gate passes, returns'),
+  'fg.delivery.manage': action('Delivery orders, picking, returns receipt'),
+  'fg.dispatch.post': action('Post dispatch, gate pass'),
+  'fg.gatepass.approve': action('Approve gate passes'),
 
   // finance
-  'fin.journal.manage': 'Journal vouchers',
-  'fin.invoice.manage': 'Sales and vendor invoices',
-  'fin.receipt.manage': 'Customer receipts',
-  'fin.payment.manage': 'Create payments',
-  'fin.payment.approve': 'Approve payments',
-  'fin.bank.reconcile': 'Bank reconciliation',
-  'fin.costing.view': 'Batch cost and margin',
-  'fin.report.view': 'Financial statements and ledgers',
+  'fin.view': view('View journals, invoices, receipts, payments, ledgers'),
+  'fin.journal.manage': action('Journal vouchers'),
+  'fin.invoice.manage': action('Sales and vendor invoices'),
+  'fin.receipt.manage': action('Customer receipts'),
+  'fin.payment.manage': action('Create payments'),
+  'fin.payment.approve': action('Approve payments'),
+  'fin.bank.reconcile': action('Bank reconciliation'),
+  'fin.costing.view': view('Batch cost and margin'),
+  'fin.report.view': view('Financial statements and ledgers'),
 
   // dashboard
-  'dash.ceo.view': 'Executive dashboard (view only)',
-} as const;
+  'dash.ceo.view': view('Executive dashboard (view only)'),
+} as const satisfies Record<string, PermissionDef>;
 
 export type PermissionKey = keyof typeof Permissions;
 export const PermissionKeys = Object.keys(Permissions) as PermissionKey[];
+
+export function permissionClass(key: PermissionKey): PermissionClass {
+  return Permissions[key].class;
+}
+
+export const ViewPermissionKeys = PermissionKeys.filter((k) => Permissions[k].class === 'VIEW');
+
+/** Keys whose role changes need a QA Manager countersign (Q1): qc.* / qa.* ACTION keys. */
+export function isQualityActionKey(key: PermissionKey): boolean {
+  return Permissions[key].class === 'ACTION' && (key.startsWith('qc.') || key.startsWith('qa.'));
+}

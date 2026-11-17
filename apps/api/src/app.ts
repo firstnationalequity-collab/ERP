@@ -6,6 +6,7 @@ import { pinoHttp } from 'pino-http';
 import { env } from './config/env';
 import { logger } from './core/logger';
 import { errorHandler, notFound } from './core/errors';
+import { authRouter } from './core/auth/auth.routes';
 
 export function createApp(): express.Express {
   const app = express();
@@ -21,9 +22,10 @@ export function createApp(): express.Express {
     res.json({ status: 'ok', time: new Date().toISOString() });
   });
 
-  // Module routers are mounted here as milestones are built, e.g.:
-  // api.use('/core', coreRouter);
-  // api.use('/inv', inventoryRouter);
+  // Public auth endpoints (login/refresh/logout) and the password-change path.
+  api.use('/core/auth', authRouter);
+  // Every other module router is mounted behind authenticate + requireCurrentPassword, e.g.:
+  // api.use('/core', authenticate, requireCurrentPassword, coreRouter);
 
   app.use('/api/v1', api);
   app.use(notFound);
