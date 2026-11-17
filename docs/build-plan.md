@@ -21,7 +21,7 @@ Tasks:
 - [x] `core/esign` (verify password, store meaning + reason; wrong password counts toward lockout) and `core/transition` (allowed-moves map with a permission key per move + `core.status_history`).
 - [x] `core/numbering` (`nextDocNo(docType)` with row lock; pattern tokens and FISCAL_YEAR / CALENDAR_YEAR / NEVER reset).
 - [x] Approvals: rule lookup by doc type + measure (AMOUNT_PKR / PERCENT), sequential and parallel steps routed to roles (creator excluded), "my approvals" inbox endpoint.
-- [ ] `core/idempotency` (24 h keys, `DUPLICATE_REQUEST` on a different request) and attachments (storage interface, local-disk driver).
+- [x] `core/idempotency` (24 h keys, `DUPLICATE_REQUEST` on a different request) and attachments (storage interface, local-disk driver).
 - [x] Fiscal periods: create, close and reopen (endpoints and service).
 - [ ] CI: GitHub Actions — install, typecheck, test with a Postgres 16 service container.
 - [ ] Web: login page, change password, 30-min idle logout, app layout with permission-driven sidebar, users (incl. unlock) and roles admin, approval rules, number series, fiscal periods, audit trail viewer, my approvals inbox, e-signature dialog.

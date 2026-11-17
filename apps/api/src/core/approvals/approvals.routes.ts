@@ -4,6 +4,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { ApprovalDecisionRequest, ListQuery, SetApprovalRulesRequest } from '@albert/shared';
 import { requirePermission } from '../rbac/require-permission';
+import { idempotent } from '../idempotency/idempotency';
 import { asyncHandler, authOf, requestMeta } from '../auth/middleware';
 import * as approvals from './approvals.service';
 
@@ -39,6 +40,7 @@ approvalsRouter.get(
 approvalsRouter.post(
   '/approvals/:id/approve',
   requirePermission('core.approval.inbox'),
+  idempotent({ required: false }), // a double click replays the first result
   asyncHandler(async (req, res) => {
     const { id } = IdParam.parse(req.params);
     res.json(await approvals.approve(authOf(req), id, ApprovalDecisionRequest.parse(req.body), requestMeta(req)));
@@ -48,6 +50,7 @@ approvalsRouter.post(
 approvalsRouter.post(
   '/approvals/:id/reject',
   requirePermission('core.approval.inbox'),
+  idempotent({ required: false }),
   asyncHandler(async (req, res) => {
     const { id } = IdParam.parse(req.params);
     res.json(await approvals.reject(authOf(req), id, ApprovalDecisionRequest.parse(req.body), requestMeta(req)));

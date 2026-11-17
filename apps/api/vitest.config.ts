@@ -10,6 +10,8 @@ export default defineConfig({
     setupFiles: ['src/test/setup.ts'],
     env: {
       NODE_ENV: 'test',
+      // Test uploads go to a throw-away folder (git-ignored).
+      STORAGE_DIR: '.test-storage',
     },
   },
 });

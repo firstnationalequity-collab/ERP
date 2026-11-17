@@ -233,6 +233,38 @@ export const approvalSteps = core.table('approval_steps', {
   ...auditColumns(),
 });
 
+// ---- 0005_idempotency_attachments.sql
+
+export const idempotencyKeys = core.table('idempotency_keys', {
+  id: identityId(),
+  companyId: companyId(),
+  userId: bigintString('user_id').notNull(),
+  key: text('key').notNull(),
+  endpoint: text('endpoint').notNull(),
+  requestHash: text('request_hash').notNull(),
+  status: text('status').$type<'IN_PROGRESS' | 'COMPLETED'>().notNull(),
+  responseStatus: integer('response_status'),
+  responseBody: jsonb('response_body'),
+  expiresAt: tstz('expires_at').notNull().default(sql`now() + interval '24 hours'`),
+  completedAt: tstz('completed_at'),
+  ...auditColumns(),
+});
+
+export const attachments = core.table('attachments', {
+  id: identityId(),
+  companyId: companyId(),
+  recordTable: text('record_table').notNull(),
+  recordId: text('record_id').notNull(),
+  fileName: text('file_name').notNull(),
+  contentType: text('content_type').notNull(),
+  sizeBytes: bigintString('size_bytes').notNull(),
+  sha256: text('sha256').notNull(),
+  storageDriver: text('storage_driver').$type<'local' | 's3'>().notNull(),
+  storageKey: text('storage_key').notNull(),
+  description: text('description'),
+  ...auditColumns(),
+});
+
 export const auditLog = core.table('audit_log', {
   id: identityId(),
   tableName: text('table_name').notNull(),

@@ -21,6 +21,8 @@ const statusFor: Partial<Record<ErrorCode, number>> = {
   ALREADY_EXISTS: 409,
   INVALID_TRANSITION: 409,
   DUPLICATE_REQUEST: 409,
+  /** A stored file no longer matches its recorded SHA-256: never serve it. */
+  FILE_INTEGRITY_FAILED: 500,
 };
 
 /** Throw this from services. Business-rule codes default to HTTP 422. */
