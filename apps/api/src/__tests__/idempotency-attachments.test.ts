@@ -1,5 +1,5 @@
 // Idempotency-Key (Q11) and attachments (Q17).
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import express from 'express';
 import { sql } from 'drizzle-orm';
@@ -313,5 +313,16 @@ describe('attachment permission at the route (rules review C)', () => {
     const res = await request(app).get(`/api/v1/core/attachment-files/${up.body.id}`).set('Authorization', `Bearer ${tokens.planner}`);
     expect(res.status).toBe(403);
     expect(res.body.error).toMatchObject({ code: 'FORBIDDEN', details: { permission: 'qc.view' } });
+  });
+});
+
+describe('attachment refusal paths (rules review E)', () => {
+  it('refuses to serve an attachment whose stored file is missing', async () => {
+    const up = await upload('a', '/attachments/test.records/2', PDF, 'application/pdf', 'gone.pdf');
+    const { rows } = await client.query<{ storage_key: string }>(`SELECT storage_key FROM core.attachments WHERE id = $1`, [up.body.id]);
+    await rm(path.resolve(env.STORAGE_DIR, rows[0]!.storage_key));
+    const res = await request(app).get(`/api/v1/core/attachment-files/${up.body.id}`).set('Authorization', `Bearer ${tokens.a}`);
+    expect(res.status).toBe(500);
+    expect(res.body.error).toMatchObject({ code: 'FILE_INTEGRITY_FAILED', message: 'The stored file is missing' });
   });
 });

@@ -441,3 +441,27 @@ describe('roles and permission bundles (Q1, Q14)', () => {
     expect((await as('qam').post(`/roles/${roleIds.PLANNER}/deactivate`, { reason: 'try it' })).status).toBe(403);
   });
 });
+
+describe('refusal paths (rules review E)', () => {
+  it('refuses activating an already-active user or role (409)', async () => {
+    const id = await createTestUser({ username: 'a_already_active' });
+    const user = await as('admin').post(`/users/${id}/activate`);
+    expect(user.status).toBe(409);
+    expect(user.body.error.message).toBe('User is already active');
+    const role = await as('admin').post(`/roles/${roleIds.PLANNER}/activate`, { reason: 'Already active' });
+    expect(role.status).toBe(409);
+    expect(role.body.error.message).toBe('Role is already active');
+  });
+
+  it('refuses a countersign whose meaning is not APPROVED, before checking any password', async () => {
+    const id = await createTestUser({ username: 'a_cs_meaning' });
+    const res = await as('admin').put(`/users/${id}/roles`, {
+      roleIds: [roleIds.QC_MANAGER],
+      reason: 'Promotion',
+      countersign: { ...countersignBy('a_qam'), meaning: 'REVIEWED' },
+    });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatchObject({ code: 'ESIGN_FAILED', message: 'A countersign must have the meaning APPROVED' });
+    expect(await rolesOf(id)).toEqual([]);
+  });
+});

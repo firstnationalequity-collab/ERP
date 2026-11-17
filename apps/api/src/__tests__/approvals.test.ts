@@ -592,3 +592,23 @@ describe('money NUMERIC(18,2), percents NUMERIC(9,4) (rule 10, rules review D)',
     await client.query('ROLLBACK');
   });
 });
+
+describe('approval rules refusal paths (rules review E)', () => {
+  it('refuses rules naming an unknown or inactive role', async () => {
+    const put = (roleId: string) =>
+      request(app)
+        .put('/api/v1/core/approval-rules/MATRIX_DEMO')
+        .set('Authorization', `Bearer ${tokens.admin}`)
+        .send({ measure: 'NONE', bands: [{ steps: [{ stepNo: 1, roleId }] }], reason: 'Bad role', countersign: fmCountersign() });
+    const unknown = await put('987654');
+    expect(unknown.status).toBe(404);
+    expect(unknown.body.error).toMatchObject({ message: 'Unknown or inactive roles', details: { missing: ['987654'] } });
+
+    await client.query('BEGIN');
+    await client.query(`SELECT set_config('app.user_id','1',true), set_config('app.company_id','1',true)`);
+    const { rows } = await client.query<{ id: string }>(`INSERT INTO core.roles (code, name, is_active) VALUES ('E_INACTIVE', 'Inactive', false) RETURNING id`);
+    await client.query('COMMIT');
+    const inactive = await put(rows[0]!.id);
+    expect(inactive.status).toBe(404);
+  });
+});

@@ -329,3 +329,14 @@ describe('sql helper sanity', () => {
     expect(a).toBe(b);
   });
 });
+
+describe('refusal paths (rules review E)', () => {
+  it('returns 404 for an unknown number series or fiscal period', async () => {
+    const series = await as('admin').patch('/number-series/987654', { prefix: 'X', reason: 'Unknown series' });
+    expect(series.status).toBe(404);
+    expect(series.body.error.message).toBe('Number series not found');
+    const period = await as('fm').post('/fiscal-periods/987654/close', { reason: 'Unknown period' });
+    expect(period.status).toBe(404);
+    expect(period.body.error.message).toBe('Fiscal period not found');
+  });
+});
