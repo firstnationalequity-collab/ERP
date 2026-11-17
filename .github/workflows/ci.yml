@@ -1,0 +1,63 @@
+# CI: install, typecheck, test against PostgreSQL 16 (docs/architecture.md §2; decision Q17).
+# Same Node major as local (.nvmrc) and the lockfile must be up to date.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: albert
+          POSTGRES_PASSWORD: albert
+          # Must end in _test: the test helper refuses to reset any other database.
+          POSTGRES_DB: albert_erp_test
+          TZ: UTC
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U albert"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL_TEST: postgres://albert:albert@localhost:5432/albert_erp_test
+      # Not secrets: CI-only values for a throw-away database (production secrets come from the host).
+      JWT_ACCESS_SECRET: ci-only-access-secret-0000000000000000000000
+      JWT_REFRESH_SECRET: ci-only-refresh-secret-000000000000000000000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4 # version from package.json "packageManager"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test

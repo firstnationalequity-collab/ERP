@@ -6,5 +6,7 @@ coverage/
 !.env.example
 *.log
 .DS_Store
-storage/
-.test-storage/
+# Uploaded files (local-disk storage driver). Anchored: src/core/storage/ is source code.
+/storage/
+/apps/api/storage/
+/apps/api/.test-storage/
