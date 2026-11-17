@@ -20,7 +20,7 @@ Tasks:
 - [x] Role administration guards: no self role changes; admin roles hold no action keys; qc.* / qa.* role changes need a QA Manager e-signature.
 - [x] `core/esign` (verify password, store meaning + reason; wrong password counts toward lockout) and `core/transition` (allowed-moves map with a permission key per move + `core.status_history`).
 - [x] `core/numbering` (`nextDocNo(docType)` with row lock; pattern tokens and FISCAL_YEAR / CALENDAR_YEAR / NEVER reset).
-- [ ] Approvals: rule lookup by doc type + measure (AMOUNT_PKR / PERCENT), sequential and parallel steps routed to roles (creator excluded), "my approvals" inbox endpoint.
+- [x] Approvals: rule lookup by doc type + measure (AMOUNT_PKR / PERCENT), sequential and parallel steps routed to roles (creator excluded), "my approvals" inbox endpoint.
 - [ ] `core/idempotency` (24 h keys, `DUPLICATE_REQUEST` on a different request) and attachments (storage interface, local-disk driver).
 - [x] Fiscal periods: create, close and reopen (endpoints and service).
 - [ ] CI: GitHub Actions — install, typecheck, test with a Postgres 16 service container.

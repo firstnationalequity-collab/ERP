@@ -138,6 +138,7 @@ describe('second seed', () => {
       permissionsDeactivated: 0,
       rolesCreated: [],
       seriesCreated: [],
+      approvalRulesCreated: [],
       adminCreated: false,
       adminSkipped: 'already exists',
     });

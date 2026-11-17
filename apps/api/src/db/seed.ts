@@ -10,6 +10,7 @@ async function main(): Promise<void> {
       `Permissions: ${report.permissionsCreated} created, ${report.permissionsUpdated} updated, ${report.permissionsDeactivated} deactivated`,
       `Roles created: ${report.rolesCreated.length ? report.rolesCreated.join(', ') : 'none'}`,
       `Number series created: ${report.seriesCreated.length ? report.seriesCreated.join(', ') : 'none'}`,
+      `Approval rules created: ${report.approvalRulesCreated.length ? report.approvalRulesCreated.join(', ') : 'none'}`,
       `First admin: ${report.adminCreated ? 'created (username "admin", must change password at first login)' : `not created (${report.adminSkipped ?? ''})`}`,
     ].join('\n'),
   );

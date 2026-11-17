@@ -1,7 +1,10 @@
 // Drizzle description of the `core` schema. Source of truth: src/db/migrations/0001_core_identity.sql.
 import { sql } from 'drizzle-orm';
-import { boolean, date, integer, jsonb, pgSchema, text } from 'drizzle-orm/pg-core';
+import { boolean, date, integer, jsonb, numeric, pgSchema, text } from 'drizzle-orm/pg-core';
 import type {
+  ApprovalMeasure,
+  ApprovalStatus,
+  ApprovalStepStatus,
   AuthEventType,
   FiscalPeriodStatus,
   NumberSeriesReset,
@@ -180,6 +183,53 @@ export const fiscalPeriods = core.table('fiscal_periods', {
   startDate: date('start_date', { mode: 'string' }).notNull(),
   endDate: date('end_date', { mode: 'string' }).notNull(),
   status: text('status').$type<FiscalPeriodStatus>().notNull(),
+  ...auditColumns(),
+});
+
+// ---- 0004_approvals.sql (NUMERIC columns are strings; use decimal.js for arithmetic)
+
+export const approvalRules = core.table('approval_rules', {
+  id: identityId(),
+  companyId: companyId(),
+  docType: text('doc_type').notNull(),
+  measure: text('measure').$type<ApprovalMeasure>().notNull(),
+  lowerBound: numeric('lower_bound', { precision: 18, scale: 4 }),
+  upperBound: numeric('upper_bound', { precision: 18, scale: 4 }),
+  stepNo: integer('step_no').notNull(),
+  roleId: bigintString('role_id').notNull(),
+  isActive: boolean('is_active').notNull().default(true),
+  ...auditColumns(),
+});
+
+export const approvals = core.table('approvals', {
+  id: identityId(),
+  companyId: companyId(),
+  docType: text('doc_type').notNull(),
+  docTable: text('doc_table').notNull(),
+  docId: text('doc_id').notNull(),
+  docNo: text('doc_no'),
+  measure: text('measure').$type<ApprovalMeasure>().notNull(),
+  amount: numeric('amount', { precision: 18, scale: 2 }),
+  currency: text('currency'),
+  exchangeRate: numeric('exchange_rate', { precision: 9, scale: 4 }),
+  measuredValue: numeric('measured_value', { precision: 18, scale: 4 }),
+  requestedBy: bigintString('requested_by').notNull(),
+  status: text('status').$type<ApprovalStatus>().notNull(),
+  decidedAt: tstz('decided_at'),
+  ...auditColumns(),
+});
+
+export const approvalSteps = core.table('approval_steps', {
+  id: identityId(),
+  companyId: companyId(),
+  approvalId: bigintString('approval_id').notNull(),
+  stepNo: integer('step_no').notNull(),
+  roleId: bigintString('role_id').notNull(),
+  ruleId: bigintString('rule_id'),
+  status: text('status').$type<ApprovalStepStatus>().notNull(),
+  actedBy: bigintString('acted_by'),
+  actedAt: tstz('acted_at'),
+  esignId: bigintString('esign_id'),
   ...auditColumns(),
 });
 

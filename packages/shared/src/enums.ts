@@ -74,6 +74,17 @@ export type SignatureMeaning = (typeof SignatureMeaning)[number];
 export const FiscalPeriodStatus = ['OPEN', 'CLOSED'] as const;
 export type FiscalPeriodStatus = (typeof FiscalPeriodStatus)[number];
 
+/** What an approval band is measured on (decision Q12). NONE = one band, any value (e.g. AVL, master formula). */
+export const ApprovalMeasure = ['AMOUNT_PKR', 'PERCENT', 'NONE'] as const;
+export type ApprovalMeasure = (typeof ApprovalMeasure)[number];
+
+export const ApprovalStatus = ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'] as const;
+export type ApprovalStatus = (typeof ApprovalStatus)[number];
+
+/** WAITING = a later "then" step not yet open; SKIPPED = closed because the approval was rejected/cancelled. */
+export const ApprovalStepStatus = ['WAITING', 'PENDING', 'APPROVED', 'REJECTED', 'SKIPPED'] as const;
+export type ApprovalStepStatus = (typeof ApprovalStepStatus)[number];
+
 /** Permission key classes (docs/roles.md). A role holding an ADMIN key may never hold an ACTION key. */
 export const PermissionClass = ['ADMIN', 'VIEW', 'ACTION'] as const;
 export type PermissionClass = (typeof PermissionClass)[number];

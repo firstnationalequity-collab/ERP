@@ -6,7 +6,7 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { Permissions, PermissionKeys } from '@albert/shared';
 import { systemContext, withTransaction, type Tx } from '../client';
-import { numberSeries, permissions, rolePermissions, roles, userCredentials, userRoles, users } from '../schema/core';
+import { approvalRules, numberSeries, permissions, rolePermissions, roles, userCredentials, userRoles, users } from '../schema/core';
 import { assertPasswordPolicy, hashPassword } from '../../core/auth/password';
 import { FIRST_ADMIN_USERNAME, ROLE_SEEDS } from './roles';
 
@@ -15,6 +15,44 @@ export const DEFAULT_SERIES = [
   { docType: 'PO', name: 'Purchase order', prefix: 'PO', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
   { docType: 'BATCH', name: 'Batch number', prefix: 'AP', pattern: '{PREFIX}{YY}-{SEQ:4}', reset: 'CALENDAR_YEAR' },
 ] as const;
+
+/**
+ * Approval matrix from docs/architecture.md §3 — PLACEHOLDER limits until Finance confirms.
+ * Bands: (lower exclusive, upper inclusive]. Same stepNo = parallel ("and"); higher = after ("then").
+ */
+export const DEFAULT_APPROVAL_RULES: {
+  docType: string;
+  measure: 'AMOUNT_PKR' | 'PERCENT' | 'NONE';
+  bands: { lower: string | null; upper: string | null; steps: [number, string][] }[];
+}[] = [
+  {
+    docType: 'PO',
+    measure: 'AMOUNT_PKR',
+    bands: [
+      { lower: null, upper: '500000', steps: [[1, 'PURCHASE_MANAGER']] },
+      { lower: '500000', upper: '5000000', steps: [[1, 'FINANCE_MANAGER']] },
+      { lower: '5000000', upper: null, steps: [[1, 'PURCHASE_MANAGER'], [2, 'FINANCE_MANAGER']] },
+    ],
+  },
+  {
+    docType: 'QUOTATION_DISCOUNT',
+    measure: 'PERCENT',
+    bands: [
+      { lower: null, upper: '5', steps: [[1, 'SALES_MANAGER']] },
+      { lower: '5', upper: null, steps: [[1, 'SALES_MANAGER'], [2, 'FINANCE_MANAGER']] },
+    ],
+  },
+  { docType: 'SO_CREDIT', measure: 'AMOUNT_PKR', bands: [{ lower: '0', upper: null, steps: [[1, 'FINANCE_MANAGER']] }] },
+  { docType: 'VENDOR_PAYMENT', measure: 'AMOUNT_PKR', bands: [{ lower: null, upper: null, steps: [[1, 'FINANCE_MANAGER']] }] },
+  {
+    docType: 'STOCK_ADJUSTMENT',
+    measure: 'AMOUNT_PKR',
+    bands: [{ lower: null, upper: null, steps: [[1, 'FINANCE_MANAGER'], [1, 'QA_MANAGER']] }],
+  },
+  { docType: 'AVL', measure: 'NONE', bands: [{ lower: null, upper: null, steps: [[1, 'QA_MANAGER']] }] },
+  { docType: 'MASTER_FORMULA', measure: 'NONE', bands: [{ lower: null, upper: null, steps: [[1, 'QA_MANAGER']] }] },
+  { docType: 'BATCH_CLOSE', measure: 'NONE', bands: [{ lower: null, upper: null, steps: [[1, 'PRODUCTION_MANAGER']] }] },
+];
 
 export interface SeedOptions {
   nodeEnv: 'development' | 'test' | 'production';
@@ -27,6 +65,7 @@ export interface SeedReport {
   permissionsDeactivated: number;
   rolesCreated: string[];
   seriesCreated: string[];
+  approvalRulesCreated: string[];
   adminCreated: boolean;
   /** Why the admin was not created, when it was not. */
   adminSkipped?: string;
@@ -46,11 +85,13 @@ export async function runSeed(opts: SeedOptions): Promise<SeedReport> {
       permissionsDeactivated: 0,
       rolesCreated: [],
       seriesCreated: [],
+      approvalRulesCreated: [],
       adminCreated: false,
     };
     await syncPermissions(tx, report);
     await createMissingRoles(tx, report);
     await createMissingSeries(tx, report);
+    await createMissingApprovalRules(tx, report);
     await createFirstAdmin(tx, opts.initialAdminPassword, report);
     return report;
   });
@@ -112,6 +153,26 @@ async function createMissingSeries(tx: Tx, report: SeedReport): Promise<void> {
     if (existing.has(s.docType)) continue;
     await tx.insert(numberSeries).values(s);
     report.seriesCreated.push(s.docType);
+  }
+}
+
+/** Placeholder approval matrix for doc types that have no active rules yet. Existing rule sets are kept. */
+async function createMissingApprovalRules(tx: Tx, report: SeedReport): Promise<void> {
+  const existing = new Set(
+    (await tx.select({ docType: approvalRules.docType }).from(approvalRules).where(eq(approvalRules.isActive, true))).map((r) => r.docType),
+  );
+  const roleIds = new Map((await tx.select({ id: roles.id, code: roles.code }).from(roles)).map((r) => [r.code, r.id]));
+  for (const set of DEFAULT_APPROVAL_RULES) {
+    if (existing.has(set.docType)) continue;
+    const rows = set.bands.flatMap((b) =>
+      b.steps.map(([stepNo, roleCode]) => {
+        const roleId = roleIds.get(roleCode);
+        if (!roleId) throw new Error(`Seed: role ${roleCode} missing for approval rule ${set.docType}`);
+        return { docType: set.docType, measure: set.measure, lowerBound: b.lower, upperBound: b.upper, stepNo, roleId };
+      }),
+    );
+    await tx.insert(approvalRules).values(rows);
+    report.approvalRulesCreated.push(set.docType);
   }
 }
 
