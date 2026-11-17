@@ -3,3 +3,4 @@ export * from './permissions';
 export * from './errors';
 export * from './password';
 export * from './schemas/core/auth';
+export * from './schemas/core/esign';

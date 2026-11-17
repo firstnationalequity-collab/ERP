@@ -1,6 +1,7 @@
 // Drizzle description of the `core` schema. Source of truth: src/db/migrations/0001_core_identity.sql.
+import { sql } from 'drizzle-orm';
 import { boolean, integer, jsonb, pgSchema, text } from 'drizzle-orm/pg-core';
-import type { AuthEventType, PermissionClass, SessionRevokeReason } from '@albert/shared';
+import type { AuthEventType, PermissionClass, SessionRevokeReason, SignatureMeaning } from '@albert/shared';
 import { auditColumns, bigintString, companyId, identityId, tstz } from './columns';
 
 export const core = pgSchema('core');
@@ -104,6 +105,40 @@ export const userRoles = core.table('user_roles', {
   userId: bigintString('user_id').notNull(),
   roleId: bigintString('role_id').notNull(),
   ...auditColumns(),
+});
+
+// ---- 0002_esign_transition.sql
+
+export const eSignatures = core.table('e_signatures', {
+  id: identityId(),
+  companyId: companyId(),
+  userId: bigintString('user_id').notNull(),
+  signerUsername: text('signer_username').notNull(),
+  signerName: text('signer_name').notNull(),
+  meaning: text('meaning').$type<SignatureMeaning>().notNull(),
+  reason: text('reason').notNull(),
+  recordTable: text('record_table').notNull(),
+  recordId: text('record_id').notNull(),
+  signedAt: tstz('signed_at').notNull().defaultNow(),
+  ip: text('ip'),
+  userAgent: text('user_agent'),
+  txId: bigintString('tx_id').notNull().default(sql`txid_current()`),
+  ...auditColumns(),
+});
+
+export const statusHistory = core.table('status_history', {
+  id: identityId(),
+  companyId: companyId(),
+  entityTable: text('entity_table').notNull(),
+  entityId: text('entity_id').notNull(),
+  fromStatus: text('from_status'),
+  toStatus: text('to_status').notNull(),
+  actorId: bigintString('actor_id').notNull(),
+  esignId: bigintString('esign_id'),
+  witnessEsignId: bigintString('witness_esign_id'),
+  reason: text('reason'),
+  at: tstz('at').notNull().defaultNow(),
+  txId: bigintString('tx_id').notNull().default(sql`txid_current()`),
 });
 
 export const auditLog = core.table('audit_log', {

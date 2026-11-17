@@ -18,7 +18,7 @@ Tasks:
 - [x] Auth: login by username, refresh (httpOnly cookie, 12 h, rotate on use, reuse revokes session), logout, change password; argon2; complexity + last-5 reuse block; lockout after 5 failures until admin unlock; 90-day expiry and forced first-login change; auth_events for every event.
 - [ ] RBAC middleware `requirePermission(key)`; permission keys classed admin/view/action; seed roles from `docs/roles.md` (after review) plus the SYSTEM user and the first admin (`INITIAL_ADMIN_PASSWORD`).
 - [ ] Role administration guards: no self role changes; admin roles hold no action keys; qc.* / qa.* role changes need a QA Manager e-signature.
-- [ ] `core/esign` (verify password, store meaning + reason; wrong password counts toward lockout) and `core/transition` (allowed-moves map with a permission key per move + `core.status_history`).
+- [x] `core/esign` (verify password, store meaning + reason; wrong password counts toward lockout) and `core/transition` (allowed-moves map with a permission key per move + `core.status_history`).
 - [ ] `core/numbering` (`nextDocNo(docType)` with row lock; pattern tokens and FISCAL_YEAR / CALENDAR_YEAR / NEVER reset).
 - [ ] Approvals: rule lookup by doc type + measure (AMOUNT_PKR / PERCENT), sequential and parallel steps routed to roles (creator excluded), "my approvals" inbox endpoint.
 - [ ] `core/idempotency` (24 h keys, `DUPLICATE_REQUEST` on a different request) and attachments (storage interface, local-disk driver).
