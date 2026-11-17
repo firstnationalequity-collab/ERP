@@ -168,7 +168,16 @@ async function createMissingApprovalRules(tx: Tx, report: SeedReport): Promise<v
       b.steps.map(([stepNo, roleCode]) => {
         const roleId = roleIds.get(roleCode);
         if (!roleId) throw new Error(`Seed: role ${roleCode} missing for approval rule ${set.docType}`);
-        return { docType: set.docType, measure: set.measure, lowerBound: b.lower, upperBound: b.upper, stepNo, roleId };
+        return {
+          docType: set.docType,
+          measure: set.measure,
+          lowerAmount: set.measure === 'AMOUNT_PKR' ? b.lower : null,
+          upperAmount: set.measure === 'AMOUNT_PKR' ? b.upper : null,
+          lowerPercent: set.measure === 'PERCENT' ? b.lower : null,
+          upperPercent: set.measure === 'PERCENT' ? b.upper : null,
+          stepNo,
+          roleId,
+        };
       }),
     );
     await tx.insert(approvalRules).values(rows);

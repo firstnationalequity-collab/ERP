@@ -131,8 +131,11 @@ describe('band selection on the seeded PO matrix (PKR, placeholder limits)', () 
   it('converts an import PO at the document exchange rate: USD 2,000 × 280.5000 = PKR 561,000 → Finance Manager', async () => {
     const { approvalId } = await start('PO', { measure: 'AMOUNT_PKR', amount: '2000', currency: 'USD', exchangeRate: '280.5' });
     expect(await stepsOf(approvalId)).toEqual(['1:FINANCE_MANAGER:PENDING']);
-    const { rows } = await client.query(`SELECT amount, currency, exchange_rate, measured_value FROM core.approvals WHERE id = $1`, [approvalId]);
-    expect(rows[0]).toEqual({ amount: '2000.00', currency: 'USD', exchange_rate: '280.5000', measured_value: '561000.0000' });
+    const { rows } = await client.query(
+      `SELECT amount, currency, exchange_rate, measured_amount, measured_percent FROM core.approvals WHERE id = $1`,
+      [approvalId],
+    );
+    expect(rows[0]).toEqual({ amount: '2000.00', currency: 'USD', exchange_rate: '280.5000', measured_amount: '561000.00', measured_percent: null });
   });
 
   it('uses exact decimals at the boundary: USD 1,782.53 × 280.5000 = 499,999.67 → Purchase Manager', async () => {
@@ -541,5 +544,51 @@ describe('approval matrix changes (rules review B)', () => {
     const res = await act('qam', approvalId, 'approve');
     expect(res.status).toBe(403);
     expect(res.body.error).toMatchObject({ code: 'FORBIDDEN', details: { permission: 'master.avl.approve' } });
+  });
+});
+
+describe('money NUMERIC(18,2), percents NUMERIC(9,4) (rule 10, rules review D)', () => {
+  it('stores PKR amounts and percents in columns of the right scale', async () => {
+    const { rows } = await client.query<{ table_name: string; column_name: string; numeric_precision: number; numeric_scale: number }>(
+      `SELECT table_name, column_name, numeric_precision, numeric_scale FROM information_schema.columns
+        WHERE table_schema = 'core' AND table_name IN ('approvals', 'approval_rules') AND data_type = 'numeric'
+        ORDER BY table_name, column_name`,
+    );
+    expect(rows).toEqual([
+      { table_name: 'approval_rules', column_name: 'lower_amount', numeric_precision: 18, numeric_scale: 2 },
+      { table_name: 'approval_rules', column_name: 'lower_percent', numeric_precision: 9, numeric_scale: 4 },
+      { table_name: 'approval_rules', column_name: 'upper_amount', numeric_precision: 18, numeric_scale: 2 },
+      { table_name: 'approval_rules', column_name: 'upper_percent', numeric_precision: 9, numeric_scale: 4 },
+      { table_name: 'approvals', column_name: 'amount', numeric_precision: 18, numeric_scale: 2 },
+      { table_name: 'approvals', column_name: 'exchange_rate', numeric_precision: 9, numeric_scale: 4 },
+      { table_name: 'approvals', column_name: 'measured_amount', numeric_precision: 18, numeric_scale: 2 },
+      { table_name: 'approvals', column_name: 'measured_percent', numeric_precision: 9, numeric_scale: 4 },
+    ]);
+  });
+
+  it('stores a quotation discount in the percent column only', async () => {
+    const { approvalId } = await start('QUOTATION_DISCOUNT', { measure: 'PERCENT', percent: '5.25' });
+    const { rows } = await client.query(`SELECT measured_amount, measured_percent FROM core.approvals WHERE id = $1`, [approvalId]);
+    expect(rows[0]).toEqual({ measured_amount: null, measured_percent: '5.2500' });
+  });
+
+  it('refuses a PKR band limit with more than 2 decimals', async () => {
+    const pm = (await client.query<{ id: string }>(`SELECT id FROM core.roles WHERE code = 'PURCHASE_MANAGER'`)).rows[0]!.id;
+    const res = await request(app)
+      .put('/api/v1/core/approval-rules/PO')
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .send({ measure: 'AMOUNT_PKR', bands: [{ upperBound: '500000.005', steps: [{ stepNo: 1, roleId: pm }] }], reason: 'Too precise', countersign: fmCountersign() });
+    expect(res.status).toBe(400);
+    expect(res.body.error.details.rules).toContain('Band 1: PKR amounts take at most 2 decimals');
+  });
+
+  it('refuses, in the database, a value in the column that does not match the measure', async () => {
+    const pm = (await client.query<{ id: string }>(`SELECT id FROM core.roles WHERE code = 'PURCHASE_MANAGER'`)).rows[0]!.id;
+    await client.query('BEGIN');
+    await client.query(`SELECT set_config('app.user_id','1',true), set_config('app.company_id','1',true)`);
+    await expect(
+      client.query(`INSERT INTO core.approval_rules (doc_type, measure, upper_percent, step_no, role_id) VALUES ('X_TEST', 'AMOUNT_PKR', 5, 1, $1)`, [pm]),
+    ).rejects.toThrow(/approval_rules_bounds_by_measure/);
+    await client.query('ROLLBACK');
   });
 });

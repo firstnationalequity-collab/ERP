@@ -132,10 +132,18 @@ function measure(value: ApprovalValue) {
   };
 }
 
+/** The band limits of a rule, from the column pair that matches its measure (0007). */
+function boundsOf(rule: Pick<ApprovalRuleRow, 'measure' | 'lowerAmount' | 'upperAmount' | 'lowerPercent' | 'upperPercent'>) {
+  if (rule.measure === 'AMOUNT_PKR') return { lower: rule.lowerAmount, upper: rule.upperAmount };
+  if (rule.measure === 'PERCENT') return { lower: rule.lowerPercent, upper: rule.upperPercent };
+  return { lower: null, upper: null };
+}
+
 function inBand(rule: ApprovalRuleRow, v: Decimal | null): boolean {
   if (v === null) return true;
-  if (rule.lowerBound !== null && !v.greaterThan(rule.lowerBound)) return false;
-  if (rule.upperBound !== null && v.greaterThan(rule.upperBound)) return false;
+  const { lower, upper } = boundsOf(rule);
+  if (lower !== null && !v.greaterThan(lower)) return false;
+  if (upper !== null && v.greaterThan(upper)) return false;
   return true;
 }
 
@@ -176,7 +184,8 @@ export async function startApproval(tx: Tx, actor: Actor, input: StartApprovalIn
     amount: m.amount?.toFixed(2) ?? null,
     currency: m.currency,
     exchangeRate: m.exchangeRate?.toFixed(4) ?? null,
-    measuredValue: m.measured?.toFixed(4) ?? null,
+    measuredAmount: ruleMeasure === 'AMOUNT_PKR' ? (m.measured?.toFixed(2) ?? null) : null,
+    measuredPercent: ruleMeasure === 'PERCENT' ? (m.measured?.toFixed(4) ?? null) : null,
     requestedBy: actor.userId,
     status: 'PENDING',
   });
@@ -319,7 +328,7 @@ export async function getApproval(auth: AuthContext, approvalId: string): Promis
     amount: approval.amount,
     currency: approval.currency,
     exchangeRate: approval.exchangeRate,
-    measuredValue: approval.measuredValue,
+    measuredValue: approval.measuredAmount ?? approval.measuredPercent,
     requestedBy: { id: approval.requestedBy, username: requester?.username ?? '', fullName: requester?.fullName ?? '' },
     status: approval.status,
     createdAt: approval.createdAt.toISOString(),
@@ -385,7 +394,15 @@ function validateBands(measureType: ApprovalMeasure, input: SetApprovalRulesRequ
       problems.push('Measure NONE takes exactly one band without limits');
     }
   }
+  const maxDecimals = measureType === 'AMOUNT_PKR' ? 2 : 4;
+  const maxValue = measureType === 'AMOUNT_PKR' ? new Decimal('9999999999999999.99') : new Decimal('99999.9999');
   bands.forEach((b, i) => {
+    for (const v of [b.lower, b.upper]) {
+      if (v && v.decimalPlaces() > maxDecimals) {
+        problems.push(`Band ${i + 1}: ${measureType === 'AMOUNT_PKR' ? 'PKR amounts' : 'percents'} take at most ${maxDecimals} decimals`);
+      }
+      if (v && v.greaterThan(maxValue)) problems.push(`Band ${i + 1}: limit is too large`);
+    }
     if (b.lower && b.upper && !b.lower.lessThan(b.upper)) problems.push(`Band ${i + 1}: lower limit must be below upper limit`);
     const numbers = [...new Set(b.steps.map((s) => s.stepNo))].sort((x, y) => x - y);
     if (numbers.some((n, k) => n !== k + 1)) problems.push(`Band ${i + 1}: step numbers must run 1, 2, 3… without gaps`);
@@ -477,8 +494,10 @@ export async function setRules(
         b.steps.map((s) => ({
           docType,
           measure: input.measure,
-          lowerBound: b.lower?.toFixed(4) ?? null,
-          upperBound: b.upper?.toFixed(4) ?? null,
+          lowerAmount: input.measure === 'AMOUNT_PKR' ? (b.lower?.toFixed(2) ?? null) : null,
+          upperAmount: input.measure === 'AMOUNT_PKR' ? (b.upper?.toFixed(2) ?? null) : null,
+          lowerPercent: input.measure === 'PERCENT' ? (b.lower?.toFixed(4) ?? null) : null,
+          upperPercent: input.measure === 'PERCENT' ? (b.upper?.toFixed(4) ?? null) : null,
           stepNo: s.stepNo,
           roleId: s.roleId,
         })),
@@ -499,9 +518,10 @@ export async function listRules(auth: AuthContext): Promise<ApprovalRuleSetDto[]
       bands: [],
     };
     sets.set(rule.docType, set);
-    let band = set.bands.find((b) => b.lowerBound === rule.lowerBound && b.upperBound === rule.upperBound);
+    const { lower, upper } = boundsOf(rule);
+    let band = set.bands.find((b) => b.lowerBound === lower && b.upperBound === upper);
     if (!band) {
-      band = { lowerBound: rule.lowerBound, upperBound: rule.upperBound, steps: [] };
+      band = { lowerBound: lower, upperBound: upper, steps: [] };
       set.bands.push(band);
     }
     band.steps.push({ stepNo: rule.stepNo, roleId: rule.roleId, roleCode, roleName });

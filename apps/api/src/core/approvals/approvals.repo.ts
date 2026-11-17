@@ -13,7 +13,12 @@ export async function activeRules(q: Queryable, companyId: string, docType: stri
     .select()
     .from(approvalRules)
     .where(and(eq(approvalRules.companyId, companyId), eq(approvalRules.docType, docType), eq(approvalRules.isActive, true)))
-    .orderBy(sql`${approvalRules.lowerBound} ASC NULLS FIRST`, asc(approvalRules.stepNo), asc(approvalRules.id));
+    .orderBy(
+      sql`${approvalRules.lowerAmount} ASC NULLS FIRST`,
+      sql`${approvalRules.lowerPercent} ASC NULLS FIRST`,
+      asc(approvalRules.stepNo),
+      asc(approvalRules.id),
+    );
 }
 
 export async function allActiveRules(q: Queryable, companyId: string) {
@@ -22,7 +27,12 @@ export async function allActiveRules(q: Queryable, companyId: string) {
     .from(approvalRules)
     .innerJoin(roles, eq(roles.id, approvalRules.roleId))
     .where(and(eq(approvalRules.companyId, companyId), eq(approvalRules.isActive, true)))
-    .orderBy(asc(approvalRules.docType), sql`${approvalRules.lowerBound} ASC NULLS FIRST`, asc(approvalRules.stepNo));
+    .orderBy(
+      asc(approvalRules.docType),
+      sql`${approvalRules.lowerAmount} ASC NULLS FIRST`,
+      sql`${approvalRules.lowerPercent} ASC NULLS FIRST`,
+      asc(approvalRules.stepNo),
+    );
 }
 
 export async function deactivateRules(q: Queryable, companyId: string, docType: string): Promise<void> {
@@ -34,7 +44,16 @@ export async function deactivateRules(q: Queryable, companyId: string, docType: 
 
 export async function insertRules(
   q: Queryable,
-  rows: { docType: string; measure: ApprovalMeasure; lowerBound: string | null; upperBound: string | null; stepNo: number; roleId: string }[],
+  rows: {
+    docType: string;
+    measure: ApprovalMeasure;
+    lowerAmount: string | null;
+    upperAmount: string | null;
+    lowerPercent: string | null;
+    upperPercent: string | null;
+    stepNo: number;
+    roleId: string;
+  }[],
 ): Promise<void> {
   if (rows.length > 0) await q.insert(approvalRules).values(rows);
 }
@@ -149,7 +168,7 @@ export async function inboxRows(q: Queryable, companyId: string, userId: string,
     SELECT * FROM (
     SELECT DISTINCT ON (a.id)
            a.id AS approval_id, s.id AS step_id, s.step_no, r.code AS role_code, a.doc_type, a.doc_no, a.doc_id,
-           a.measure, a.measured_value, a.amount, a.currency, u.full_name AS requested_by, a.created_at AS requested_at
+           a.measure, COALESCE(a.measured_amount, a.measured_percent)::text AS measured_value, a.amount, a.currency, u.full_name AS requested_by, a.created_at AS requested_at
       FROM core.approval_steps s
       JOIN core.approvals a ON a.id = s.approval_id AND a.status = 'PENDING'
       JOIN core.roles r ON r.id = s.role_id AND r.is_active
