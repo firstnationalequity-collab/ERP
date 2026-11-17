@@ -79,7 +79,9 @@ describe('login', () => {
     expect(res.body.accessToken).toEqual(expect.any(String));
     expect(res.body.user).toMatchObject({ username: 'QC101', mustChangePassword: false, passwordExpired: false });
     expect(res.body.user.permissions).toContain('qc.lot.change_status');
-    const cookie = (res.headers['set-cookie'] as unknown as string[]).find((c) => c.startsWith(REFRESH_COOKIE));
+    const raw: unknown = res.headers['set-cookie'];
+    const cookies = Array.isArray(raw) ? raw.filter((c): c is string => typeof c === 'string') : [];
+    const cookie = cookies.find((c) => c.startsWith(REFRESH_COOKIE));
     expect(cookie).toMatch(/HttpOnly/);
     expect(cookie).toMatch(/SameSite=Strict/);
     expect(cookie).toMatch(/Path=\/api\/v1\/core\/auth/);

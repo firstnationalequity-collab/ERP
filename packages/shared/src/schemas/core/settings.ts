@@ -1,6 +1,7 @@
 // Number series and fiscal periods (docs/architecture.md §7.1; decision Q16).
 import { z } from 'zod';
-import { NumberSeriesReset, numberPatternErrors } from '../../fiscal';
+import { numberPatternErrors } from '../../fiscal';
+import { NumberSeriesReset } from '../../enums';
 import type { FiscalPeriodStatus } from '../../enums';
 
 const reason = z.string().trim().min(3, 'Give a reason (at least 3 characters)').max(500);

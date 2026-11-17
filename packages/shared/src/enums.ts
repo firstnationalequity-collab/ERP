@@ -85,6 +85,22 @@ export type ApprovalStatus = (typeof ApprovalStatus)[number];
 export const ApprovalStepStatus = ['WAITING', 'PENDING', 'APPROVED', 'REJECTED', 'SKIPPED'] as const;
 export type ApprovalStepStatus = (typeof ApprovalStepStatus)[number];
 
+/** How a document-number series restarts (decision Q16). */
+export const NumberSeriesReset = ['FISCAL_YEAR', 'CALENDAR_YEAR', 'NEVER'] as const;
+export type NumberSeriesReset = (typeof NumberSeriesReset)[number];
+
+/** core.idempotency_keys.status: claimed before the action runs, completed with the stored response. */
+export const IdempotencyStatus = ['IN_PROGRESS', 'COMPLETED'] as const;
+export type IdempotencyStatus = (typeof IdempotencyStatus)[number];
+
+/** core.attachments.storage_driver (local disk now, S3-compatible in M10). */
+export const StorageDriver = ['local', 's3'] as const;
+export type StorageDriver = (typeof StorageDriver)[number];
+
+/** core.audit_log.action, written by the audit trigger. */
+export const AuditAction = ['INSERT', 'UPDATE', 'DELETE'] as const;
+export type AuditAction = (typeof AuditAction)[number];
+
 /** Permission key classes (docs/roles.md). A role holding an ADMIN key may never hold an ACTION key. */
 export const PermissionClass = ['ADMIN', 'VIEW', 'ACTION'] as const;
 export type PermissionClass = (typeof PermissionClass)[number];

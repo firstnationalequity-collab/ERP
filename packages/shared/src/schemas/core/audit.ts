@@ -1,7 +1,7 @@
 // Audit trail viewer and settings (docs/architecture.md §7.1: "audit trail viewer (filter by table, record,
 // user, date)"). Dates are business dates 'YYYY-MM-DD', read as whole days in Asia/Karachi.
 import { z } from 'zod';
-import type { AuthEventType, SignatureMeaning } from '../../enums';
+import { AuditAction, type AuthEventType, type SignatureMeaning } from '../../enums';
 
 const businessDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date as YYYY-MM-DD');
 
@@ -10,7 +10,7 @@ export const AuditLogQuery = z
     table: z.string().regex(/^[a-z_]+\.[a-z_]+$/).optional(),
     recordId: z.string().max(40).optional(),
     userId: z.string().regex(/^\d+$/).optional(),
-    action: z.enum(['INSERT', 'UPDATE', 'DELETE']).optional(),
+    action: z.enum(AuditAction).optional(),
     from: businessDate.optional(),
     to: businessDate.optional(),
     page: z.coerce.number().int().min(1).default(1),
@@ -30,7 +30,7 @@ export interface AuditEntryDto {
   id: string;
   table: string;
   recordId: string;
-  action: 'INSERT' | 'UPDATE' | 'DELETE';
+  action: AuditAction;
   changedAt: string;
   changedBy: { id: string; username: string; fullName: string } | null;
   reason: string | null;

@@ -3,10 +3,11 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import type { StorageDriver } from '@albert/shared';
 import { env } from '../../config/env';
 
 export interface FileStorage {
-  readonly driver: 'local' | 's3';
+  readonly driver: StorageDriver;
   /** Store bytes under a new random key; returns the key. */
   put(bytes: Buffer): Promise<string>;
   get(key: string): Promise<Buffer>;

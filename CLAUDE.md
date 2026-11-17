@@ -43,7 +43,7 @@ DB schemas per module: `core`, `inv`, `sales`, `purch`, `qc`, `prod`, `qa`, `fin
 ## Conventions
 - REST under `/api/v1/<module>/<resource>`. Actions: `POST /:id/submit | /approve | /reject | /post | /reverse | /release`. Never change status with PATCH.
 - Error shape `{ error: { code, message, details } }`; codes SCREAMING_SNAKE (`LOT_NOT_APPROVED`). Throw `AppError` from `core/errors`.
-- HTTP: 400 validation, 401, 403 permission/segregation, 404, 409 state conflict, 422 business rule.
+- HTTP: 400 validation, 401, 403 permission/segregation, 404, 409 state conflict, 422 business rule, 500 `FILE_INTEGRITY_FAILED` (a stored file no longer matches its checksum: never served).
 - `Idempotency-Key` header on every posting action.
 - `SELECT ... FOR UPDATE` on lots and balances inside posting transactions.
 - Every table: `id BIGINT GENERATED ALWAYS AS IDENTITY`, `company_id` (FK `core.companies`), `created_at/by`, `updated_at/by` (FK `core.users`). Documents get `doc_no` from `core.number_series`. Seeds and jobs act as the SYSTEM user.

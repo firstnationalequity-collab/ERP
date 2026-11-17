@@ -4,8 +4,7 @@
 
 export const FISCAL_YEAR_START_MONTH = 7; // July
 
-export const NumberSeriesReset = ['FISCAL_YEAR', 'CALENDAR_YEAR', 'NEVER'] as const;
-export type NumberSeriesReset = (typeof NumberSeriesReset)[number];
+import type { NumberSeriesReset } from './enums';
 
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 

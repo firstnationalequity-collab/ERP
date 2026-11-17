@@ -1,6 +1,7 @@
 // Read-only queries over the audit trail, status history, e-signatures and auth events.
 import { and, asc, count, desc, eq, gte, lt, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
+import type { AuditAction } from '@albert/shared';
 import { env } from '../../config/env';
 import type { Queryable } from '../../db/client';
 import { auditLog, authEvents, eSignatures, statusHistory, users } from '../../db/schema/core';
@@ -14,7 +15,7 @@ export interface AuditFilter {
   table?: string;
   recordId?: string;
   userId?: string;
-  action?: 'INSERT' | 'UPDATE' | 'DELETE';
+  action?: AuditAction;
   from?: string;
   to?: string;
 }

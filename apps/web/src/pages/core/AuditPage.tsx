@@ -3,8 +3,9 @@
 import { useState } from 'react';
 import { Button, DatePicker, Drawer, Form, Input, Select, Space, Table, Tabs, Tag, Timeline, Typography } from 'antd';
 import { useQuery } from '@tanstack/react-query';
+import { AuditAction as AuditActions } from '@albert/shared';
 import type { Dayjs } from 'dayjs';
-import type { AuditEntryDto, AuthEventDto, ESignatureDto, Page, StatusHistoryDto, UserDto } from '@albert/shared';
+import type { AuditAction, AuditEntryDto, AuthEventDto, ESignatureDto, Page, StatusHistoryDto, UserDto } from '@albert/shared';
 import { api } from '../../api/client';
 import { useAuth } from '../../auth/AuthContext';
 import { PageHeader } from '../../components/PageHeader';
@@ -15,7 +16,7 @@ interface Filters {
   table?: string;
   recordId?: string;
   userId?: string;
-  action?: 'INSERT' | 'UPDATE' | 'DELETE';
+  action?: AuditAction;
   range?: [Dayjs, Dayjs];
 }
 
@@ -83,7 +84,7 @@ function ChangesTab() {
               options={(users.data?.items ?? []).map((u) => ({ value: u.id, label: `${u.fullName} (${u.username})` }))} />
           </Form.Item>
         )}
-        <Form.Item name="action"><Select allowClear placeholder="Action" style={{ width: 120 }} options={['INSERT', 'UPDATE', 'DELETE'].map((a) => ({ value: a, label: a }))} /></Form.Item>
+        <Form.Item name="action"><Select allowClear placeholder="Action" style={{ width: 120 }} options={AuditActions.map((a) => ({ value: a, label: a }))} /></Form.Item>
         <Form.Item name="range"><DatePicker.RangePicker format="DD-MM-YYYY" /></Form.Item>
         <Space>
           <Button type="primary" htmlType="submit">Filter</Button>

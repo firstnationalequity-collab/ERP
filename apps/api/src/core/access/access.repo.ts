@@ -210,6 +210,8 @@ export async function listPermissions(q: Queryable) {
     .orderBy(asc(permissions.key));
 }
 
+const USER_MANAGE_KEY: PermissionKey = 'core.user.manage';
+
 /** Active, non-system users who hold core.user.manage through an active role. */
 export async function countActiveUserManagers(q: Queryable, companyId: string): Promise<number> {
   const rows = await q.execute<{ n: number }>(sql`
@@ -218,7 +220,7 @@ export async function countActiveUserManagers(q: Queryable, companyId: string): 
       JOIN core.user_roles ur ON ur.user_id = u.id
       JOIN core.roles r ON r.id = ur.role_id AND r.is_active
       JOIN core.role_permissions rp ON rp.role_id = r.id
-      JOIN core.permissions p ON p.id = rp.permission_id AND p.is_active AND p.key = 'core.user.manage'
+      JOIN core.permissions p ON p.id = rp.permission_id AND p.is_active AND p.key = ${USER_MANAGE_KEY}
      WHERE u.company_id = ${companyId} AND u.is_active AND NOT u.is_system`);
   return rows.rows[0]?.n ?? 0;
 }
