@@ -151,6 +151,15 @@ export async function startApproval(tx: Tx, actor: Actor, input: StartApprovalIn
     });
   }
 
+  // Defence in depth (rule 1 / architecture §3: System Admin approves nothing): even a rule written
+  // around setRules cannot route a step to a role holding admin keys.
+  const adminRoles = await repo.adminRoleIds(tx, [...new Set(band.map((r) => r.roleId))]);
+  if (adminRoles.length > 0) {
+    throw new AppError('ROLE_ADMIN_CONFLICT', `The ${input.docType} approval rule routes to an admin role; fix the approval rules`, {
+      roles: adminRoles,
+    });
+  }
+
   const approval = await repo.insertApproval(tx, {
     docType: input.docType,
     docTable: input.docTable,
@@ -215,6 +224,10 @@ async function stepForUser(tx: Tx, auth: AuthContext, approvalId: string) {
       'FORBIDDEN',
       waiting ? 'Your step is not open yet; an earlier step must be approved first' : 'No open step of this approval is assigned to your roles',
     );
+  }
+  // A role that has gained an admin key since the approval started can no longer approve.
+  if ((await repo.adminRoleIds(tx, [step.roleId])).length > 0) {
+    throw new AppError('FORBIDDEN', 'Admin roles cannot approve business documents');
   }
   return { approval, steps, step };
 }
@@ -393,6 +406,10 @@ export async function setRules(auth: AuthContext, docType: string, input: SetApp
     const found = await repo.rolesByIds(tx, roleIds);
     const missing = roleIds.filter((id) => !found.some((r) => r.id === id && r.isActive));
     if (missing.length > 0) throw new AppError('NOT_FOUND', 'Unknown or inactive roles', { missing });
+    const adminRoles = await repo.adminRoleIds(tx, roleIds);
+    if (adminRoles.length > 0) {
+      throw new AppError('ROLE_ADMIN_CONFLICT', 'Approval steps cannot go to a role that holds admin keys', { roles: adminRoles });
+    }
     await repo.deactivateRules(tx, auth.companyId, docType);
     await repo.insertRules(
       tx,

@@ -398,3 +398,52 @@ describe('approval rules admin (core.settings.manage)', () => {
     expect(audit.rows[0].n).toBeGreaterThan(0);
   });
 });
+
+describe('admin roles never approve business documents (rules review, finding A)', () => {
+  const roleId = async (code: string) => (await client.query<{ id: string }>(`SELECT id FROM core.roles WHERE code = $1`, [code])).rows[0]!.id;
+
+  it('refuses approval rules that route a step to a role holding admin keys', async () => {
+    const res = await request(app)
+      .put('/api/v1/core/approval-rules/PO')
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .send({ measure: 'AMOUNT_PKR', bands: [{ steps: [{ stepNo: 1, roleId: await roleId('SYSTEM_ADMIN') }] }], reason: 'Admins approve POs' });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('ROLE_ADMIN_CONFLICT');
+    // The PO matrix is unchanged.
+    expect(await stepsOf((await start('PO', { measure: 'AMOUNT_PKR', amount: '1000' })).approvalId)).toEqual(['1:PURCHASE_MANAGER:PENDING']);
+  });
+
+  it('refuses to start an approval from a rule written around the API that routes to an admin role', async () => {
+    await client.query('BEGIN');
+    await client.query(`SELECT set_config('app.user_id','1',true), set_config('app.company_id','1',true)`);
+    await client.query(
+      `INSERT INTO core.approval_rules (doc_type, measure, step_no, role_id) VALUES ('ADMIN_ROUTED', 'NONE', 1, $1)`,
+      [await roleId('SYSTEM_ADMIN')],
+    );
+    await client.query('COMMIT');
+    registerApprovalHandler('ADMIN_ROUTED', { onApproved: async () => undefined, onRejected: async () => undefined });
+    await expect(start('ADMIN_ROUTED', { measure: 'NONE' })).rejects.toMatchObject({ code: 'ROLE_ADMIN_CONFLICT' });
+  });
+
+  it('refuses the approval when the step role has gained an admin key since the approval started', async () => {
+    // A view-only role (CEO) may legitimately be an approver; give it an admin key afterwards.
+    const ceoRole = await roleId('CEO');
+    const res = await request(app)
+      .put('/api/v1/core/approval-rules/AVL')
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .send({ measure: 'NONE', bands: [{ steps: [{ stepNo: 1, roleId: ceoRole }] }], reason: 'CEO signs AVL (test)' });
+    expect(res.status).toBe(200);
+    const { approvalId } = await start('AVL', { measure: 'NONE' });
+    await client.query('BEGIN');
+    await client.query(`SELECT set_config('app.user_id','1',true), set_config('app.company_id','1',true)`);
+    await client.query(
+      `INSERT INTO core.role_permissions (role_id, permission_id) SELECT $1, id FROM core.permissions WHERE key = 'core.settings.manage'`,
+      [ceoRole],
+    );
+    await client.query('COMMIT');
+    const approve = await act('ceo', approvalId, 'approve');
+    expect(approve.status).toBe(403);
+    expect(approve.body.error.message).toMatch(/Admin roles cannot approve/);
+    expect(await approvalStatus(approvalId)).toBe('PENDING');
+  });
+});

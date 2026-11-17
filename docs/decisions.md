@@ -4,6 +4,7 @@ Record every design choice not already covered by `architecture.md`. Newest firs
 
 | Date | Decision | Why | Decided by |
 | --- | --- | --- | --- |
+| 2026-11-17 | (Rules review A) An approval step can never go to a role holding an admin key: refused when rules are saved (`ROLE_ADMIN_CONFLICT`), when an approval starts, and at approve time if the role gained an admin key later (`FORBIDDEN`). View-only roles (e.g. CEO) remain allowed as approvers | Architecture §3: System Admin approves nothing; closes the route "admin edits the matrix to approve POs himself" | Owner (rules review) |
 | 2026-11-17 | Web: the access token is kept in memory only (never localStorage); the refresh token stays in the httpOnly cookie; on page load the app restores the session with one refresh call; on a 401 it refreshes once (shared by concurrent calls) and retries, otherwise signs out | A script injected into the page cannot steal a long-lived token | Agent (M1 task 11) |
 | 2026-11-17 | Web: idle logout after 30 min without mouse/keyboard/scroll/touch activity, then the login page says why | Q4; unattended terminals on the floor | Agent (M1 task 11) |
 | 2026-11-17 | Web: the sidebar is a pure function of the user's permission keys (`layouts/menu.ts`, unit-tested); pages are also wrapped in `RequirePermission`; the API remains the authority | Architecture §2/§8: the UI only hides what the API would refuse | Agent (M1 task 11) |
