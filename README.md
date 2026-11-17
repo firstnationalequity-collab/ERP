@@ -4,7 +4,7 @@ Integrated ERP for Albert Pharmaceuticals — PostgreSQL, Express, React, Node (
 Design: `docs/architecture.md` · Plan: `docs/build-plan.md` · Progress: `docs/progress.md` · Agent rules: `CLAUDE.md`.
 
 ## Prerequisites
-- Node.js 20 or newer, pnpm 10 (`npm i -g pnpm`)
+- Node.js 26 (pinned in `.nvmrc`), pnpm 10 (`npm i -g pnpm`)
 - Docker Desktop (for the local PostgreSQL)
 - VS Code with the Claude Code extension
 

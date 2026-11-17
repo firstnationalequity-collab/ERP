@@ -1,6 +1,6 @@
 # Build plan — Phase 1
 
-The pace depends on how many hours go in each day. Estimates assume ~8 focused hours/day with the agent (~30 working days total); at 4 hours/day expect about two months. Finish a milestone's **Done when** before starting the next. Track progress in `docs/progress.md`.
+The pace depends on how many hours go in each day. Estimates assume ~8 focused hours/day with the agent (~32 working days total); at 4 hours/day expect about two months. Finish a milestone's **Done when** before starting the next. Track progress in `docs/progress.md`.
 
 How to run a milestone with the agent (VS Code):
 1. Open a fresh agent chat.
@@ -10,19 +10,23 @@ How to run a milestone with the agent (VS Code):
 
 ---
 
-## M1 — Foundation (est. 2 days)
+## M1 — Foundation (est. 4 days)
 Tasks:
-- [ ] Docker Compose Postgres up; migrations run with `pnpm db:migrate`; seed with `pnpm db:seed`.
-- [ ] Apply `0000_foundation.sql` (schemas, audit trigger, immutability trigger) — already in the starter.
-- [ ] `core` tables: users, roles, permissions, role_permissions, user_roles, approval_rules, approvals, e_signatures, audit_log, number_series, fiscal_periods, attachments, settings.
-- [ ] Auth: login, refresh (httpOnly cookie), logout, change password; argon2; lockout after 5 failures; 90-day expiry.
-- [ ] RBAC middleware `requirePermission(key)`; seed roles from architecture §3 with permission bundles.
-- [ ] `core/esign` (verify password, store meaning + reason) and `core/transition` (allowed-moves map + history).
-- [ ] `core/numbering` (`nextDocNo(docType)` with row lock, per fiscal year).
-- [ ] Approvals: rule lookup by doc type + amount, approval steps, "my approvals" inbox endpoint.
-- [ ] Web: login page, app layout with permission-driven sidebar, users/roles admin, audit trail viewer.
+- [x] Docker Compose Postgres up; migrations run with `pnpm db:migrate`; seed with `pnpm db:seed`. Node 26 pinned (`.nvmrc`, `engines`).
+- [x] Apply `0000_foundation.sql` (schemas, audit trigger, immutability trigger) — already in the starter.
+- [ ] `core` tables: companies, users, user_credentials (no audit trigger), sessions, auth_events (insert-only), roles, permissions, role_permissions, user_roles, approval_rules, approvals, e_signatures, status_history (insert-only), idempotency_keys, audit_log, number_series, fiscal_periods, attachments, settings.
+- [x] Auth: login by username, refresh (httpOnly cookie, 12 h, rotate on use, reuse revokes session), logout, change password; argon2; complexity + last-5 reuse block; lockout after 5 failures until admin unlock; 90-day expiry and forced first-login change; auth_events for every event.
+- [ ] RBAC middleware `requirePermission(key)`; permission keys classed admin/view/action; seed roles from `docs/roles.md` (after review) plus the SYSTEM user and the first admin (`INITIAL_ADMIN_PASSWORD`).
+- [ ] Role administration guards: no self role changes; admin roles hold no action keys; qc.* / qa.* role changes need a QA Manager e-signature.
+- [ ] `core/esign` (verify password, store meaning + reason; wrong password counts toward lockout) and `core/transition` (allowed-moves map with a permission key per move + `core.status_history`).
+- [ ] `core/numbering` (`nextDocNo(docType)` with row lock; pattern tokens and FISCAL_YEAR / CALENDAR_YEAR / NEVER reset).
+- [ ] Approvals: rule lookup by doc type + measure (AMOUNT_PKR / PERCENT), sequential and parallel steps routed to roles (creator excluded), "my approvals" inbox endpoint.
+- [ ] `core/idempotency` (24 h keys, `DUPLICATE_REQUEST` on a different request) and attachments (storage interface, local-disk driver).
+- [ ] Fiscal periods: create, close and reopen (endpoints and service).
+- [ ] CI: GitHub Actions — install, typecheck, test with a Postgres 16 service container.
+- [ ] Web: login page, change password, 30-min idle logout, app layout with permission-driven sidebar, users (incl. unlock) and roles admin, approval rules, number series, fiscal periods, audit trail viewer, my approvals inbox, e-signature dialog.
 
-Done when: login works; any change writes an `audit_log` row; a user without permission gets 403; e-signature with a wrong password is refused; `pnpm test` green.
+Done when: login works; any change writes an `audit_log` row; `audit_log` never contains a password hash; a user without permission gets 403; e-signature with a wrong password is refused; `pnpm test` green locally and in CI.
 
 Prompt:
 > Read CLAUDE.md, docs/progress.md, docs/build-plan.md (M1) and docs/architecture.md §1–5. Plan M1 as a task list, wait for my OK, then build it task by task with tests.
@@ -31,7 +35,7 @@ Prompt:
 Tasks:
 - [ ] Masters: uoms, uom_conversions, item_categories, items, customers, customer_addresses, vendors, approved_sources, warehouses, locations, products, master_formulas (+ lines, versioned, QA approval), price_lists, tax_codes.
 - [ ] Finance masters: accounts (seed a pharma chart of accounts), cost_centers, posting_rules, fiscal periods for FY2026-27 (Jul–Jun).
-- [ ] `inv` tables: lots, lot_status_history, stock_movements (immutable), stock_balances (CHECK qty >= 0), stock_reservations.
+- [ ] `inv` tables: lots (status history in `core.status_history`), stock_movements (immutable), stock_balances (CHECK qty >= 0), stock_reservations.
 - [ ] `engines/inventory`: `postMovement()`, `reserve()`, `fefoCandidates()`, moving-average cost update, toll stock at zero value.
 - [ ] `engines/posting`: `postJournal()` (balanced, open period, posting_rules lookup), `reverse()`.
 - [ ] Web: CRUD screens for all masters (shared DataTable / DocForm).

@@ -23,19 +23,22 @@ Phase 1 builds the connected order-to-cash and factory chain: masters, inventory
 
 Later, as independent modules: HR & Payroll, Engineering, full QMS, R&D, MRP and scheduling, stability, serialization exchange.
 
-**Non-negotiable rules** (the agent must never break these):
+**Non-negotiable rules.** `CLAUDE.md` in the repository root is the authority; this list is the same 12 rules in the same order.
 
-1. Only QC changes a material lot's status; only QA releases a batch. No role overrides this, including CEO and System Admin.
-2. Nothing is issued, consumed or dispatched unless its lot is Approved (materials) or Released (finished goods).
-3. No negative stock. Posted documents are never edited or deleted; mistakes are corrected by a reversal document.
-4. Every stock movement and every invoice posts to the GL in the same database transaction.
-5. Database triggers write the audit trail on every business table; the application cannot switch it off.
-6. Approvals and GMP sign-offs are e-signatures: password re-entry, a meaning (Reviewed, Approved, Released) and a reason.
-7. Segregation of duties: requester ≠ approver ≠ receiver; whoever creates a payment cannot approve it.
-8. Money and quantities use NUMERIC, never floating point. Base currency PKR; import POs may be in USD, EUR or CNY.
-9. A closed fiscal period accepts no postings.
+1. Only QC approves or rejects material lots. Only QA may place or lift HOLD and release batches/FG lots. Warehouse Manager may only move a REJECTED lot to DESTROYED or RETURNED, with a QA witness e-signature. No other role, including CEO and admin, can change a lot or batch status.
+2. Issue/reserve only APPROVED lots; dispatch only RELEASED FG lots. Checked in the service AND in the database.
+3. No negative stock (CHECK constraint on `inv.stock_balances`).
+4. Posted documents are immutable. Corrections are reversal documents. Posted rows are never updated or deleted.
+5. Every stock movement and every invoice posts to the GL in the same database transaction, through `engines/posting`.
+6. Database triggers write the audit trail on every business table; the application cannot bypass or switch it off.
+7. Status changes only through explicit action endpoints using `core/transition` with an allowed-moves map; the map holds the permission key for each individual move.
+8. E-signature actions re-verify the password and store a meaning (Reviewed, Approved, Released …) and a reason.
+9. Segregation of duties (creator ≠ approver ≠ receiver; whoever creates a payment cannot approve it) is enforced in services and returns 403 with an error code.
+10. Money `NUMERIC(18,2)`, quantities `NUMERIC(18,4)`, rates/assay `NUMERIC(9,4)`; `decimal.js` in TypeScript, never floating point. Base currency PKR; import POs may be in USD, EUR or CNY.
+11. A closed fiscal period accepts no postings.
+12. Customer-owned (toll) stock: quantity only, zero value, no GL entry.
 
-**Assumptions:** one company (Albert Pharmaceuticals) with `company_id` kept on core tables; about 3 users per department, roughly 35 users; CEO has view-only dashboards; cloud hosting; approval limits are placeholders until Finance confirms.
+**Assumptions:** one company (Albert Pharmaceuticals), held as the single row of `core.companies`, with `company_id` as a real foreign key on every business table; about 3 users per department, roughly 35 users; CEO has view-only access; cloud hosting; approval limits are placeholders until Finance confirms.
 
 ## 2. Tech stack and system architecture
 
@@ -45,9 +48,9 @@ The system is a **modular monolith** on PERN with TypeScript: one API deployable
 | --- | --- | --- |
 | Language | TypeScript, strict mode, front and back | Types catch agent mistakes early |
 | Database | PostgreSQL 16 | NUMERIC, constraints, triggers, row locks, JSONB |
-| Data access | Drizzle ORM + drizzle-kit migrations; raw SQL migrations for triggers and constraints | SQL-close, full transaction control |
-| API | Node.js 20 LTS, Express 4, Zod validation | Simple, well known to the agent |
-| Auth | JWT access token (15 min) + httpOnly refresh cookie, argon2 password hashing | No shared logins, short sessions |
+| Data access | Drizzle ORM as the query builder. Hand-written SQL files in `apps/api/src/db/migrations` are the only migration source (tables, constraints, triggers); the Drizzle schema is written by hand to match them. No drizzle-kit | SQL-close, full transaction control, one source of truth for the schema |
+| API | Node.js 26 (pinned in `.nvmrc` and `engines`; Docker images use the same major version), Express 4, Zod validation | One runtime version from laptop to production |
+| Auth | JWT access token (15 min) + httpOnly refresh cookie (12 h, rotated on every use; reuse of an old refresh token revokes the whole session), sessions in `core.sessions`, argon2 password hashing; the web app logs out after 30 min idle | No shared logins, short sessions, stolen refresh tokens detected |
 | Frontend | React 18, Vite, React Router, TanStack Query, Ant Design, React Hook Form + Zod | Dense tables and forms out of the box |
 | Shared | `packages/shared`: Zod schemas, enums, permission keys | One definition for API and UI |
 | Documents | PDF on the server (pdfmake): invoice, CoA, GRN, labels, gate pass | Consistent printouts |
@@ -55,7 +58,8 @@ The system is a **modular monolith** on PERN with TypeScript: one API deployable
 | Background jobs | pg-boss (queue in Postgres) | FBR retries, nightly expiry and retest blocks |
 | Tests | Vitest + Supertest against a real test database; Playwright end-to-end | Rules tested where they live |
 | Logs and errors | pino structured logs, Sentry | Production troubleshooting |
-| Hosting | Docker images; managed PostgreSQL with point-in-time recovery; container service or VM behind Nginx with TLS; S3-compatible storage for attachments | Cloud, backups handled by the provider |
+| CI | GitHub Actions: install, typecheck, test against a PostgreSQL 16 service container | Every push proves the rules still hold |
+| Hosting | Docker images (Node 26 base); managed PostgreSQL with point-in-time recovery; container service or VM behind Nginx with TLS; attachments behind a storage interface (local-disk driver from M1, S3-compatible driver in M10) | Cloud, backups handled by the provider |
 
 **Request path:** route → Zod validation → authentication → permission check → service (business rules, one DB transaction) → repository → PostgreSQL, where triggers write the audit log. The UI never decides whether an action is allowed; it only hides buttons the API would refuse.
 
@@ -67,76 +71,92 @@ The system is a **modular monolith** on PERN with TypeScript: one API deployable
 
 ## 3. Roles, permissions and approvals
 
-Access is permission-based: each action is a permission key (`purchase.po.approve`, `qc.lot.change_status`, `qa.batch.release`), roles are bundles of keys, and one user may hold several roles. About 12 roles cover Phase 1 for roughly 35 users.
+Access is permission-based: each action is a permission key (`purch.po.approve`, `qc.lot.change_status`, `qa.batch.release`), roles are bundles of keys, and one user may hold several roles. Every key is classed as **admin**, **view** or **action**. Each module has its own view key. The exact role → permission mapping is in `docs/roles.md`. Phase 1 has 20 roles for roughly 35 users.
 
 | Role | Department | Can do | Cannot do |
 | --- | --- | --- | --- |
-| CEO / Director | Management | View every module, all reports and dashboards | Create, approve or post anything (Phase 1) |
+| CEO / Director | Management | Every view key (all modules, reports, dashboards) and nothing else | Create, approve or post anything (Phase 1) |
 | Sales Executive | Sales | Customers (draft), quotations, sales orders, delivery requests | Approve discounts, override credit |
 | Sales Manager | Sales | Approve quotations and discounts within limit, approve customer master | Change prices after approval |
 | Accountant | Finance | Journal vouchers, vendor invoices, bank reconciliation | Approve payments, close periods |
-| AR / AP Officer | Finance | Sales invoices, receipts, payment drafts | Approve own payments |
-| Finance Manager | Finance | Approve payments, credit overrides, top-band POs, adjustments; close periods; costing | Change lot or batch status |
+| AR Officer | Finance | Sales invoices, customer receipts | Approve payments |
+| AP Officer | Finance | Payment drafts | Approve own payments |
+| Finance Manager | Finance | Approve payments, credit overrides, top-band POs, adjustments; manage and close periods; costing | Change lot or batch status |
 | Purchase Officer | Procurement | PRs, POs, vendor drafts, landed cost entry | Approve own PO, receive goods |
 | Purchase Manager | Procurement | Approve POs within limit, approve vendor master | Add vendors to AVL |
 | Storekeeper | Warehouse | Gate entry, GRN, put-away, issues, picking, dispatch, labels | Change lot status, adjust stock |
-| Warehouse Manager | Warehouse | Request stock adjustments, gate pass approval, returns | Approve own adjustment |
+| Warehouse Manager | Warehouse | Request stock adjustments, gate pass approval, returns; move a REJECTED lot to DESTROYED / RETURNED (with QA witness e-signature) | Approve own adjustment; any other lot status change |
 | Planner | Planning | Production orders, release orders to the floor | Issue material |
-| Production Operator / Supervisor | Production | Execute and sign stages, record yield; Supervisor closes batch | Release batch, edit master formula |
-| Production Manager | Production | Approve batch close, raise deviations | Release batch |
+| Production Operator | Production | Execute and sign stages, record yield | Close or release batch, edit master formula |
+| Production Supervisor | Production | Execute and sign stages; submit batch close (`prod.batch.close`) | Approve batch close, release batch |
+| Production Manager | Production | Approve batch close with e-signature (`prod.batch.approve_close`), raise deviations | Release batch |
 | QC Analyst | QC | Enter results, take samples | Approve own results |
-| QC Manager | QC | Review results, approve/reject lots, issue CoA, approve specs | Release batch |
-| QA Officer / QA Manager | QA | AVL approval, master formula approval, deviations, batch release (Manager) | Enter QC results, create POs |
+| QC Manager | QC | Review results, approve/reject lots, issue CoA, approve specs | Release batch, place or lift HOLD |
+| QA Officer | QA | Raise and investigate deviations | Release batch, close deviations, enter QC results, create POs |
+| QA Manager | QA | AVL approval, master formula approval, close deviations, place/lift lot HOLD, batch release; QA witness for lot disposal; countersign role changes that touch qc.* / qa.* action keys | Enter QC results, create POs |
 | System Admin | IT | Users, roles, settings, number series | Any business transaction or approval |
+
+A seeded **SYSTEM** user (no roles, cannot log in) is the actor for seeds and background jobs.
+
+**Role administration rules** (enforced in the service, each with a test):
+
+- Nobody can change their own role assignments, and that includes System Admin.
+- A role that holds an admin key (`core.user.manage`, `core.role.manage`, `core.settings.manage`) can never also hold an action key. Saving such a bundle is refused.
+- Any change to a role that holds, or would hold, a `qc.*` or `qa.*` action key needs a QA Manager e-signature.
 
 **Approval matrix** (configurable table `approval_rules`; values are placeholders until Finance confirms; CEO can be added to any band later without code changes):
 
-| Document | Band (PKR) | Approver |
-| --- | --- | --- |
-| Purchase order | up to 500,000 | Purchase Manager |
-| Purchase order | 500,001 to 5,000,000 | Finance Manager |
-| Purchase order | above 5,000,000 | Purchase Manager then Finance Manager (two steps) |
-| Quotation discount | up to 5% off list | Sales Manager |
-| Quotation discount | above 5% | Sales Manager then Finance Manager |
-| Sales order over credit limit | any excess | Finance Manager |
-| Vendor payment | any amount | Finance Manager (creator cannot approve) |
-| Stock adjustment or write-off | any value | Finance Manager and QA Manager |
-| Vendor added to AVL | — | QA Manager |
-| Master formula version | — | QA Manager |
+- Each rule has a `measure`: `AMOUNT_PKR` or `PERCENT`. Import POs are converted to PKR at the PO's exchange rate before the band is looked up.
+- "**then**" means sequential steps: step 2 opens only after step 1 is approved. "**and**" means both must approve, in any order.
+- Each step goes to a **role**. Anyone holding that role can act, except the document's creator (segregation). Pending steps show in the "my approvals" inbox (`core.approval.inbox`, held by every user).
+
+| Document | Measure | Band | Approver |
+| --- | --- | --- | --- |
+| Purchase order | AMOUNT\_PKR | up to 500,000 | Purchase Manager |
+| Purchase order | AMOUNT\_PKR | 500,000.01 to 5,000,000 | Finance Manager |
+| Purchase order | AMOUNT\_PKR | above 5,000,000 | Purchase Manager then Finance Manager (two steps) |
+| Quotation discount | PERCENT | up to 5% off list | Sales Manager |
+| Quotation discount | PERCENT | above 5% | Sales Manager then Finance Manager |
+| Sales order over credit limit | AMOUNT\_PKR | any excess | Finance Manager |
+| Vendor payment | AMOUNT\_PKR | any amount | Finance Manager (creator cannot approve) |
+| Stock adjustment or write-off | AMOUNT\_PKR | any value | Finance Manager and QA Manager (both, any order) |
+| Vendor added to AVL | — | — | QA Manager |
+| Master formula version | — | — | QA Manager |
 
 **Segregation checks enforced by the API:** PO creator ≠ PO approver; PO approver ≠ GRN receiver; payment creator ≠ payment approver; QC result entered by ≠ reviewed by; adjustment requester ≠ approver. Each check returns a clear error naming the rule.
 
 ## 4. Status machines
 
-Three status chains hold the system together: lot status (owned by QC), batch status (owned by QA) and order status (owned by Sales and Finance). Each lives in one service function `transition(entity, from, to, actor)` that checks the allowed move and the actor's permission, writes a history row and refuses everything else. The database also has a CHECK constraint on allowed values.
+Three status chains hold the system together: lot status (QC approves and rejects; QA holds and releases), batch status (owned by QA) and order status (owned by Sales and Finance). Each lives in one service function `transition(entity, from, to, actor)`. It works from the entity's allowed-moves map, where **every individual move carries its own permission key** (and whether it needs an e-signature). It checks that the move is allowed and that the actor holds that key, writes a row to `core.status_history` (entity\_table, entity\_id, from\_status, to\_status, actor, esign\_id, reason, at), and refuses everything else. The database also has a CHECK constraint on allowed values. Each module's map lists its keys when that module is built.
 
 **Lot status** (`lots.status`): applies to every material and finished-goods lot.
 
-| From | To | Who / trigger | Condition |
-| --- | --- | --- | --- |
-| (new) | QUARANTINE | GRN posted, or FG output recorded | Automatic; QC sample request created |
-| QUARANTINE | UNDER\_TEST | QC Analyst takes sample | — |
-| UNDER\_TEST | APPROVED | QC Manager, e-signature | All spec tests passed and reviewed |
-| UNDER\_TEST | REJECTED | QC Manager, e-signature | Any test failed; reason required |
-| APPROVED | HOLD | QC or QA Manager | Reason required |
-| HOLD | APPROVED / REJECTED | QC or QA Manager, e-signature | Reason required |
-| APPROVED | RETEST\_DUE / EXPIRED | Nightly job | Retest or expiry date reached |
-| RETEST\_DUE | UNDER\_TEST | QC Analyst | Re-sample; new assay updates the lot |
-| REJECTED | DESTROYED / RETURNED | Warehouse Manager, QA witness e-signature | Stock moved out, value written off or debit note |
-| QC APPROVED (FG only) | RELEASED | QA Manager via batch release | See batch release below |
+| From | To | Who / trigger | Permission key | Condition |
+| --- | --- | --- | --- | --- |
+| (new) | QUARANTINE | GRN posted, or FG output recorded | (posting service) | Automatic; QC sample request created |
+| QUARANTINE | UNDER\_TEST | QC Analyst takes sample | `qc.result.enter` | — |
+| UNDER\_TEST | APPROVED | QC Manager, e-signature | `qc.lot.change_status` | All spec tests passed and reviewed |
+| UNDER\_TEST | REJECTED | QC Manager, e-signature | `qc.lot.change_status` | Any test failed; reason required |
+| APPROVED | HOLD | QA Manager | `qa.lot.hold` | Reason required |
+| HOLD | APPROVED | QA Manager lifts hold, e-signature | `qa.lot.hold` | Reason required |
+| HOLD | REJECTED | QC Manager, e-signature | `qc.lot.change_status` | Reason required (only QC rejects) |
+| APPROVED | RETEST\_DUE / EXPIRED | Nightly job (SYSTEM user) | (system job) | Retest or expiry date reached |
+| RETEST\_DUE | UNDER\_TEST | QC Analyst | `qc.result.enter` | Re-sample; new assay updates the lot |
+| REJECTED | DESTROYED / RETURNED | Warehouse Manager, plus QA Manager witness e-signature | `inv.lot.dispose` + witness `qa.lot.witness` | Stock moved out, value written off or debit note |
+| QC APPROVED (FG only) | RELEASED | QA Manager via batch release | `qa.batch.release` | See batch release below |
 
 Only **APPROVED** material lots can be issued or reserved; only **RELEASED** FG lots can be picked for dispatch.
 
 **Production order / batch** (`production_orders.status`):
 
-| From | To | Who | Condition |
-| --- | --- | --- | --- |
-| PLANNED | RELEASED | Planner | Master formula version APPROVED; every required material has enough APPROVED stock; stock reserved |
-| PLANNED | CANCELLED | Planner | Nothing issued |
-| RELEASED | IN\_PROCESS | System | First material issue posted |
-| IN\_PROCESS | AWAITING\_QA | Production Manager, e-signature | All stages signed; yield and output recorded; FG lot created in QUARANTINE |
-| AWAITING\_QA | RELEASED\_FOR\_SALE | QA Manager, e-signature | FG lot QC APPROVED; no OPEN deviation on the batch; checklist complete |
-| AWAITING\_QA | REJECTED | QA Manager, e-signature | Reason required; FG lot set REJECTED |
+| From | To | Who | Permission key | Condition |
+| --- | --- | --- | --- | --- |
+| PLANNED | RELEASED | Planner | `prod.order.manage` | Master formula version APPROVED; every required material has enough APPROVED stock; stock reserved |
+| PLANNED | CANCELLED | Planner | `prod.order.manage` | Nothing issued |
+| RELEASED | IN\_PROCESS | System | (issue posting service) | First material issue posted |
+| IN\_PROCESS | AWAITING\_QA | Production Supervisor submits close (`prod.batch.close`, opens an approval step); Production Manager approves with e-signature | `prod.batch.approve_close` | All stages signed; yield and output recorded; FG lot created in QUARANTINE |
+| AWAITING\_QA | RELEASED\_FOR\_SALE | QA Manager, e-signature | `qa.batch.release` | FG lot QC APPROVED; no OPEN deviation on the batch; checklist complete |
+| AWAITING\_QA | REJECTED | QA Manager, e-signature | `qa.batch.release` | Reason required; FG lot set REJECTED |
 
 **Quotation:** DRAFT → PENDING\_APPROVAL → APPROVED → SENT → ACCEPTED or LOST. An approved quotation is locked; a change creates a new version.
 
@@ -148,21 +168,21 @@ Only **APPROVED** material lots can be issued or reserved; only **RELEASED** FG 
 
 ## 5. Database schema
 
-About 75 tables in 9 groups, all in one PostgreSQL schema per module (`core`, `inv`, `sales`, `purch`, `qc`, `prod`, `qa`, `fin`). The agent writes the full Drizzle definitions from this list; columns shown are the ones that carry business rules.
+About 80 tables in 9 groups, all in one PostgreSQL schema per module (`core`, `inv`, `sales`, `purch`, `qc`, `prod`, `qa`, `fin`). Tables, constraints and triggers are created by hand-written SQL migrations. The Drizzle definitions are written to match them. Columns shown are the ones that carry business rules.
 
 **Conventions for every table**
 
 - Primary key `id BIGINT GENERATED ALWAYS AS IDENTITY`; documents also carry a human number (`doc_no`, e.g. `PO-2026-00042`) from `core.number_series`.
-- `company_id`, `created_at`, `created_by`, `updated_at`, `updated_by` on all business tables.
+- `company_id` (FK to `core.companies`), `created_at`, `created_by`, `updated_at`, `updated_by` (FK to `core.users`) on all business tables. Seeds and jobs act as the SYSTEM user.
 - Quantities `NUMERIC(18,4)`, money `NUMERIC(18,2)`, rates and assay `NUMERIC(9,4)`, dates `DATE`, timestamps `TIMESTAMPTZ` stored in UTC, shown in Asia/Karachi.
 - Status columns are `TEXT` with a CHECK constraint; masters use `is_active`, never hard delete.
 - Foreign keys everywhere, `ON DELETE RESTRICT`.
 
 | Group | Tables | Key columns and rules |
 | --- | --- | --- |
-| Core | `users`, `roles`, `permissions`, `role_permissions`, `user_roles`, `approval_rules`, `approvals`, `e_signatures`, `audit_log`, `number_series`, `fiscal_periods`, `attachments`, `settings` | `audit_log`: table, record\_id, action, old\_data JSONB, new\_data JSONB, changed\_by, changed\_at, reason — insert-only, written by trigger. `e_signatures`: user, meaning, reason, record table/id, signed\_at, IP. `fiscal_periods.status` OPEN/CLOSED |
+| Core | `companies`, `users`, `user_credentials`, `sessions`, `auth_events`, `roles`, `permissions`, `role_permissions`, `user_roles`, `approval_rules`, `approvals`, `e_signatures`, `status_history`, `idempotency_keys`, `audit_log`, `number_series`, `fiscal_periods`, `attachments`, `settings` | `companies`: one row, Albert Pharmaceuticals. `users`: username (employee code, unique), email (optional), is\_system (SYSTEM user, cannot log in), is\_active, failed\_attempts, locked\_at, password\_changed\_at, must\_change\_password. No password hash on `users`. `user_credentials`: user, password\_hash, set\_at, is\_current; one row per password ever set (used to block reuse of the last 5); **no audit trigger**, so a hash never reaches `audit_log`. `sessions`: user, refresh-token family, current token hash, expires\_at (12 h), revoked\_at, revoke\_reason, IP, user agent. `auth_events`: insert-only; user, username tried, event LOGIN\_OK/LOGIN\_FAIL/LOGOUT/LOCKOUT/UNLOCK/PASSWORD\_CHANGE/ESIGN\_FAIL, IP, at. `audit_log`: table, record\_id, action, old\_data JSONB, new\_data JSONB, changed\_by, changed\_at, reason — insert-only, written by trigger. `e_signatures`: user, meaning, reason, record table/id, signed\_at, IP. `status_history`: entity\_table, entity\_id, from\_status, to\_status, actor, esign\_id, reason, at — insert-only. `idempotency_keys`: key, user, endpoint, request hash, stored response, created\_at; expire after 24 h. `approval_rules`: doc\_type, measure AMOUNT\_PKR/PERCENT, min, max, step\_no, role, mode (SEQUENTIAL "then" / PARALLEL "and"). `number_series`: doc\_type, pattern (tokens `{PREFIX}` `{FY}` `{YYYY}` `{YY}` `{SEQ:n}`), reset FISCAL\_YEAR/CALENDAR\_YEAR/NEVER, current period key, next value. `fiscal_periods.status` OPEN/CLOSED. `attachments`: record table/id, file name, content type, size, sha256, storage driver, storage key |
 | Masters | `uoms`, `uom_conversions`, `item_categories`, `items`, `customers`, `customer_addresses`, `vendors`, `approved_sources`, `warehouses`, `locations`, `products`, `master_formulas`, `master_formula_lines`, `price_lists`, `price_list_lines`, `tax_codes` | `items.type` RM/PM/API/EXCIPIENT/BULK/FG/SPARE/CONSUMABLE; shelf\_life\_days, retest\_days, is\_controlled, storage\_zone. `approved_sources`: vendor + item + manufacturer + manufacturing site, status APPROVED/BLOCKED, approved\_by (QA). `products`: FG item, registration\_no, customer\_id (null = own brand), artwork version. `master_formulas`: product, version, batch\_size, status DRAFT/APPROVED/OBSOLETE. Lines: item, qty\_per\_batch, uom, is\_api, is\_filler, assay\_basis (AS\_IS/DRIED) |
-| Inventory | `lots`, `lot_status_history`, `stock_movements`, `stock_balances`, `stock_reservations`, `stock_adjustments`, `stock_adjustment_lines` | `lots`: item, lot\_no, mfr\_batch\_no, manufacturer, mfg/expiry/retest dates, assay\_pct, water\_pct, status, owner\_type OWN/CUSTOMER, owner\_customer\_id, unit\_cost. `stock_movements` is the immutable ledger: type, lot, from/to location, qty (signed), unit\_cost, value, ref\_doc\_type/id, reason\_code, posted\_at. `stock_balances` (lot, location, qty) is updated in the same transaction, with CHECK qty >= 0 |
+| Inventory | `lots`, `stock_movements`, `stock_balances`, `stock_reservations`, `stock_adjustments`, `stock_adjustment_lines` | `lots`: item, lot\_no, mfr\_batch\_no, manufacturer, mfg/expiry/retest dates, assay\_pct, water\_pct, status, owner\_type OWN/CUSTOMER, owner\_customer\_id, unit\_cost. `stock_movements` is the immutable ledger: type, lot, from/to location, qty (signed), unit\_cost, value, ref\_doc\_type/id, reason\_code, posted\_at. `stock_balances` (lot, location, qty) is updated in the same transaction, with CHECK qty >= 0. Lot status history lives in `core.status_history` |
 | Sales | `quotations`, `quotation_lines`, `sales_orders`, `sales_order_lines`, `delivery_orders`, `delivery_order_lines`, `gate_passes`, `sales_invoices`, `sales_invoice_lines`, `fbr_submissions`, `customer_receipts`, `receipt_allocations`, `sales_returns` | Order line links quotation version and price. Delivery lines carry lot\_id. `fbr_submissions`: invoice, request JSONB, response JSONB, fbr\_invoice\_no, status PENDING/SUCCESS/FAILED, attempts |
 | Procurement | `purchase_requisitions`, `pr_lines`, `purchase_orders`, `po_lines`, `grns`, `grn_lines`, `landed_costs`, `landed_cost_allocations`, `vendor_invoices`, `vendor_invoice_lines`, `vendor_payments`, `payment_allocations` | PO: currency, exchange\_rate, incoterm. GRN line creates a lot. `landed_costs`: GRN, type FREIGHT/DUTY/CLEARING/INSURANCE/OTHER, amount, basis VALUE/QTY. Payment: gross, WHT section, WHT amount, net |
 | QC | `qc_specs`, `qc_spec_tests`, `qc_samples`, `qc_results`, `coas` | Spec per item, versioned, approved by QC Manager. Test: name, method, min, max, text\_limit, unit, is\_assay, is\_water. Result: value, pass (computed), entered\_by, reviewed\_by. Original results are never updated; a re-test is a new row |
@@ -170,7 +190,7 @@ About 75 tables in 9 groups, all in one PostgreSQL schema per module (`core`, `i
 | QA | `deviations`, `batch_releases` | Deviation: batch, class MINOR/MAJOR/CRITICAL, status OPEN/CLOSED, root cause, closed\_by. Release: production order, checklist JSONB, decision, e-signature id |
 | Finance | `accounts`, `cost_centers`, `posting_rules`, `journal_entries`, `journal_lines`, `bank_accounts`, `bank_statement_lines`, `batch_costs`, `cost_rates` | Journal entry: date, period, source\_type/id, status, reversal\_of. Lines: account, debit, credit, cost\_center, customer\_id, vendor\_id, production\_order\_id; CHECK one of debit/credit is zero; trigger ensures entry balances. `cost_rates`: per line machine-hour rate, labour rate, overhead % |
 
-**Database-enforced rules** (not only in code): balances never negative; journal entries balance; no insert into a closed period; no UPDATE/DELETE on posted rows, audit log or stock movements (trigger raises an error).
+**Database-enforced rules** (not only in code): balances never negative; journal entries balance; no insert into a closed period; no UPDATE/DELETE on posted rows, audit log, auth events, status history or stock movements (trigger raises an error).
 
 ## 6. Inventory ledger and GL posting rules
 
@@ -207,8 +227,18 @@ Each module below lists its screens and the rules its services must enforce; end
 
 ### 7.1 Foundation
 
-- Screens: login, change password, users, roles and permissions, approval rules, number series, fiscal periods, audit trail viewer (filter by table, record, user, date), my approvals inbox.
-- Rules: password minimum 10 characters, lock after 5 failed attempts, forced change every 90 days; e-signature dialog asks for password, meaning and reason; every approval lands in the approver's inbox with a count badge.
+- Screens: login, change password, users (including unlock), roles and permissions, approval rules, number series, fiscal periods, audit trail viewer (filter by table, record, user, date), my approvals inbox.
+- Login is by username (the employee code); email is optional.
+- Passwords: at least 10 characters, with upper case, lower case and a digit, and must not contain the username. The last 5 passwords cannot be reused. A change is forced every 90 days and at first login.
+- Lockout: after 5 failed attempts. A wrong password in the e-signature dialog counts toward those 5. The account stays locked until an admin unlocks it.
+- Every login (ok or failed), logout, lockout, unlock, password change and e-signature failure is written to the insert-only `core.auth_events`.
+- Sessions: access token 15 min; refresh token 12 h, rotated on every use. Presenting an already-used refresh token revokes the whole session. The web app logs out after 30 min idle.
+- First admin: created by the seed from `INITIAL_ADMIN_PASSWORD`, with a forced change at first login. The seed refuses to run in production if that variable is not set. The SYSTEM user cannot log in.
+- Role administration: see §3 (nobody changes their own roles; admin roles hold no action keys; qc.\* / qa.\* role changes need a QA Manager e-signature).
+- The e-signature dialog asks for password, meaning and reason. Every approval lands in the approver's inbox with a count badge.
+- Number series: the pattern uses the tokens `{PREFIX}` `{FY}` `{YYYY}` `{YY}` `{SEQ:n}`, and the reset is FISCAL\_YEAR, CALENDAR\_YEAR or NEVER. The fiscal year runs July to June, and `{FY}` for FY 2026-27 is `2627`. Defaults: documents `{PREFIX}-{FY}-{SEQ:5}` resetting each fiscal year (e.g. `PO-2627-00042`); batch numbers `AP{YY}-{SEQ:4}` resetting each calendar year (e.g. `AP26-0001`). Both are editable by the admin. A number is taken under a row lock inside the business transaction, so a rollback leaves no gap.
+- Attachments: upload, list and download against any record, behind a storage interface. The local-disk driver ships in M1; the S3-compatible driver comes in M10.
+- Idempotency: a posting action's `Idempotency-Key` is stored with the user, endpoint, request hash and response for 24 hours. The same key with the same request returns the stored response. The same key with a different request is refused with `DUPLICATE_REQUEST`.
 
 ### 7.2 Masters
 
@@ -218,7 +248,7 @@ Each module below lists its screens and the rules its services must enforce; end
 ### 7.3 Inventory and Warehouse
 
 - Screens: gate entry, stock by item / lot / location, lot card (status history, movements, where used), transfers, put-away by scan, stock adjustment request and approval, label printing, near-expiry and retest report, customer-owned stock report.
-- Rules: lot status changes only through QC/QA endpoints; FEFO suggestion on every pick (earliest expiry first, APPROVED only); scan of lot label must match the suggested or an allowed lot; transfer to a location must match the item's storage zone.
+- Rules: lot status changes only through the QC/QA endpoints and the Warehouse Manager's disposal action (REJECTED → DESTROYED/RETURNED with a QA witness), per rule 1; FEFO suggestion on every pick (earliest expiry first, APPROVED only); scan of lot label must match the suggested or an allowed lot; transfer to a location must match the item's storage zone.
 - Traceability screen: from any lot, forward to batches, FG lots, deliveries and customers; backward from any FG lot to every material lot. Target under 5 seconds.
 
 ### 7.4 Sales
@@ -273,7 +303,9 @@ One pnpm monorepo with three packages: the API, the web app and a shared package
 ```
 albert-erp/
 ├─ CLAUDE.md
-├─ docs/                      # this design, one spec file per module, decisions log
+├─ docs/                      # architecture, build plan, progress, decisions, roles
+├─ .nvmrc                     # Node 26
+├─ .github/workflows/ci.yml   # install, typecheck, test (Postgres 16 service)
 ├─ docker-compose.yml         # postgres + api + web for local work
 ├─ packages/shared/src/
 │  ├─ enums/                  # LotStatus, BatchStatus, ItemType ...
@@ -283,10 +315,10 @@ albert-erp/
 │  ├─ app.ts, server.ts
 │  ├─ config/                 # env parsing with Zod
 │  ├─ db/
-│  │  ├─ schema/<module>.ts   # Drizzle tables
-│  │  ├─ migrations/          # generated + hand-written SQL (triggers)
+│  │  ├─ schema/<module>.ts   # Drizzle tables, written to match the SQL
+│  │  ├─ migrations/          # hand-written SQL only: tables, constraints, triggers
 │  │  └─ seed/                # roles, permissions, chart of accounts, demo data
-│  ├─ core/                   # auth, rbac, audit, esign, approvals, numbering, errors
+│  ├─ core/                   # auth, rbac, audit, esign, transition, approvals, numbering, idempotency, storage, errors
 │  ├─ engines/
 │  │  ├─ inventory/           # postMovement(), reserve(), fefo()
 │  │  └─ posting/             # postJournal(), reverse()
@@ -316,67 +348,15 @@ albert-erp/
 
 ## 9. CLAUDE.md for the coding agent
 
-Copy this into the repository root. The agent reads it at the start of every session; the per-module specs in `docs/` hold the detail.
-
-```markdown
-# Albert Pharma ERP — agent rules
-
-Production ERP for a DRAP-regulated GMP pharma plant (tablets, capsules, toll manufacturing).
-Real users, real money, real audits. Correctness beats speed. Never fake data or stub a rule.
-
-## Stack
-pnpm monorepo. TypeScript strict. apps/api: Node 20 + Express + Drizzle + PostgreSQL 16 + Zod + pg-boss.
-apps/web: React 18 + Vite + Ant Design + TanStack Query + React Hook Form. packages/shared: Zod schemas, enums, permission keys.
-
-## Non-negotiable rules
-1. Only QC changes material lot status; only QA releases batches. No override for any role.
-2. Issue/reserve only APPROVED lots; dispatch only RELEASED FG lots. Check in the service AND the DB.
-3. No negative stock (CHECK constraint on stock_balances).
-4. Posted documents are immutable. Corrections = reversal documents. Never UPDATE/DELETE posted rows.
-5. Every stock movement and invoice posts to the GL in the SAME transaction via engines/posting.
-6. Audit trail is written by DB triggers on every business table. Never bypass, never disable.
-7. Status changes only through explicit action endpoints using core/transition with an allowed-moves map.
-8. E-signature actions re-verify the password and store meaning + reason.
-9. Segregation of duties checks (creator != approver != receiver) live in services and return 403 with a code.
-10. Money NUMERIC(18,2), qty NUMERIC(18,4). Use decimal.js in TS. Never JS floating-point arithmetic for money or qty.
-11. Closed fiscal periods reject postings.
-12. Customer-owned (toll) stock: quantity only, zero value, no GL entry.
-
-## Code layout
-routes (validate + permission) -> service (rules, transaction) -> repo (queries only).
-Modules talk to each other only through exported service functions. No cross-module table access.
-All stock changes go through engines/inventory.postMovement(). All journals through engines/posting.postJournal().
-
-## Conventions
-- REST under /api/v1/<module>/<resource>. Actions: POST /:id/approve | /post | /reverse | /release.
-- Error shape { error: { code, message, details } }. Codes are SCREAMING_SNAKE (LOT_NOT_APPROVED).
-- Idempotency-Key header on every posting action.
-- SELECT ... FOR UPDATE on lots/balances inside posting transactions.
-- Timestamps UTC in DB; display Asia/Karachi; dates DD-MM-YYYY; currency PKR.
-- Permission keys only from packages/shared/permissions.ts.
-
-## Workflow for every task
-1. Read docs/<module>.md and the relevant section of docs/architecture.md.
-2. Write or update the migration and Drizzle schema first.
-3. Write the service with tests for every rule (happy path + each refusal).
-4. Then routes, then the web pages.
-5. Run `pnpm test` and `pnpm typecheck`; both must pass before saying done.
-6. Update docs/decisions.md if you made a design choice the docs did not cover.
-
-## Never
-- Never add a feature outside the current module spec without asking.
-- Never weaken a rule to make a test pass. Fix the code or ask.
-- Never commit secrets. Config comes from env vars validated in config/.
-- Never use `any`, `@ts-ignore` or disable lint rules to get past an error.
-```
+`CLAUDE.md` in the repository root is the authority for the agent rules. It holds the same 12 non-negotiable rules as §1, the stack, the code layout, the conventions, the per-task workflow and the "Never" list. The agent reads it at the start of every session. The detail lives in this document, `docs/roles.md` (role → permission mapping), `docs/build-plan.md`, `docs/progress.md` and `docs/decisions.md`. There are no per-module spec files. To avoid two copies drifting apart, `CLAUDE.md` is not reproduced here; change it there and record the change in `docs/decisions.md`.
 
 ## 10. Build plan and acceptance tests
 
-The build is split into 11 milestones in the order of the chain, so each one ends with something testable end to end. **The timeline depends on how many hours you put in each day:** the days below assume about 8 focused hours a day with the agent and add up to roughly 30 working days. At half that pace, plan on about two months. Move to the next milestone only when the current one's "Done when" passes, and keep the last milestone for testing, data migration and go-live, not new features.
+The build is split into 11 milestones in the order of the chain, so each one ends with something testable end to end. **The timeline depends on how many hours you put in each day:** the days below assume about 8 focused hours a day with the agent and add up to roughly 32 working days. At half that pace, plan on about two months. Move to the next milestone only when the current one's "Done when" passes, and keep the last milestone for testing, data migration and go-live, not new features.
 
 | Milestone | Est. days at 8 h/day | Build | Done when |
 | --- | --- | --- | --- |
-| M1 Foundation | 2 | Repo, Docker, CI, config, DB conventions, audit triggers, auth, RBAC, e-signature, number series, approvals inbox, fiscal periods | Login works; audit row written on any change; permission refusal tested |
+| M1 Foundation | 4 | Repo, Docker, CI (GitHub Actions), config, DB conventions, audit triggers, companies, auth with sessions and auth events, RBAC with role-admin guards, e-signature, status transitions, number series, approvals inbox, idempotency, attachments (local disk), fiscal periods | Login works; audit row written on any change; no password hash in the audit log; permission refusal tested; wrong e-signature password refused |
 | M2 Masters & engines | 3 | Masters (items, UoM, customers, vendors, AVL, locations, formulas, chart of accounts, posting rules); inventory engine and posting engine | A manual stock receipt posts a movement and a balanced journal in one transaction |
 | M3 Procurement | 3 | Procurement: PR, PO with approval, GRN to quarantine, labels, landed cost, vendor invoice, 3-way match, payment with WHT | PO → GRN → invoice → payment posts correct GL |
 | M4 QC | 2 | QC: specs, auto samples, results, review, disposition, CoA; nightly retest/expiry job | Quarantined lot approved by QC becomes issuable; rejected lot cannot move |
