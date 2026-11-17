@@ -24,6 +24,8 @@ interface Props {
   /** 'required' shows the QA countersign block; 'none' hides it. */
   countersign?: 'required' | 'none';
   countersignNote?: string;
+  /** Who countersigns, e.g. "QA Manager" (default) or "Finance Manager". */
+  countersignBy?: string;
   okText?: string;
   onCancel(): void;
   /** Throw to keep the dialog open and show the error. */
@@ -39,7 +41,7 @@ interface Values {
 }
 
 export function ESignModal(props: Props) {
-  const { open, title, meaning, summary, ownSignature = true, countersign = 'none', countersignNote, okText, onCancel, onSubmit } = props;
+  const { open, title, meaning, summary, ownSignature = true, countersign = 'none', countersignNote, countersignBy = 'QA Manager', okText, onCancel, onSubmit } = props;
   const [form] = Form.useForm<Values>();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -93,15 +95,15 @@ export function ESignModal(props: Props) {
         {countersign === 'required' && (
           <>
             <Divider orientation="left" plain>
-              QA Manager countersign
+              {countersignBy} countersign
             </Divider>
             <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
               {countersignNote ?? 'This change touches QC/QA action keys. A QA Manager must countersign here with their own password.'}
             </Typography.Paragraph>
-            <Form.Item name="csUsername" label="QA Manager employee code" rules={[{ required: true }]}>
+            <Form.Item name="csUsername" label={`${countersignBy} employee code`} rules={[{ required: true }]}>
               <Input autoComplete="off" />
             </Form.Item>
-            <Form.Item name="csPassword" label="QA Manager password" rules={[{ required: true }]}>
+            <Form.Item name="csPassword" label={`${countersignBy} password`} rules={[{ required: true }]}>
               <Input.Password autoComplete="off" />
             </Form.Item>
             <Form.Item name="csReason" label="Countersign reason" rules={[{ required: true, min: 3 }]}>

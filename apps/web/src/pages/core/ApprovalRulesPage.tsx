@@ -5,9 +5,10 @@ import { useState } from 'react';
 import { Alert, App, Button, Card, Col, Empty, Form, Input, InputNumber, Modal, Row, Select, Space, Tag, Typography } from 'antd';
 import { MinusCircleOutlined, PlusOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ApprovalMeasure, type ApprovalRuleSetDto, type RoleDto } from '@albert/shared';
+import { ApprovalMeasure, GmpLockedApprovals, type ApprovalRuleSetDto, type RoleDto, type WitnessSignRequest } from '@albert/shared';
 import { api, errorText } from '../../api/client';
 import { PageHeader } from '../../components/PageHeader';
+import { ESignModal } from '../../components/ESignModal';
 import { formatDecimal } from '../../lib/format';
 
 type Band = ApprovalRuleSetDto['bands'][number];
@@ -57,6 +58,9 @@ export function ApprovalRulesPage() {
         {(rules.data ?? []).map((set) => (
           <Col xs={24} lg={12} key={set.docType}>
             <Card title={set.docType} extra={<Button type="link" onClick={() => setEditing(set)}>Edit</Button>} size="small">
+              {set.lockedToKey && (
+                <Tag color="gold" style={{ marginBottom: 8 }}>GMP-locked: approvers must hold {set.lockedToKey}</Tag>
+              )}
               <Typography.Paragraph type="secondary">Measured on: {set.measure === 'AMOUNT_PKR' ? 'amount in PKR' : set.measure === 'PERCENT' ? 'percent' : 'no value'}</Typography.Paragraph>
               {set.bands.map((b) => (
                 <div key={`${b.lowerBound}-${b.upperBound}`} style={{ marginBottom: 8 }}>
@@ -91,8 +95,10 @@ function RulesModal({ set, roles, onClose, onSaved }: { set: ApprovalRuleSetDto;
   const [form] = Form.useForm<{ measure: ApprovalMeasure; bands: FormBand[]; reason: string }>();
   const measure = Form.useWatch('measure', form) ?? set.measure;
   const [error, setError] = useState<string | null>(null);
+  const lockedKey = GmpLockedApprovals[set.docType];
+  const [askCountersign, setAskCountersign] = useState(false);
 
-  const save = async () => {
+  const save = async (countersign?: WitnessSignRequest) => {
     const v = await form.validateFields();
     try {
       await api(`/core/approval-rules/${set.docType}`, {
@@ -105,20 +111,33 @@ function RulesModal({ set, roles, onClose, onSaved }: { set: ApprovalRuleSetDto;
             upperBound: v.measure === 'NONE' || !b.upperBound ? null : b.upperBound,
             steps: b.steps,
           })),
+          ...(countersign ? { countersign } : {}),
         },
       });
       void message.success('Approval rules saved');
       await onSaved();
       onClose();
     } catch (err) {
+      if (countersign) throw err; // shown inside the countersign dialog
       setError(errorText(err));
     }
   };
 
+  const onOk = async () => {
+    await form.validateFields();
+    if (lockedKey) await save();
+    else setAskCountersign(true);
+  };
+
   const decimalRule = { pattern: /^\d{1,14}(\.\d{1,4})?$/, message: 'A number, e.g. 500000 or 5.5' };
   return (
-    <Modal open width={760} title={`Approval rules: ${set.docType}`} onCancel={onClose} onOk={() => void save()} okText="Save">
+    <Modal open width={760} title={`Approval rules: ${set.docType}`} onCancel={onClose} onOk={() => void onOk()} okText={lockedKey ? 'Save' : 'Next'}>
       {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} />}
+      {lockedKey ? (
+        <Alert type="warning" showIcon style={{ marginBottom: 12 }} message={`GMP-locked: every approver role must hold ${lockedKey}. This cannot be changed here.`} />
+      ) : (
+        <Alert type="info" showIcon style={{ marginBottom: 12 }} message="Saving needs a Finance Manager countersign (a different person from you)." />
+      )}
       <Form
         form={form}
         layout="vertical"
@@ -170,6 +189,19 @@ function RulesModal({ set, roles, onClose, onSaved }: { set: ApprovalRuleSetDto;
         </Typography.Paragraph>
         <Form.Item name="reason" label="Reason for the change" rules={[{ required: true, min: 3 }]}><Input /></Form.Item>
       </Form>
+      <ESignModal
+        open={askCountersign}
+        title={`Finance Manager countersign: ${set.docType}`}
+        meaning="APPROVED"
+        ownSignature={false}
+        countersign="required"
+        countersignBy="Finance Manager"
+        countersignNote="Approval limits are Finance's decision. A Finance Manager confirms this change with their own password."
+        summary="The countersign is stored as an e-signature on the rule set."
+        okText="Save rules"
+        onCancel={() => setAskCountersign(false)}
+        onSubmit={(r) => save(r.countersign)}
+      />
     </Modal>
   );
 }

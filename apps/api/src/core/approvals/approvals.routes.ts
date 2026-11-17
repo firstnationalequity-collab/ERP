@@ -70,6 +70,6 @@ approvalsRouter.put(
   requirePermission('core.settings.manage'),
   asyncHandler(async (req, res) => {
     const { docType } = DocTypeParam.parse(req.params);
-    res.json(await approvals.setRules(authOf(req), docType, SetApprovalRulesRequest.parse(req.body)));
+    res.json(await approvals.setRules(authOf(req), docType, SetApprovalRulesRequest.parse(req.body), requestMeta(req)));
   }),
 );

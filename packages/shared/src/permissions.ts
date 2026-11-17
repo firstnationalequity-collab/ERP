@@ -96,6 +96,7 @@ export const Permissions = {
   'fin.receipt.manage': action('Customer receipts'),
   'fin.payment.manage': action('Create payments'),
   'fin.payment.approve': action('Approve payments'),
+  'fin.approval_rules.countersign': action('Countersign changes to the approval matrix (Finance Manager)'),
   'fin.bank.reconcile': action('Bank reconciliation'),
   'fin.costing.view': view('Batch cost and margin'),
   'fin.report.view': view('Financial statements and ledgers'),

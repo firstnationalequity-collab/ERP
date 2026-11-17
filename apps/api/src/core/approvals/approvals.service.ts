@@ -10,9 +10,12 @@
 //     and nobody approves two steps of the same approval (DB unique index).
 //   - Approve/reject re-verify the password (e-signature) and every status change goes through core/transition.
 import { Decimal } from 'decimal.js';
+import { sql } from 'drizzle-orm';
 import {
+  APPROVAL_MATRIX_COUNTERSIGN_KEY,
   ApprovalStatus,
   ApprovalStepStatus,
+  GmpLockedApprovals,
   type ApprovalDecisionRequest,
   type ApprovalDto,
   type ApprovalMeasure,
@@ -20,12 +23,14 @@ import {
   type InboxItemDto,
   type ListQuery,
   type Page,
+  type PermissionKey,
   type SetApprovalRulesRequest,
 } from '@albert/shared';
 import { db, withTransaction, type Tx } from '../../db/client';
 import { AppError } from '../errors';
 import { txContext, type AuthContext, type RequestMeta } from '../auth/auth.service';
-import { recordSignature, verifySignature } from '../esign/esign.service';
+import { recordSignature, verifySignature, verifyWitness } from '../esign/esign.service';
+import * as authRepo from '../auth/auth.repo';
 import { defineTransitions, recordInitialStatus, transition, type Actor } from '../transition/transition';
 import * as repo from './approvals.repo';
 import type { ApprovalRow, ApprovalRuleRow, ApprovalStepRow } from './approvals.repo';
@@ -160,6 +165,8 @@ export async function startApproval(tx: Tx, actor: Actor, input: StartApprovalIn
     });
   }
 
+  await assertLockedRoles(tx, input.docType, [...new Set(band.map((r) => r.roleId))]);
+
   const approval = await repo.insertApproval(tx, {
     docType: input.docType,
     docTable: input.docTable,
@@ -228,6 +235,11 @@ async function stepForUser(tx: Tx, auth: AuthContext, approvalId: string) {
   // A role that has gained an admin key since the approval started can no longer approve.
   if ((await repo.adminRoleIds(tx, [step.roleId])).length > 0) {
     throw new AppError('FORBIDDEN', 'Admin roles cannot approve business documents');
+  }
+  // GMP-locked document: the step role must still hold the required key (it may have been removed).
+  const lockedKey = GmpLockedApprovals[approval.docType];
+  if (lockedKey && (await repo.rolesHoldingKey(tx, [step.roleId], lockedKey)).length === 0) {
+    throw new AppError('FORBIDDEN', `Only roles holding ${lockedKey} may approve ${approval.docType}`, { permission: lockedKey });
   }
   return { approval, steps, step };
 }
@@ -398,9 +410,46 @@ function validateBands(measureType: ApprovalMeasure, input: SetApprovalRulesRequ
   return bands;
 }
 
-export async function setRules(auth: AuthContext, docType: string, input: SetApprovalRulesRequest): Promise<ApprovalRuleSetDto | undefined> {
+/** GMP-locked document types (rules review B, option 2): every approver role must hold the locked key. */
+async function assertLockedRoles(tx: Tx, docType: string, roleIds: string[]): Promise<void> {
+  const lockedKey: PermissionKey | undefined = GmpLockedApprovals[docType];
+  if (!lockedKey) return;
+  const holding = await repo.rolesHoldingKey(tx, roleIds, lockedKey);
+  const wrong = roleIds.filter((id) => !holding.includes(id));
+  if (wrong.length > 0) {
+    throw new AppError('APPROVER_ROLE_NOT_ALLOWED', `${docType} may only be approved by roles holding ${lockedKey}`, {
+      permission: lockedKey,
+      roles: wrong,
+    });
+  }
+}
+
+/**
+ * Replace the rule set of a document type (core.settings.manage).
+ * - GMP-locked types: every approver role must hold the locked key (no countersign needed: fixed in code).
+ * - Every other type: a Finance Manager countersign (fin.approval_rules.countersign), by a different person
+ *   from the admin making the change (rules review B, option 1).
+ */
+export async function setRules(
+  auth: AuthContext,
+  docType: string,
+  input: SetApprovalRulesRequest,
+  meta: RequestMeta,
+): Promise<ApprovalRuleSetDto | undefined> {
   if (!/^[A-Z][A-Z0-9_]{1,39}$/.test(docType)) throw new AppError('VALIDATION_FAILED', 'Invalid document type');
   const bands = validateBands(input.measure, input.bands);
+  const locked = GmpLockedApprovals[docType] !== undefined;
+  if (!locked && !input.countersign) {
+    throw new AppError('COUNTERSIGN_REQUIRED', 'Changing the approval matrix needs a Finance Manager countersign', {
+      permission: APPROVAL_MATRIX_COUNTERSIGN_KEY,
+    });
+  }
+  if (!locked && input.countersign && input.countersign.meaning !== 'APPROVED') {
+    throw new AppError('ESIGN_FAILED', 'A countersign must have the meaning APPROVED');
+  }
+  // Verified before the business transaction, so a wrong password is counted even though the change fails.
+  const proof = !locked && input.countersign ? await verifyWitness(auth, input.countersign, meta) : undefined;
+
   await withTransaction(txContext(auth, input.reason), async (tx) => {
     const roleIds = [...new Set(bands.flatMap((b) => b.steps.map((s) => s.roleId)))];
     const found = await repo.rolesByIds(tx, roleIds);
@@ -409,6 +458,17 @@ export async function setRules(auth: AuthContext, docType: string, input: SetApp
     const adminRoles = await repo.adminRoleIds(tx, roleIds);
     if (adminRoles.length > 0) {
       throw new AppError('ROLE_ADMIN_CONFLICT', 'Approval steps cannot go to a role that holds admin keys', { roles: adminRoles });
+    }
+    await assertLockedRoles(tx, docType, roleIds);
+    if (proof) {
+      const witnessKeys = await authRepo.permissionKeysForUser(tx, proof.userId);
+      if (!witnessKeys.includes(APPROVAL_MATRIX_COUNTERSIGN_KEY)) {
+        throw new AppError('FORBIDDEN', `The countersigner does not hold ${APPROVAL_MATRIX_COUNTERSIGN_KEY}`, {
+          permission: APPROVAL_MATRIX_COUNTERSIGN_KEY,
+        });
+      }
+      const signature = await recordSignature(tx, proof, { table: 'core.approval_rules', id: docType }, ['APPROVED']);
+      await tx.execute(sql`select set_config('app.reason', ${`${input.reason} [countersign e-signature ${signature.id}]`}, true)`);
     }
     await repo.deactivateRules(tx, auth.companyId, docType);
     await repo.insertRules(
@@ -432,7 +492,12 @@ export async function listRules(auth: AuthContext): Promise<ApprovalRuleSetDto[]
   const rows = await repo.allActiveRules(db, auth.companyId);
   const sets = new Map<string, ApprovalRuleSetDto>();
   for (const { rule, roleCode, roleName } of rows) {
-    const set = sets.get(rule.docType) ?? { docType: rule.docType, measure: rule.measure, bands: [] };
+    const set = sets.get(rule.docType) ?? {
+      docType: rule.docType,
+      measure: rule.measure,
+      lockedToKey: GmpLockedApprovals[rule.docType] ?? null,
+      bands: [],
+    };
     sets.set(rule.docType, set);
     let band = set.bands.find((b) => b.lowerBound === rule.lowerBound && b.upperBound === rule.upperBound);
     if (!band) {

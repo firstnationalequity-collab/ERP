@@ -26,7 +26,7 @@ const userIds: Record<string, string> = {};
 // ---- a stand-in module handler: records what the engine told it, can be told to fail
 const events: { kind: 'approved' | 'rejected'; docId: string; by: string; reason?: string }[] = [];
 let failNextApproval = false;
-for (const docType of ['PO', 'QUOTATION_DISCOUNT', 'STOCK_ADJUSTMENT', 'AVL', 'TEST_DOC']) {
+for (const docType of ['PO', 'QUOTATION_DISCOUNT', 'STOCK_ADJUSTMENT', 'AVL', 'BATCH_CLOSE', 'TEST_DOC', 'MATRIX_DEMO']) {
   registerApprovalHandler(docType, {
     async onApproved(_tx, approval, actor) {
       if (failNextApproval) {
@@ -51,6 +51,9 @@ async function start(docType: string, value: ApprovalValue, requester = 'buyer')
   );
   return { approvalId: approval.id, docId };
 }
+
+/** Finance Manager countersign for approval-matrix changes (rules review B). */
+const fmCountersign = (username = 'r_fm', password = TEST_PASSWORD) => ({ username, password, meaning: 'APPROVED' as const, reason: 'Finance agrees' });
 
 const sig = (meaning: 'APPROVED' | 'REJECTED', password = TEST_PASSWORD): ESignRequest => ({
   password,
@@ -379,21 +382,29 @@ describe('approval rules admin (core.settings.manage)', () => {
   });
 
   it('replaces a rule set for new approvals only; pending approvals keep their steps', async () => {
-    const pending = await start('AVL', { measure: 'NONE' });
-    expect(await stepsOf(pending.approvalId)).toEqual(['1:QA_MANAGER:PENDING']);
     const fmRole = (await client.query(`SELECT id FROM core.roles WHERE code = 'FINANCE_MANAGER'`)).rows[0].id as string;
     const qaRole = (await client.query(`SELECT id FROM core.roles WHERE code = 'QA_MANAGER'`)).rows[0].id as string;
-    const res = await put('admin', 'AVL', {
+    const first = await put('admin', 'MATRIX_DEMO', {
+      measure: 'NONE',
+      bands: [{ steps: [{ stepNo: 1, roleId: qaRole }] }],
+      reason: 'Demo rule',
+      countersign: fmCountersign(),
+    });
+    expect(first.status).toBe(200);
+    const pending = await start('MATRIX_DEMO', { measure: 'NONE' });
+    expect(await stepsOf(pending.approvalId)).toEqual(['1:QA_MANAGER:PENDING']);
+    const res = await put('admin', 'MATRIX_DEMO', {
       measure: 'NONE',
       bands: [{ steps: [{ stepNo: 1, roleId: qaRole }, { stepNo: 2, roleId: fmRole }] }],
-      reason: 'Finance also signs AVL',
+      reason: 'Finance also signs',
+      countersign: fmCountersign(),
     });
     expect(res.status).toBe(200);
     expect(await stepsOf(pending.approvalId)).toEqual(['1:QA_MANAGER:PENDING']);
-    const fresh = await start('AVL', { measure: 'NONE' });
+    const fresh = await start('MATRIX_DEMO', { measure: 'NONE' });
     expect(await stepsOf(fresh.approvalId)).toEqual(['1:QA_MANAGER:PENDING', '2:FINANCE_MANAGER:WAITING']);
     const audit = await client.query(
-      `SELECT count(*)::int AS n FROM core.audit_log WHERE table_name = 'core.approval_rules' AND reason = 'Finance also signs AVL'`,
+      `SELECT count(*)::int AS n FROM core.audit_log WHERE table_name = 'core.approval_rules' AND reason LIKE 'Finance also signs [countersign e-signature %]'`,
     );
     expect(audit.rows[0].n).toBeGreaterThan(0);
   });
@@ -406,7 +417,12 @@ describe('admin roles never approve business documents (rules review, finding A)
     const res = await request(app)
       .put('/api/v1/core/approval-rules/PO')
       .set('Authorization', `Bearer ${tokens.admin}`)
-      .send({ measure: 'AMOUNT_PKR', bands: [{ steps: [{ stepNo: 1, roleId: await roleId('SYSTEM_ADMIN') }] }], reason: 'Admins approve POs' });
+      .send({
+        measure: 'AMOUNT_PKR',
+        bands: [{ steps: [{ stepNo: 1, roleId: await roleId('SYSTEM_ADMIN') }] }],
+        reason: 'Admins approve POs',
+        countersign: fmCountersign(),
+      });
     expect(res.status).toBe(422);
     expect(res.body.error.code).toBe('ROLE_ADMIN_CONFLICT');
     // The PO matrix is unchanged.
@@ -429,11 +445,11 @@ describe('admin roles never approve business documents (rules review, finding A)
     // A view-only role (CEO) may legitimately be an approver; give it an admin key afterwards.
     const ceoRole = await roleId('CEO');
     const res = await request(app)
-      .put('/api/v1/core/approval-rules/AVL')
+      .put('/api/v1/core/approval-rules/MATRIX_DEMO')
       .set('Authorization', `Bearer ${tokens.admin}`)
-      .send({ measure: 'NONE', bands: [{ steps: [{ stepNo: 1, roleId: ceoRole }] }], reason: 'CEO signs AVL (test)' });
+      .send({ measure: 'NONE', bands: [{ steps: [{ stepNo: 1, roleId: ceoRole }] }], reason: 'CEO signs (test)', countersign: fmCountersign() });
     expect(res.status).toBe(200);
-    const { approvalId } = await start('AVL', { measure: 'NONE' });
+    const { approvalId } = await start('MATRIX_DEMO', { measure: 'NONE' });
     await client.query('BEGIN');
     await client.query(`SELECT set_config('app.user_id','1',true), set_config('app.company_id','1',true)`);
     await client.query(
@@ -445,5 +461,85 @@ describe('admin roles never approve business documents (rules review, finding A)
     expect(approve.status).toBe(403);
     expect(approve.body.error.message).toMatch(/Admin roles cannot approve/);
     expect(await approvalStatus(approvalId)).toBe('PENDING');
+  });
+});
+
+describe('approval matrix changes (rules review B)', () => {
+  const roleId = async (code: string) => (await client.query<{ id: string }>(`SELECT id FROM core.roles WHERE code = $1`, [code])).rows[0]!.id;
+  const put = (body: object, docType: string) =>
+    request(app).put(`/api/v1/core/approval-rules/${docType}`).set('Authorization', `Bearer ${tokens.admin}`).send(body);
+
+  it('locks GMP document types in code: AVL cannot go to a Planner, a Finance Manager or a QC Manager', async () => {
+    for (const code of ['PLANNER', 'FINANCE_MANAGER', 'QC_MANAGER']) {
+      const res = await put({ measure: 'NONE', bands: [{ steps: [{ stepNo: 1, roleId: await roleId(code) }] }], reason: 'Re-route AVL' }, 'AVL');
+      expect(res.status).toBe(422);
+      expect(res.body.error).toMatchObject({ code: 'APPROVER_ROLE_NOT_ALLOWED', details: { permission: 'master.avl.approve' } });
+    }
+  });
+
+  it('accepts a GMP-locked rule set routed to the right role without a Finance countersign', async () => {
+    const res = await put({ measure: 'NONE', bands: [{ steps: [{ stepNo: 1, roleId: await roleId('QA_MANAGER') }] }], reason: 'Confirm QA signs AVL' }, 'AVL');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ docType: 'AVL', lockedToKey: 'master.avl.approve' });
+  });
+
+  it('keeps BATCH_CLOSE with the key holder (Production Manager, architecture §4); QA cannot be put there', async () => {
+    const res = await put({ measure: 'NONE', bands: [{ steps: [{ stepNo: 1, roleId: await roleId('QA_MANAGER') }] }], reason: 'QA closes' }, 'BATCH_CLOSE');
+    expect(res.body.error).toMatchObject({ code: 'APPROVER_ROLE_NOT_ALLOWED', details: { permission: 'prod.batch.approve_close' } });
+  });
+
+  it('refuses to start a locked approval from a rule written around the API', async () => {
+    await client.query('BEGIN');
+    await client.query(`SELECT set_config('app.user_id','1',true), set_config('app.company_id','1',true)`);
+    await client.query(`INSERT INTO core.approval_rules (doc_type, measure, step_no, role_id) VALUES ('AVL', 'NONE', 1, $1)`, [await roleId('PLANNER')]);
+    await client.query('COMMIT');
+    await expect(start('AVL', { measure: 'NONE' })).rejects.toMatchObject({ code: 'APPROVER_ROLE_NOT_ALLOWED' });
+    const restore = await put({ measure: 'NONE', bands: [{ steps: [{ stepNo: 1, roleId: await roleId('QA_MANAGER') }] }], reason: 'Restore AVL' }, 'AVL');
+    expect(restore.status).toBe(200);
+  });
+
+  it('needs a Finance Manager countersign for every other matrix change', async () => {
+    const body = { measure: 'AMOUNT_PKR', bands: [{ steps: [{ stepNo: 1, roleId: await roleId('FINANCE_MANAGER') }] }], reason: 'All payments to FM' };
+    const none = await put(body, 'VENDOR_PAYMENT');
+    expect(none.status).toBe(403);
+    expect(none.body.error).toMatchObject({ code: 'COUNTERSIGN_REQUIRED', details: { permission: 'fin.approval_rules.countersign' } });
+
+    const self = await put({ ...body, countersign: fmCountersign('r_admin') }, 'VENDOR_PAYMENT');
+    expect(self.status).toBe(403);
+    expect(self.body.error.code).toBe('SEGREGATION_OF_DUTIES');
+
+    const notFinance = await put({ ...body, countersign: fmCountersign('r_qam') }, 'VENDOR_PAYMENT');
+    expect(notFinance.status).toBe(403);
+    expect(notFinance.body.error).toMatchObject({ code: 'FORBIDDEN', details: { permission: 'fin.approval_rules.countersign' } });
+
+    const before = (await client.query(`SELECT failed_attempts FROM core.users WHERE id = $1`, [userIds.fm])).rows[0].failed_attempts as number;
+    const wrong = await put({ ...body, countersign: fmCountersign('r_fm', 'Wrong-Pass-123') }, 'VENDOR_PAYMENT');
+    expect(wrong.body.error.code).toBe('ESIGN_FAILED');
+    expect((await client.query(`SELECT failed_attempts FROM core.users WHERE id = $1`, [userIds.fm])).rows[0].failed_attempts).toBe(before + 1);
+
+    const meaning = await put({ ...body, countersign: { ...fmCountersign(), meaning: 'REVIEWED' } }, 'VENDOR_PAYMENT');
+    expect(meaning.body.error.code).toBe('ESIGN_FAILED');
+
+    const ok = await put({ ...body, countersign: fmCountersign() }, 'VENDOR_PAYMENT');
+    expect(ok.status).toBe(200);
+    const sigRow = await client.query(
+      `SELECT user_id, meaning FROM core.e_signatures WHERE record_table = 'core.approval_rules' AND record_id = 'VENDOR_PAYMENT'`,
+    );
+    expect(sigRow.rows).toEqual([{ user_id: userIds.fm, meaning: 'APPROVED' }]);
+  });
+
+  it('refuses the approval when the locked key was removed from the step role after it started', async () => {
+    const { approvalId } = await start('AVL', { measure: 'NONE' });
+    const qaRole = await roleId('QA_MANAGER');
+    await client.query('BEGIN');
+    await client.query(`SELECT set_config('app.user_id','1',true), set_config('app.company_id','1',true)`);
+    await client.query(
+      `DELETE FROM core.role_permissions WHERE role_id = $1 AND permission_id = (SELECT id FROM core.permissions WHERE key = 'master.avl.approve')`,
+      [qaRole],
+    );
+    await client.query('COMMIT');
+    const res = await act('qam', approvalId, 'approve');
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatchObject({ code: 'FORBIDDEN', details: { permission: 'master.avl.approve' } });
   });
 });

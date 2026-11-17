@@ -105,6 +105,17 @@ export async function adminRoleIds(q: Queryable, roleIds: string[]): Promise<str
   return rows.rows.map((r) => r.id);
 }
 
+/** Of the given roles, those holding the active permission `key`. */
+export async function rolesHoldingKey(q: Queryable, roleIds: string[], key: string): Promise<string[]> {
+  if (roleIds.length === 0) return [];
+  const rows = await q.execute<{ id: string }>(sql`
+    SELECT DISTINCT rp.role_id::text AS id
+      FROM core.role_permissions rp
+      JOIN core.permissions p ON p.id = rp.permission_id AND p.is_active AND p.key = ${key}
+     WHERE rp.role_id IN (${sql.join(roleIds.map((id) => sql`${id}`), sql`, `)})`);
+  return rows.rows.map((r) => r.id);
+}
+
 export async function rolesByIds(q: Queryable, ids: string[]) {
   if (ids.length === 0) return [];
   return q.select({ id: roles.id, code: roles.code, name: roles.name, isActive: roles.isActive }).from(roles).where(inArray(roles.id, ids));

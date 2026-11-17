@@ -79,6 +79,7 @@ beforeAll(async () => {
     ['planner', 'PLANNER'],
     ['buyer', 'PURCHASE_OFFICER'],
     ['pm', 'PURCHASE_MANAGER'],
+    ['fm', 'FINANCE_MANAGER'],
   ] as const) {
     await createTestUser({ username: `i_${name}`, roleCodes: [role] });
     const res = await request(app).post('/api/v1/core/auth/login').send({ username: `i_${name}`, password: TEST_PASSWORD });
@@ -194,7 +195,12 @@ describe('Idempotency-Key on posting actions', () => {
     await request(app)
       .put('/api/v1/core/approval-rules/TEST_IDEM')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ measure: 'NONE', bands: [{ steps: [{ stepNo: 1, roleId: pmRole }] }], reason: 'test rule' });
+      .send({
+        measure: 'NONE',
+        bands: [{ steps: [{ stepNo: 1, roleId: pmRole }] }],
+        reason: 'test rule',
+        countersign: { username: 'i_fm', password: TEST_PASSWORD, meaning: 'APPROVED', reason: 'Finance agrees' },
+      });
     const buyer = await authenticateToken(tokens.buyer!);
     const approval = await withTransaction(txContext(buyer), (tx) =>
       startApproval(tx, buyer, { docType: 'TEST_IDEM', docTable: 'test.documents', docId: '1', value: { measure: 'NONE' } }),

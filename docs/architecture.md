@@ -109,6 +109,9 @@ A seeded **SYSTEM** user (no roles, cannot log in) is the actor for seeds and ba
 - Each rule has a `measure`: `AMOUNT_PKR` or `PERCENT`. Import POs are converted to PKR at the PO's exchange rate before the band is looked up.
 - "**then**" means sequential steps: step 2 opens only after step 1 is approved. "**and**" means both must approve, in any order.
 - Each step goes to a **role**. Anyone holding that role can act, except the document's creator (segregation). Pending steps show in the "my approvals" inbox (`core.approval.inbox`, held by every user).
+- A step never goes to a role holding an admin key (System Admin approves nothing).
+- **GMP document types are locked in code** (`GmpLockedApprovals`): AVL and master formula can only be approved by roles holding `master.avl.approve` / `master.formula.approve` (QA Manager), batch close by roles holding `prod.batch.approve_close` (Production Manager). New QC/QA document types are added to this list.
+- **Every other change to the matrix needs a Finance Manager countersign** (`fin.approval_rules.countersign`), by a different person from the admin who makes it.
 
 | Document | Measure | Band | Approver |
 | --- | --- | --- | --- |
