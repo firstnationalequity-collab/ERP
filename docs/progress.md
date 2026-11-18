@@ -5,7 +5,7 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 | Milestone | Status | Started | Finished | Notes |
 | --- | --- | --- | --- | --- |
 | M1 Foundation | Done | 17-11-2026 | 18-11-2026 | All 12 tasks, rules-review fixes A–F, first-QA-Manager bootstrap; CI run #13 green on `04ef009`; tag `m1` |
-| M2 Masters & engines | Not started | | | |
+| M2 Masters & engines | In progress | 18-11-2026 | | Task 1 done; see Handoff |
 | M3 Procurement | Not started | | | |
 | M4 QC | Not started | | | |
 | M5 Sales | Not started | | | |
@@ -16,39 +16,41 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 | M10 Hardening & staging | Not started | | | |
 | M11 UAT & go-live | Not started | | | |
 
-## Handoff (17-11-2026, end of M1 work)
+## Handoff (18-11-2026, M2 in progress)
 
-**State:** M1 code complete at `30d55e5` on `main` (pushed). `pnpm typecheck` clean; 265 tests green (API 246, web 10, shared 9); web production build OK. Working tree clean.
+**State:** M1 done (tag `m1`). M2 plan approved 18-11-2026 with the owner's answers Q1–Q6 (decisions.md rows "M2 Q1–Q6"). Working on `main`; one commit per task.
 
-**M1 "Done when" (re-run after the rules-review fixes):**
+**M2 tasks** (plan approved in chat; build-plan.md M2 section lists the scope):
 
-| Check | Result | Evidence (test names in `apps/api/src/__tests__`) |
+| # | Task | Status |
 | --- | --- | --- |
-| Login works | ✅ | auth.test: signs in…, matches username case-insensitively, refuses a wrong password |
-| Any change writes an `audit_log` row | ✅ | core-identity-db: audits the insert; audit-settings: shows any change with who/when/why (via API); seed: records the seed as SYSTEM; foundation-db |
-| `audit_log` never contains a password hash | ✅ | core-identity-db: audit_log never contains it; auth: no password or token hash anywhere; audit-settings: never shows a hash |
-| User without permission gets 403 | ✅ | access: CEO/QA/Planner refused user admin; esign-transition: QC Analyst, QA Manager, System Admin, CEO refused lot approval; approvals: refused without step role / admin-key role; attachments: refused at the route |
-| Wrong e-signature password refused | ✅ | esign-transition: ESIGN_FAILED + counted, lockout on 5th; approvals: wrong password counted |
-| `pnpm test` green locally **and in CI** | ✅ | CI run #13 (`04ef009`): install, typecheck, test all success. Runs #1, 7, 8, 9, 11 show "cancelled" only because a newer push superseded them (`cancel-in-progress`); each later run tested the full tree green |
+| 1 | Shared definitions: keys `master.product.manage`, `master.price.manage` (Sales Mgr), `fin.master.manage` (Finance Mgr), `qa.product.countersign` (QA Mgr); docs for lot-actual costing, tax per item, AVL with attachments | ✅ |
+| 2 | `0008_masters.sql` + `schema/masters.ts` (uoms, conversions, categories, items+tax_code_id, warehouses, locations, customers, addresses, vendors, approved_sources, products, master_formulas+lines, price_lists+lines, tax_codes) with DB rules | ⏳ next |
+| 3 | Masters service/tests/routes `/api/v1/master/*`: CRUD, customer/vendor DRAFT→ACTIVE (creator ≠ activator), AVL via approvals (attachments shown at signing) + block, formula versions via approvals (old APPROVED → OBSOLETE), product regulatory fields need `qa.product.countersign` | |
+| 4 | `0009_finance_masters.sql`: accounts, cost_centers, posting_rules, journal_entries/lines (balance, period, immutability); seed PLACEHOLDER chart + rules, FY2026-27 periods, JV series | |
+| 5 | `0010_inventory.sql`: lots, stock_movements (append-only), stock_balances (≥0), stock_reservations; DB guard: ISSUE/RESERVE only APPROVED, DISPATCH only RELEASED; toll lots zero value. **No item_costs** (lot-actual costing) | |
+| 6 | `engines/inventory`: postMovement, reserve/release, fefoCandidates; every movement valued at lot cost | |
+| 7 | `engines/posting`: postJournal, reverse; read-only journal routes | |
+| 8 | Done-when test: receipt = movement + balanced journal in one tx; forced error rolls back both; DB refuses negative stock; toll = no journal; **GL inventory = Σ(lot qty × lot cost) after every movement type** | |
+| 9 | Web: DataTable (search, filters, paging, Excel export) / DocForm; all master screens incl. formula and AVL approval with attachments; journals list | |
+| 10 | Done-when evidence, `/check-rules`, docs, CI | |
 
-**Rules review (`/check-rules`) findings — all fixed, one commit each:** A admin roles never approve (`204d264`) · B GMP approvals locked in code + Finance countersign for matrix changes (`ff55100`) · C attachment permission at the route (`87c9f48`) · D NUMERIC split, migration 0007 (`923dde9`) · E refusal-path tests (`6e971fe`) · F conventions + enum↔CHECK test (`30d55e5`).
+**Existing local dev DB after task 1:** add the new keys on the Roles page (Sales Manager: `master.product.manage`, `master.price.manage`; Finance Manager: `fin.master.manage`; QA Manager: `qa.product.countersign` — needs QA countersign). Fresh databases get them from the seed.
 
-**To close M1 (owner):** confirm the CI run for `30d55e5` is green at https://github.com/firstnationalequity-collab/ERP/actions → then the agent marks M1 done here and tags `m1`.
-
-**Waiting for the owner (none blocks M1 close unless the owner says so):**
-1. BATCH_CLOSE lock: implemented as "roles holding `prod.batch.approve_close`" (Production Manager, architecture §4), not a QA role as written in the review answer — confirm or change (one line in `GmpLockedApprovals`).
+**Waiting for the owner (not blocking M2):**
+1. BATCH_CLOSE lock is "roles holding `prod.batch.approve_close`" (Production Manager) — confirm or change.
 2. Reopening a fiscal period: also require a Finance Manager e-signature?
-3. Must periods be closed in order (no August close while July is open)?
+3. Must periods be closed in order?
 4. Block one user from holding both an admin role and a business-action role?
-5. Attachments: allow "void with reason" for a wrong upload, or keep insert-only?
-6. ~~Item and master-formula ownership~~ — decided 18-11-2026: Planner / QA Officer (decisions.md).
+5. Attachments: allow "void with reason", or keep insert-only?
+6. Finance to confirm: chart of accounts (placeholder), tax rates (placeholder), lot-actual costing under IAS 2, approval limits.
 
 **Local dev database notes:**
 - No QA Manager yet: create the user in the app, then run `pnpm --filter @albert/api bootstrap:qa-manager -- --user <code> --reason "..."` once.
-- First admin: username `admin`, temporary password given in chat; forced change at first login.
-- Seeded before rules-review B, so the Finance Manager role there lacks `fin.approval_rules.countersign`: add it on the Roles page (no countersign needed). Fresh databases get it from the seed.
+- Finance Manager role lacks `fin.approval_rules.countersign` (seeded before rules-review B): add it on the Roles page.
+- Planner needs `master.item.manage`, QA Officer `master.formula.manage` (needs QA countersign).
 
-**Next milestone:** M2 — Masters and engines (`/milestone M2` in a fresh chat). Prerequisite: answer item 6 above.
+**M1 evidence** is in git history (`7925fc2` handoff) and CI run #13.
 
 ## Log
 <!-- Agent: add one line per working session: date · milestone · what was finished · what is next -->
@@ -66,3 +68,4 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 - 17-11-2026 · M1 · Task 12: Done-when checks run with evidence; /check-rules found A–F; owner chose fixes (B = options 1+2, D = migration split). Fixed and pushed one commit each (A 204d264, B ff55100, C 87c9f48, D 923dde9, E 6e971fe, F 30d55e5); Done-when re-run: all green locally, 265 tests. Handoff written. · Next: owner confirms CI → mark M1 done, tag m1; then M2.
 - 18-11-2026 · M1 · Ran the app locally (Docker DB, `pnpm dev`). The countersign rule had no starting point, so added the one-time first-QA-Manager bootstrap command (SYSTEM, audited; refused once a QA Manager exists, for inactive users and for admin-role holders); 7 tests, mutation-checked. 272 tests green. · Next: owner confirms CI → close M1, tag m1; then M2.
 - 18-11-2026 · M1 · Roles: `master.item.manage` → Planner, `master.formula.manage` → QA Officer. CI #13 green; M1 marked done and tagged `m1`. · Next: M2 — Masters and engines (`/milestone M2`).
+- 18-11-2026 · M2 · Plan approved (owner answers Q1–Q6: lot-actual costing, product QA countersign, placeholder chart, AVL with attachments, creator ≠ activator, tax per item). Task 1 done: 4 new keys in permissions/seed/roles.md, docs updated (architecture §6, decisions). 272 tests green. · Next: task 2 (0008_masters.sql).

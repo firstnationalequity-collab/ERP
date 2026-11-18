@@ -27,7 +27,8 @@ const roles: RoleSeed[] = [
   {
     code: 'SALES_MANAGER',
     name: 'Sales Manager',
-    keys: ['sales.view', 'master.view', 'inv.stock.view', 'fg.view', 'sales.quotation.approve', 'master.customer.approve'],
+    keys: ['sales.view', 'master.view', 'inv.stock.view', 'fg.view', 'sales.quotation.approve', 'master.customer.approve',
+      'master.product.manage', 'master.price.manage'],
   },
   {
     code: 'ACCOUNTANT',
@@ -51,6 +52,7 @@ const roles: RoleSeed[] = [
       'fin.view', 'fin.report.view', 'fin.costing.view', 'sales.view', 'purch.view', 'inv.stock.view', 'master.view',
       'fin.payment.approve', 'sales.order.credit_override', 'sales.quotation.approve', 'purch.po.approve',
       'inv.adjustment.approve', 'core.period.manage', 'core.period.close', 'fin.approval_rules.countersign',
+      'fin.master.manage',
     ],
   },
   {
@@ -121,6 +123,7 @@ const roles: RoleSeed[] = [
       'qa.view', 'qc.view', 'prod.view', 'inv.stock.view', 'master.view', 'core.audit.view',
       'qa.deviation.manage', 'qa.deviation.close', 'qa.batch.release', 'qa.lot.hold', 'qa.lot.witness',
       'qa.access.countersign', 'master.avl.approve', 'master.formula.approve', 'inv.adjustment.approve',
+      'qa.product.countersign',
     ],
   },
   {

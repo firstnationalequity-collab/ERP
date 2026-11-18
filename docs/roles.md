@@ -36,6 +36,8 @@ Design context: `docs/architecture.md` §3 and §4.
 | `master.formula.manage` | action | Draft master formulas | existing |
 | `master.formula.approve` | action | Approve master formula versions (QA) | existing |
 | `master.location.manage` | action | Warehouses and locations | existing |
+| `master.product.manage` | action | Products; registration no., artwork version and quality-agreement date changes need a QA Manager countersign | new (M2) |
+| `master.price.manage` | action | Price lists | new (M2) |
 | `inv.stock.view` | view | View stock, lots, movements (inventory module view key) | existing |
 | `inv.movement.post` | action | Put-away, transfers, issues | existing |
 | `inv.adjustment.request` | action | Request stock adjustments | existing |
@@ -72,6 +74,7 @@ Design context: `docs/architecture.md` §3 and §4.
 | `qa.lot.hold` | action | Place or lift HOLD on a lot | new |
 | `qa.lot.witness` | action | Witness e-signature for lot destruction / return | **proposed** |
 | `qa.access.countersign` | action | E-signature countersign for role changes touching `qc.*` / `qa.*` action keys | **proposed** |
+| `qa.product.countersign` | action | Countersign product registration no., artwork version and quality-agreement changes | new (M2) |
 | `fg.view` | view | View delivery orders, gate passes, returns | new |
 | `fg.delivery.manage` | action | Delivery orders, picking, returns receipt | existing |
 | `fg.dispatch.post` | action | Post dispatch, gate pass | existing |
@@ -84,6 +87,7 @@ Design context: `docs/architecture.md` §3 and §4.
 | `fin.payment.approve` | action | Approve payments | existing |
 | `fin.bank.reconcile` | action | Bank reconciliation | existing |
 | `fin.approval_rules.countersign` | action | Countersign changes to the approval matrix (decision: rules review B) | new |
+| `fin.master.manage` | action | Chart of accounts, cost centres, tax codes, posting rules | new (M2) |
 | `fin.costing.view` | view | Batch cost and margin | existing |
 | `fin.report.view` | view | Financial statements and ledgers | existing |
 | `dash.ceo.view` | view | Executive dashboard | existing |
@@ -96,11 +100,11 @@ Every role except SYSTEM also holds `core.approval.inbox` (not repeated below). 
 | --- | --- | --- | --- |
 | 1 | CEO / Director | **all view keys**: `core.audit.view`, `master.view`, `inv.stock.view`, `sales.view`, `purch.view`, `qc.view`, `prod.view`, `qa.view`, `fg.view`, `fin.view`, `fin.costing.view`, `fin.report.view`, `dash.ceo.view` | none |
 | 2 | Sales Executive | `sales.view`, `master.view`, `inv.stock.view`, `fg.view` | `master.customer.manage`, `sales.quotation.manage`, `sales.order.manage` |
-| 3 | Sales Manager | `sales.view`, `master.view`, `inv.stock.view`, `fg.view` | `sales.quotation.approve`, `master.customer.approve` |
+| 3 | Sales Manager | `sales.view`, `master.view`, `inv.stock.view`, `fg.view` | `sales.quotation.approve`, `master.customer.approve`, `master.product.manage`, `master.price.manage` |
 | 4 | Accountant | `fin.view`, `fin.report.view`, `purch.view`, `master.view` | `fin.journal.manage`, `fin.invoice.manage`, `fin.bank.reconcile` |
 | 5 | AR Officer | `fin.view`, `sales.view`, `fg.view`, `master.view` | `fin.invoice.manage`, `fin.receipt.manage` |
 | 6 | AP Officer | `fin.view`, `purch.view`, `master.view` | `fin.payment.manage` |
-| 7 | Finance Manager | `fin.view`, `fin.report.view`, `fin.costing.view`, `sales.view`, `purch.view`, `inv.stock.view`, `master.view` | `fin.payment.approve`, `sales.order.credit_override`, `sales.quotation.approve` (discount > 5% second step), `purch.po.approve`, `inv.adjustment.approve`, `core.period.manage`, `core.period.close`, `fin.approval_rules.countersign` |
+| 7 | Finance Manager | `fin.view`, `fin.report.view`, `fin.costing.view`, `sales.view`, `purch.view`, `inv.stock.view`, `master.view` | `fin.payment.approve`, `sales.order.credit_override`, `sales.quotation.approve` (discount > 5% second step), `purch.po.approve`, `inv.adjustment.approve`, `core.period.manage`, `core.period.close`, `fin.approval_rules.countersign`, `fin.master.manage` |
 | 8 | Purchase Officer | `purch.view`, `master.view`, `inv.stock.view` | `purch.pr.manage`, `purch.po.manage`, `master.vendor.manage`, `purch.landed_cost.manage` |
 | 9 | Purchase Manager | `purch.view`, `master.view`, `inv.stock.view` | `purch.po.approve`, `master.vendor.approve` |
 | 10 | Storekeeper | `inv.stock.view`, `purch.view`, `prod.view`, `fg.view`, `master.view` | `purch.grn.post`, `inv.movement.post`, `inv.label.print`, `fg.delivery.manage`, `fg.dispatch.post` |
@@ -112,7 +116,7 @@ Every role except SYSTEM also holds `core.approval.inbox` (not repeated below). 
 | 16 | QC Analyst | `qc.view`, `inv.stock.view`, `master.view` | `qc.result.enter`, `qc.spec.manage` |
 | 17 | QC Manager | `qc.view`, `inv.stock.view`, `master.view` | `qc.result.review`, `qc.lot.change_status`, `qc.coa.issue`, `qc.spec.approve` |
 | 18 | QA Officer | `qa.view`, `qc.view`, `prod.view`, `master.view` | `qa.deviation.manage`, `master.formula.manage` |
-| 19 | QA Manager | `qa.view`, `qc.view`, `prod.view`, `inv.stock.view`, `master.view`, `core.audit.view` | `qa.deviation.manage`, `qa.deviation.close`, `qa.batch.release`, `qa.lot.hold`, `qa.lot.witness`, `qa.access.countersign`, `master.avl.approve`, `master.formula.approve`, `inv.adjustment.approve` (second approver for adjustments) |
+| 19 | QA Manager | `qa.view`, `qc.view`, `prod.view`, `inv.stock.view`, `master.view`, `core.audit.view` | `qa.deviation.manage`, `qa.deviation.close`, `qa.batch.release`, `qa.lot.hold`, `qa.lot.witness`, `qa.access.countersign`, `master.avl.approve`, `master.formula.approve`, `inv.adjustment.approve` (second approver for adjustments), `qa.product.countersign` |
 | 20 | System Admin | `core.audit.view` | `core.user.manage`, `core.role.manage`, `core.settings.manage` (admin keys only) |
 | — | SYSTEM (user, not a role) | — | none; cannot log in; actor for seeds and jobs |
 

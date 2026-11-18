@@ -34,6 +34,8 @@ export const Permissions = {
   'master.formula.manage': action('Draft master formulas'),
   'master.formula.approve': action('Approve master formula versions (QA)'),
   'master.location.manage': action('Warehouses and locations'),
+  'master.product.manage': action('Products (registration, artwork and quality agreement changes need a QA countersign)'),
+  'master.price.manage': action('Price lists'),
 
   // inventory
   'inv.stock.view': view('View stock, lots, movements'),
@@ -82,6 +84,7 @@ export const Permissions = {
   'qa.lot.hold': action('Place or lift HOLD on a lot'),
   'qa.lot.witness': action('Witness e-signature for lot destruction / return'),
   'qa.access.countersign': action('Countersign role changes touching qc.* / qa.* action keys'),
+  'qa.product.countersign': action('Countersign product registration no., artwork version and quality agreement changes'),
 
   // finished goods and dispatch
   'fg.view': view('View delivery orders, gate passes, returns'),
@@ -96,6 +99,7 @@ export const Permissions = {
   'fin.receipt.manage': action('Customer receipts'),
   'fin.payment.manage': action('Create payments'),
   'fin.payment.approve': action('Approve payments'),
+  'fin.master.manage': action('Chart of accounts, cost centres, tax codes, posting rules'),
   'fin.approval_rules.countersign': action('Countersign changes to the approval matrix (Finance Manager)'),
   'fin.bank.reconcile': action('Bank reconciliation'),
   'fin.costing.view': view('Batch cost and margin'),
