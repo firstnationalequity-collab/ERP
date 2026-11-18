@@ -180,6 +180,9 @@ describe('second seed', () => {
       keysAdded: {},
       seriesCreated: [],
       approvalRulesCreated: [],
+      accountsCreated: [],
+      postingRulesCreated: [],
+      taxCodesCreated: [],
       adminCreated: false,
       adminSkipped: 'already exists',
     });

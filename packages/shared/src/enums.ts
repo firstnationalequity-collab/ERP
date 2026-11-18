@@ -160,3 +160,75 @@ export type TaxKind = (typeof TaxKind)[number];
 
 export const AddressType = ['BILLING', 'SHIPPING'] as const;
 export type AddressType = (typeof AddressType)[number];
+
+// ---------------------------------------------------------------- finance (M2 task 4; 0012_finance_masters.sql)
+
+export const AccountType = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'] as const;
+export type AccountType = (typeof AccountType)[number];
+
+/** Business events that post to the GL (docs/architecture.md §6). */
+export const PostingEvent = [
+  'GRN_RECEIPT',
+  'LANDED_COST',
+  'VENDOR_INVOICE',
+  'VENDOR_PAYMENT',
+  'MATERIAL_ISSUE',
+  'MATERIAL_RETURN',
+  'CONVERSION_ABSORB',
+  'FG_OUTPUT',
+  'DISPATCH',
+  'SALES_INVOICE',
+  'TOLL_INVOICE',
+  'CUSTOMER_RECEIPT',
+  'STOCK_ADJUSTMENT',
+  'LOT_DESTROYED',
+  'LOT_RETURNED',
+] as const;
+export type PostingEvent = (typeof PostingEvent)[number];
+
+/** The account a posting rule supplies for one leg of an event (debit or credit is decided by the posting engine). */
+export const AccountRole = [
+  'INVENTORY',
+  'GRNI',
+  'PRICE_VARIANCE',
+  'LANDED_COST_CLEARING',
+  'INPUT_TAX',
+  'ACCOUNTS_PAYABLE',
+  'BANK',
+  'WHT_PAYABLE',
+  'WIP',
+  'LABOUR_ABSORBED',
+  'OVERHEAD_ABSORBED',
+  'COGS',
+  'ACCOUNTS_RECEIVABLE',
+  'SALES_REVENUE',
+  'CONVERSION_REVENUE',
+  'OUTPUT_TAX',
+  'WHT_RECEIVABLE',
+  'INVENTORY_LOSS',
+  'INVENTORY_GAIN',
+  'REJECTION_WRITE_OFF',
+] as const;
+export type AccountRole = (typeof AccountRole)[number];
+
+/**
+ * Which account roles each event uses (architecture §6 table). SQL: fin.is_valid_posting_role, tested equal.
+ * INVENTORY is resolved by item category (a rule with no category is the default for every category).
+ */
+export const PostingEventRoles: Readonly<Record<PostingEvent, readonly AccountRole[]>> = {
+  GRN_RECEIPT: ['INVENTORY', 'GRNI'],
+  LANDED_COST: ['INVENTORY', 'PRICE_VARIANCE', 'LANDED_COST_CLEARING'],
+  VENDOR_INVOICE: ['GRNI', 'INPUT_TAX', 'PRICE_VARIANCE', 'ACCOUNTS_PAYABLE'],
+  VENDOR_PAYMENT: ['ACCOUNTS_PAYABLE', 'BANK', 'WHT_PAYABLE'],
+  MATERIAL_ISSUE: ['WIP', 'INVENTORY'],
+  MATERIAL_RETURN: ['INVENTORY', 'WIP'],
+  CONVERSION_ABSORB: ['WIP', 'LABOUR_ABSORBED', 'OVERHEAD_ABSORBED'],
+  FG_OUTPUT: ['INVENTORY', 'WIP'],
+  DISPATCH: ['COGS', 'INVENTORY'],
+  SALES_INVOICE: ['ACCOUNTS_RECEIVABLE', 'SALES_REVENUE', 'OUTPUT_TAX'],
+  TOLL_INVOICE: ['ACCOUNTS_RECEIVABLE', 'CONVERSION_REVENUE', 'OUTPUT_TAX'],
+  CUSTOMER_RECEIPT: ['BANK', 'WHT_RECEIVABLE', 'ACCOUNTS_RECEIVABLE'],
+  STOCK_ADJUSTMENT: ['INVENTORY', 'INVENTORY_LOSS', 'INVENTORY_GAIN'],
+  LOT_DESTROYED: ['REJECTION_WRITE_OFF', 'INVENTORY'],
+  LOT_RETURNED: ['ACCOUNTS_PAYABLE', 'INVENTORY'],
+};

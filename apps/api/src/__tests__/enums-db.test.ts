@@ -25,6 +25,10 @@ import {
   StorageZone,
   TaxKind,
   AddressType,
+  AccountType,
+  PostingEvent,
+  AccountRole,
+  PostingStatus,
 } from '@albert/shared';
 import { databaseUrl } from '../config/env';
 
@@ -71,6 +75,11 @@ const cases: [string, string, readonly string[]][] = [
   ['master.approved_sources', 'status', ApprovedSourceStatus],
   ['master.master_formulas', 'status', FormulaStatus],
   ['master.master_formula_lines', 'assay_basis', AssayBasis],
+  ['fin.accounts', 'type', AccountType],
+  ['fin.posting_rules', 'event', PostingEvent],
+  ['fin.posting_rules', 'account_role', AccountRole],
+  ['fin.journal_entries', 'event', PostingEvent],
+  ['fin.journal_entries', 'status', PostingStatus],
 ];
 
 beforeAll(async () => {

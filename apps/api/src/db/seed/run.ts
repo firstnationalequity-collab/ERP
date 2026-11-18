@@ -4,7 +4,9 @@
 //    roles. Keys are never removed: if a seeded role holds an active key that roles.md does not list, the seed
 //    stops and writes nothing until the owner decides (RoleBundleDriftError). Keys that need a QA countersign
 //    are added directly: the seed runs as SYSTEM from the approved roles.md (decisions.md, 18-11-2026).
-// 3. Create the first admin from INITIAL_ADMIN_PASSWORD (forced change at first login).
+// 3. Number series and the placeholder approval matrix; finance PLACEHOLDER chart, posting rules and tax codes
+//    (seed/finance.ts).
+// 4. Create the first admin from INITIAL_ADMIN_PASSWORD (forced change at first login).
 // Acts as the SYSTEM user. Refuses to run in production without INITIAL_ADMIN_PASSWORD (decision Q7).
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { Permissions, PermissionKeys } from '@albert/shared';
@@ -12,11 +14,16 @@ import { systemContext, withTransaction, type Tx } from '../client';
 import { approvalRules, numberSeries, permissions, rolePermissions, roles, userCredentials, userRoles, users } from '../schema/core';
 import { assertPasswordPolicy, hashPassword } from '../../core/auth/password';
 import { FIRST_ADMIN_USERNAME, ROLE_SEEDS } from './roles';
+import { seedFinance, type FinanceSeedReport } from './finance';
 
-/** Decision Q16 defaults: PO-2627-00042 (resets each fiscal year), AP26-0001 (resets each calendar year). */
+/**
+ * Decision Q16 defaults: PO-2627-00042 (resets each fiscal year), AP26-0001 (resets each calendar year).
+ * JV (M2 task 4): every journal entry, manual or posted by a module, takes the Q16 document pattern.
+ */
 export const DEFAULT_SERIES = [
   { docType: 'PO', name: 'Purchase order', prefix: 'PO', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
   { docType: 'BATCH', name: 'Batch number', prefix: 'AP', pattern: '{PREFIX}{YY}-{SEQ:4}', reset: 'CALENDAR_YEAR' },
+  { docType: 'JV', name: 'Journal entry', prefix: 'JV', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
 ] as const;
 
 /**
@@ -62,7 +69,7 @@ export interface SeedOptions {
   initialAdminPassword?: string;
 }
 
-export interface SeedReport {
+export interface SeedReport extends FinanceSeedReport {
   permissionsCreated: number;
   permissionsUpdated: number;
   permissionsDeactivated: number;
@@ -92,12 +99,16 @@ export async function runSeed(opts: SeedOptions): Promise<SeedReport> {
       keysAdded: {},
       seriesCreated: [],
       approvalRulesCreated: [],
+      accountsCreated: [],
+      postingRulesCreated: [],
+      taxCodesCreated: [],
       adminCreated: false,
     };
     await syncPermissions(tx, report);
     await syncRoles(tx, report);
     await createMissingSeries(tx, report);
     await createMissingApprovalRules(tx, report);
+    await seedFinance(tx, report);
     await createFirstAdmin(tx, opts.initialAdminPassword, report);
     return report;
   });
@@ -210,7 +221,7 @@ async function syncRoles(tx: Tx, report: SeedReport): Promise<void> {
 }
 
 /**
- * The two default series named in decision Q16. Other document types add their series in their own
+ * The default series (decision Q16, plus JV from M2 task 4). Other document types add their series in their own
  * milestone. Existing series are never changed (the admin may have edited them).
  */
 async function createMissingSeries(tx: Tx, report: SeedReport): Promise<void> {

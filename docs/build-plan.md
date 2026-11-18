@@ -34,7 +34,7 @@ Prompt:
 ## M2 — Masters and engines (est. 3 days)
 Tasks:
 - [x] Masters: uoms, uom_conversions, item_categories, items, customers, customer_addresses, vendors, approved_sources, warehouses, locations, products, master_formulas (+ lines, versioned, QA approval), price_lists, tax_codes.
-- [ ] Finance masters: accounts (seed a pharma chart of accounts), cost_centers, posting_rules, fiscal periods for FY2026-27 (Jul–Jun).
+- [x] Finance masters: accounts (seed a pharma chart of accounts), cost_centers, posting_rules, fiscal periods for FY2026-27 (Jul–Jun). (PLACEHOLDER chart, rules and tax codes seeded; FY2026-27 is created on the Fiscal periods page by the Finance Manager — decisions 18-11-2026.)
 - [ ] `inv` tables: lots (status history in `core.status_history`), stock_movements (immutable), stock_balances (CHECK qty >= 0), stock_reservations.
 - [ ] `engines/inventory`: `postMovement()`, `reserve()`, `fefoCandidates()`, lot-actual cost (no moving average; GL inventory = Σ lot qty × lot cost), toll stock at zero value.
 - [ ] `engines/posting`: `postJournal()` (balanced, open period, posting_rules lookup), `reverse()`.

@@ -38,35 +38,9 @@ export type FormulaLineRow = typeof masterFormulaLines.$inferSelect;
 export type PriceListRow = typeof priceLists.$inferSelect;
 export type PriceListLineRow = typeof priceListLines.$inferSelect;
 
-export interface Paging {
-  offset: number;
-  limit: number;
-}
-
-// ---------------------------------------------------------------- generic helpers
-
-/** ILIKE pattern with %, _ and \ escaped. */
-export function likePattern(search: string): string {
-  return `%${search.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
-}
-
-/** WHERE parts shared by every list: company, free-text search over the given columns, active flag. */
-export function listWhere(
-  companyCol: PgColumn,
-  opts: { search?: string; searchCols: PgColumn[]; activeCol?: PgColumn; active?: 'active' | 'inactive' | 'all'; extra?: (SQL | undefined)[] },
-  companyId: string,
-): SQL | undefined {
-  const parts: (SQL | undefined)[] = [eq(companyCol, companyId), ...(opts.extra ?? [])];
-  if (opts.search) parts.push(or(...opts.searchCols.map((c) => ilike(c, likePattern(opts.search ?? '')))));
-  if (opts.activeCol && opts.active === 'active') parts.push(eq(opts.activeCol, true));
-  if (opts.activeCol && opts.active === 'inactive') parts.push(eq(opts.activeCol, false));
-  return and(...parts);
-}
-
-export async function countWhere(q: Queryable, table: PgTable, where: SQL | undefined): Promise<number> {
-  const [row] = await q.select({ n: count() }).from(table).where(where);
-  return row?.n ?? 0;
-}
+// Generic list helpers live in db/list.ts (shared by every module); re-exported for the masters services.
+export { countWhere, likePattern, listWhere, type Paging } from '../../db/list';
+import type { Paging } from '../../db/list';
 
 function tableSql(entity: string): SQL {
   const [schema, table] = entity.split('.') as [string, string];

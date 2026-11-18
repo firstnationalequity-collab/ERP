@@ -199,7 +199,7 @@ About 80 tables in 9 groups, all in one PostgreSQL schema per module (`core`, `i
 
 Every business event calls the inventory engine and the posting engine inside one transaction; if either fails, nothing is saved. Valuation is **lot-actual cost**: each lot carries its own unit cost (receipt price + allocated landed cost), and every issue, dispatch, adjustment and disposal is valued at that lot's cost. The inventory GL balance always equals Σ(lot qty × lot unit cost). There is no item-level moving average; an item's average cost for reports is computed from its lots (decision 18-11-2026; Finance to confirm under IAS 2). Customer-owned (toll) material moves in the stock ledger at zero value and creates **no** journal entry.
 
-Accounts are not hard-coded: `posting_rules` maps (event, item category) to debit and credit accounts, so Finance can change the chart without code.
+Accounts are not hard-coded: `posting_rules` maps (event, account role, item category) to an account, so Finance can change the chart without code. Each event uses the account roles listed in `PostingEventRoles` (`packages/shared/src/enums.ts`); a rule with no item category is the default for every category. Journal entries are created DRAFT and posted only when balanced (≥ 2 lines, debits = credits); posted lines never change (decisions 18-11-2026, M2 task 4).
 
 | Event | Stock effect | Debit | Credit |
 | --- | --- | --- | --- |

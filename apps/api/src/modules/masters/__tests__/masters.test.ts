@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../../../app';
 import { databaseUrl } from '../../../config/env';
 import { runSeed } from '../../../db/seed/run';
+import { PLACEHOLDER_TAX_CODES } from '../../../db/seed/finance';
 import { createTestUser, TEST_PASSWORD } from '../../../test/factories';
 
 const app = createApp();
@@ -104,7 +105,8 @@ describe('catalog masters: tax codes, UoM, categories, items, conversions', () =
 
     const upd = await patch('fm', `/master/tax-codes/${ids.gst}`, { rate: '17', isPlaceholder: false });
     expect(upd.body).toMatchObject({ rate: '17.0000', isPlaceholder: false });
-    expect((await get('ceo', '/master/tax-codes')).body.total).toBe(2);
+    // The two created here plus the seeded PLACEHOLDER tax codes (M2 task 4).
+    expect((await get('ceo', '/master/tax-codes')).body.total).toBe(2 + PLACEHOLDER_TAX_CODES.length);
     expectError(await get('admin', '/master/tax-codes'), 403, 'FORBIDDEN');
   });
 

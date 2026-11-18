@@ -18,6 +18,7 @@ async function main(): Promise<void> {
       }`,
       `Number series created: ${report.seriesCreated.length ? report.seriesCreated.join(', ') : 'none'}`,
       `Approval rules created: ${report.approvalRulesCreated.length ? report.approvalRulesCreated.join(', ') : 'none'}`,
+      `PLACEHOLDER accounts created: ${report.accountsCreated.length}, posting rules: ${report.postingRulesCreated.length}, tax codes: ${report.taxCodesCreated.length ? report.taxCodesCreated.join(', ') : 'none'}`,
       `First admin: ${report.adminCreated ? 'created (username "admin", must change password at first login)' : `not created (${report.adminSkipped ?? ''})`}`,
     ].join('\n'),
   );

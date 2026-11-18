@@ -11,3 +11,4 @@ export * from './schemas/core/approvals';
 export * from './schemas/core/attachments';
 export * from './schemas/core/audit';
 export * from './schemas/master/masters';
+export * from './schemas/fin/masters';
