@@ -29,6 +29,9 @@ import {
   PostingEvent,
   AccountRole,
   PostingStatus,
+  LotStatus,
+  StockOwner,
+  StockMovementType,
 } from '@albert/shared';
 import { databaseUrl } from '../config/env';
 
@@ -80,6 +83,9 @@ const cases: [string, string, readonly string[]][] = [
   ['fin.posting_rules', 'account_role', AccountRole],
   ['fin.journal_entries', 'event', PostingEvent],
   ['fin.journal_entries', 'status', PostingStatus],
+  ['inv.lots', 'status', LotStatus],
+  ['inv.lots', 'owner_type', StockOwner],
+  ['inv.stock_movements', 'movement_type', StockMovementType],
 ];
 
 beforeAll(async () => {

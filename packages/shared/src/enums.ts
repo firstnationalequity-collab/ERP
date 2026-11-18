@@ -35,6 +35,30 @@ export type LotStatus = (typeof LotStatus)[number];
 export const StockOwner = ['OWN', 'CUSTOMER'] as const;
 export type StockOwner = (typeof StockOwner)[number];
 
+/**
+ * Stock ledger movement types (inv.stock_movements, migration 0014). Each row touches one location: inbound
+ * types add stock (to_location, qty > 0), outbound types remove it (from_location, qty < 0). A transfer is a
+ * TRANSFER_OUT + TRANSFER_IN pair. A reversal row keeps the original's type with the direction flipped.
+ */
+export const StockMovementType = [
+  'RECEIPT', // GRN or customer-material receipt: new lot, QUARANTINE
+  'ISSUE', // material issued to a batch: APPROVED lots only (rule 2)
+  'ISSUE_RETURN', // material returned from the floor
+  'OUTPUT', // FG output of a batch: new lot, QUARANTINE
+  'DISPATCH', // delivery: RELEASED FG lots only (rule 2)
+  'SALES_RETURN', // goods returned by a customer
+  'TRANSFER_OUT',
+  'TRANSFER_IN',
+  'ADJUSTMENT_IN',
+  'ADJUSTMENT_OUT',
+  'DESTROY', // REJECTED lot destroyed
+  'RETURN_TO_VENDOR', // REJECTED lot returned
+] as const;
+export type StockMovementType = (typeof StockMovementType)[number];
+
+/** Movement types that add stock to a location (the rest remove it). SQL: inv.is_inbound, tested equal. */
+export const InboundMovementTypes: readonly StockMovementType[] = ['RECEIPT', 'ISSUE_RETURN', 'OUTPUT', 'SALES_RETURN', 'TRANSFER_IN', 'ADJUSTMENT_IN'];
+
 export const BatchStatus = [
   'PLANNED',
   'RELEASED',
