@@ -19,6 +19,7 @@ export const ErrorCodes = [
   'NOT_FOUND',
   'ALREADY_EXISTS',
   'LAST_ADMIN',
+  'QA_MANAGER_EXISTS',
   'INVALID_TRANSITION',
   'ESIGN_FAILED',
   'PERIOD_CLOSED',

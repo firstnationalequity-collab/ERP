@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:migrate": "tsx --env-file=../../.env src/db/migrate.ts",
-    "db:seed": "tsx --env-file=../../.env src/db/seed.ts"
+    "db:seed": "tsx --env-file=../../.env src/db/seed.ts",
+    "bootstrap:qa-manager": "tsx --env-file=../../.env src/db/bootstrap-qa-manager.ts"
   },
   "dependencies": {
     "@albert/shared": "workspace:*",
