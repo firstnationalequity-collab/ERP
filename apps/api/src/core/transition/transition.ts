@@ -7,7 +7,7 @@
 //   2. refuses moves not in the map (409), actors without the key (403), missing/foreign signatures (403);
 //   3. writes core.status_history, then updates the status.
 // The database refuses any status change without that history row (core.require_transition).
-import { sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import type { PermissionKey, SignatureMeaning } from '@albert/shared';
 import { SYSTEM_USER_ID, type Tx } from '../../db/client';
 import { statusHistory } from '../../db/schema/core';
@@ -208,4 +208,15 @@ export async function recordInitialStatus<S extends string>(
   const reason = await authorize(tx, map, move, req);
   const historyId = await writeHistory(tx, map, null, req, reason);
   return { from: null, to: req.to, historyId };
+}
+
+/** Who made the latest move of a record into `status` (e.g. who deactivated it), or undefined if never. */
+export async function lastStatusActor(tx: Tx, entityTable: string, entityId: string, status: string): Promise<string | undefined> {
+  const [row] = await tx
+    .select({ actorId: statusHistory.actorId })
+    .from(statusHistory)
+    .where(and(eq(statusHistory.entityTable, entityTable), eq(statusHistory.entityId, entityId), eq(statusHistory.toStatus, status)))
+    .orderBy(desc(statusHistory.id))
+    .limit(1);
+  return row?.actorId;
 }

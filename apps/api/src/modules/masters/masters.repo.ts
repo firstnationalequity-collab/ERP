@@ -153,8 +153,9 @@ export async function updateCategory(tx: Tx, id: string, v: Partial<typeof itemC
 export async function listItems(q: Queryable, where: SQL | undefined, p: Paging) {
   return q.select().from(items).where(where).orderBy(asc(items.code)).limit(p.limit).offset(p.offset);
 }
-export async function findItem(q: Queryable, companyId: string, id: string): Promise<ItemRow | undefined> {
-  const [row] = await q.select().from(items).where(and(eq(items.companyId, companyId), eq(items.id, id)));
+export async function findItem(q: Queryable, companyId: string, id: string, lock = false): Promise<ItemRow | undefined> {
+  const base = q.select().from(items).where(and(eq(items.companyId, companyId), eq(items.id, id)));
+  const [row] = lock ? await base.for('update') : await base;
   return row;
 }
 export async function itemsByIds(q: Queryable, companyId: string, ids: string[]): Promise<ItemRow[]> {

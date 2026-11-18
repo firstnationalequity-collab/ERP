@@ -8,7 +8,7 @@
 import { eq } from 'drizzle-orm';
 import {
   ApprovedSourceStatus,
-  GmpItemTypes,
+  AvlItemTypes,
   type ApprovedSourceDto,
   type BlockSourceRequest,
   type CreateApprovedSourceRequest,
@@ -116,8 +116,8 @@ export async function proposeSource(auth: AuthContext, input: CreateApprovedSour
     if (vendor.status === 'INACTIVE') throw new AppError('VALIDATION_FAILED', 'The vendor is inactive', { field: 'vendorId' });
     const item = found(await repo.findItem(tx, auth.companyId, input.itemId), 'Item');
     if (!item.isActive) throw new AppError('VALIDATION_FAILED', 'The item is not active', { field: 'itemId' });
-    if (!GmpItemTypes.includes(item.type)) {
-      throw new AppError('VALIDATION_FAILED', `Approved sources are kept for GMP materials (${GmpItemTypes.join(', ')}), not ${item.type}`, {
+    if (!AvlItemTypes.includes(item.type)) {
+      throw new AppError('VALIDATION_FAILED', `Approved sources are kept for GMP materials (${AvlItemTypes.join(', ')}), not ${item.type}`, {
         field: 'itemId',
       });
     }

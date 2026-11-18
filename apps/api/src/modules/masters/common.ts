@@ -1,7 +1,10 @@
 // Helpers shared by the masters services.
-import type { MasterListQuery, Page } from '@albert/shared';
+import type { MasterListQuery, Page, PermissionKey, WitnessSignRequest } from '@albert/shared';
 import type { Queryable, Tx } from '../../db/client';
 import { AppError } from '../../core/errors';
+import type { AuthContext, RequestMeta } from '../../core/auth/auth.service';
+import { permissionKeysForUser } from '../../core/auth/auth.repo';
+import { recordSignature, verifyWitness, type SignatureProof } from '../../core/esign/esign.service';
 import * as repo from './masters.repo';
 
 /** Row → DTO: drop company_id, timestamps as ISO strings. */
@@ -48,6 +51,39 @@ export async function setActive(tx: Tx, entity: string, companyId: string, id: s
   if (current === undefined) throw new AppError('NOT_FOUND', `${label} not found`);
   if (current === active) throw new AppError('INVALID_TRANSITION', `${label} is already ${active ? 'active' : 'inactive'}`);
   await repo.setActiveFlag(tx, entity, id, active);
+}
+
+// ---------------------------------------------------------------- countersign (a second person signs in the same request)
+
+/** Verify the countersigner's password before the business transaction, so failures are counted. */
+export async function verifyCountersign(
+  auth: AuthContext,
+  countersign: WitnessSignRequest | undefined,
+  meta: RequestMeta,
+): Promise<SignatureProof | undefined> {
+  if (!countersign) return undefined;
+  if (countersign.meaning !== 'APPROVED') throw new AppError('ESIGN_FAILED', 'A countersign must have the meaning APPROVED');
+  return verifyWitness(auth, countersign, meta);
+}
+
+/**
+ * Inside the transaction: refuse without a countersign (COUNTERSIGN_REQUIRED) or when the countersigner does not
+ * hold `key` (FORBIDDEN); otherwise store it as an APPROVED e-signature on the record. The DB guards check the
+ * signature at commit.
+ */
+export async function applyCountersign(
+  tx: Tx,
+  proof: SignatureProof | undefined,
+  record: { table: string; id: string },
+  key: PermissionKey,
+  requiredMessage: string,
+  fields: string[],
+): Promise<void> {
+  if (!proof) throw new AppError('COUNTERSIGN_REQUIRED', requiredMessage, { fields, permission: key });
+  if (!(await permissionKeysForUser(tx, proof.userId)).includes(key)) {
+    throw new AppError('FORBIDDEN', `The countersigner does not hold ${key}`, { permission: key });
+  }
+  await recordSignature(tx, proof, record, ['APPROVED']);
 }
 
 /** Only the keys the request actually sent (undefined = leave unchanged; null = clear). */

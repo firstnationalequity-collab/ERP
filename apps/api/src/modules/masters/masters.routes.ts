@@ -38,9 +38,10 @@ import {
   UpdateWarehouseRequest,
   type PermissionKey,
 } from '@albert/shared';
-import { requirePermission } from '../../core/rbac/require-permission';
+import { requireAnyPermission, requirePermission } from '../../core/rbac/require-permission';
 import { asyncHandler, authOf, requestMeta } from '../../core/auth/middleware';
 import * as catalog from './catalog.service';
+import * as itemsSvc from './items.service';
 import * as parties from './parties.service';
 import * as avl from './avl.service';
 import * as productsSvc from './products.service';
@@ -110,15 +111,24 @@ r.patch('/item-categories/:id', requirePermission('master.item.manage'), asyncHa
 }));
 activeFlagRoutes('item-categories', 'master.item.manage');
 
-r.get('/items', requirePermission(VIEW), asyncHandler(async (req, res) => { res.json(await catalog.listItems(authOf(req), listQuery(req))); }));
-r.get('/items/:id', requirePermission(VIEW), asyncHandler(async (req, res) => { res.json(await catalog.getItem(authOf(req), idOf(req))); }));
+// Items: DRAFT → ACTIVE ⇄ INACTIVE. GMP items move with master.item.approve (QA), others with master.item.manage;
+// the route admits either key and core/transition checks the one the item's type needs.
+r.get('/items', requirePermission(VIEW), asyncHandler(async (req, res) => { res.json(await itemsSvc.listItems(authOf(req), listQuery(req))); }));
+r.get('/items/:id', requirePermission(VIEW), asyncHandler(async (req, res) => { res.json(await itemsSvc.getItem(authOf(req), idOf(req))); }));
 r.post('/items', requirePermission('master.item.manage'), asyncHandler(async (req, res) => {
-  res.status(201).json(await catalog.createItem(authOf(req), CreateItemRequest.parse(req.body)));
+  res.status(201).json(await itemsSvc.createItem(authOf(req), CreateItemRequest.parse(req.body)));
 }));
 r.patch('/items/:id', requirePermission('master.item.manage'), asyncHandler(async (req, res) => {
-  res.json(await catalog.updateItem(authOf(req), idOf(req), UpdateItemRequest.parse(req.body)));
+  res.json(await itemsSvc.updateItem(authOf(req), idOf(req), UpdateItemRequest.parse(req.body), requestMeta(req)));
 }));
-activeFlagRoutes('items', 'master.item.manage');
+r.post('/items/:id/activate', requireAnyPermission('master.item.approve', 'master.item.manage'), asyncHandler(async (req, res) => {
+  const { reason } = MasterActionRequest.parse(req.body ?? {});
+  res.json(await itemsSvc.changeItemStatus(authOf(req), idOf(req), 'ACTIVE', reason));
+}));
+r.post('/items/:id/deactivate', requireAnyPermission('master.item.approve', 'master.item.manage'), asyncHandler(async (req, res) => {
+  const { reason } = DeactivateRequest.parse(req.body ?? {});
+  res.json(await itemsSvc.changeItemStatus(authOf(req), idOf(req), 'INACTIVE', reason));
+}));
 
 r.get('/uom-conversions', requirePermission(VIEW), asyncHandler(async (req, res) => { res.json(await catalog.listConversions(authOf(req), listQuery(req))); }));
 r.get('/uom-conversions/:id', requirePermission(VIEW), asyncHandler(async (req, res) => { res.json(await catalog.getConversion(authOf(req), idOf(req))); }));

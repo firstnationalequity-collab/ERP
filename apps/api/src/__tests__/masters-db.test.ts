@@ -1,4 +1,5 @@
-// Database guards of 0008_masters.sql: the rules hold even if a service forgets them.
+// Database guards of 0008_masters.sql: the rules hold even if a service forgets them. (Items stay DRAFT here: these
+// guards do not depend on item status; 0011 item guards are in items-db.test.ts.)
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { databaseUrl } from '../config/env';
@@ -71,7 +72,7 @@ beforeAll(async () => {
     salesTax = await one(`INSERT INTO master.tax_codes (code, name, kind, rate) VALUES ('GST18', 'GST', 'SALES_TAX', 18) RETURNING id`);
     wht = await one(`INSERT INTO master.tax_codes (code, name, kind, rate) VALUES ('WHT4', 'WHT', 'WITHHOLDING', 4.5) RETURNING id`);
     const item = (code: string, type: string) =>
-      one(`INSERT INTO master.items (code, name, type, category_id, base_uom_id) VALUES ($1, $1, $2, $3, $4) RETURNING id`, [code, type, category, uom]);
+      insertWithStatus('master.items', 'code, name, type, category_id, base_uom_id', [code, code, type, category, uom], 'DRAFT', '1');
     fgItem = await item('FG-1', 'FG');
     rmItem = await item('RM-1', 'RM');
     apiItem = await item('API-1', 'API');
@@ -221,7 +222,7 @@ describe('master formulas', () => {
 
   beforeAll(async () => {
     const fg2 = await tx('1', () =>
-      one(`INSERT INTO master.items (code, name, type, category_id, base_uom_id) VALUES ('FG-2', 'FG-2', 'FG', $1, $2) RETURNING id`, [category, uom]),
+      insertWithStatus('master.items', 'code, name, type, category_id, base_uom_id', ['FG-2', 'FG-2', 'FG', category, uom], 'DRAFT', '1'),
     );
     product = await tx(editor, () => one('INSERT INTO master.products (item_id) VALUES ($1) RETURNING id', [fg2]));
     formula = await tx(editor, () =>

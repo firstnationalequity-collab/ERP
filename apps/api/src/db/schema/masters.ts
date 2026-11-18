@@ -1,10 +1,12 @@
-// Drizzle description of the `master` schema. Source of truth: src/db/migrations/0008_masters.sql.
+// Drizzle description of the `master` schema. Source of truth: src/db/migrations/0008_masters.sql (+ 0011 item status).
+import { sql } from 'drizzle-orm';
 import { boolean, date, integer, numeric, pgSchema, text } from 'drizzle-orm/pg-core';
 import type {
   AddressType,
   ApprovedSourceStatus,
   AssayBasis,
   FormulaStatus,
+  ItemStatus,
   ItemType,
   PartyStatus,
   StorageZone,
@@ -57,7 +59,10 @@ export const items = master.table('items', {
   retestDays: integer('retest_days'),
   isControlled: boolean('is_controlled').notNull().default(false),
   storageZone: text('storage_zone').$type<StorageZone>().notNull().default('AMBIENT'),
-  isActive: boolean('is_active').notNull().default(true),
+  /** Changed only through core/transition (0011). */
+  status: text('status').$type<ItemStatus>().notNull(),
+  /** Generated: status = 'ACTIVE'. Never written. */
+  isActive: boolean('is_active').generatedAlwaysAs(sql`status = 'ACTIVE'`),
   ...auditColumns(),
 });
 

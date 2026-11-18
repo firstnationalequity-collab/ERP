@@ -161,6 +161,61 @@ describe('catalog masters: tax codes, UoM, categories, items, conversions', () =
     expect((await get('ceo', '/master/items?search=para')).body.total).toBe(3);
   });
 
+  it('creates items as DRAFT; QA activates GMP items, another item keeper activates non-GMP items', async () => {
+    expect((await get('wm', `/master/items/${ids.api}`)).body).toMatchObject({ status: 'DRAFT', isActive: false });
+    expectError(await post('planner', `/master/items/${ids.api}/activate`), 403, 'FORBIDDEN');
+    // GMP item: the creator cannot, and neither can another item keeper without master.item.approve.
+    expectError(await post('wm', `/master/items/${ids.api}/activate`), 403, 'SEGREGATION_OF_DUTIES');
+    expectError(await post('pm', `/master/items/${ids.api}/activate`), 403, 'FORBIDDEN');
+    expect((await get('wm', `/master/items/${ids.api}`)).body.status).toBe('DRAFT');
+    expect((await post('qam', `/master/items/${ids.api}/activate`)).body).toMatchObject({ status: 'ACTIVE', isActive: true });
+    for (const k of ['exc', 'exc2', 'rm', 'fg', 'fg2']) {
+      expect((await post('qam', `/master/items/${ids[k]}/activate`)).body.status).toBe('ACTIVE');
+    }
+    // Non-GMP item: not the creator, not QA (no master.item.manage); another item keeper does it.
+    expectError(await post('wm', `/master/items/${ids.spare}/activate`), 403, 'SEGREGATION_OF_DUTIES');
+    expectError(await post('qam', `/master/items/${ids.spare}/activate`), 403, 'FORBIDDEN');
+    expect((await post('pm', `/master/items/${ids.spare}/activate`)).body.status).toBe('ACTIVE');
+    expect(await history('master.items', ids.api)).toEqual(['->DRAFT', 'DRAFT>ACTIVE']);
+    expect((await get('ceo', '/master/items?status=DRAFT')).body.total).toBe(0);
+  });
+
+  it('refuses a DRAFT item as a reference until it is activated', async () => {
+    const draft = await post('wm', '/master/items', { code: 'FG-DRAFT', name: 'Draft FG', type: 'FG', categoryId: ids.catFg, baseUomId: ids.tab });
+    expect(draft.body.status).toBe('DRAFT');
+    expectError(await post('sm', '/master/products', { itemId: draft.body.id }), 400, 'VALIDATION_FAILED');
+  });
+
+  it('deactivates and reactivates with a reason: GMP by QA only; a non-GMP item not by the person who deactivated it', async () => {
+    expectError(await post('wm', `/master/items/${ids.rm}/deactivate`, { reason: 'Discontinued' }), 403, 'FORBIDDEN');
+    expectError(await post('qam', `/master/items/${ids.rm}/deactivate`, {}), 400, 'VALIDATION_FAILED');
+    expect((await post('qam', `/master/items/${ids.rm}/deactivate`, { reason: 'Supplier change' })).body.status).toBe('INACTIVE');
+    expectError(await post('pm', `/master/items/${ids.rm}/activate`, { reason: 'Back in use' }), 403, 'FORBIDDEN');
+    expect((await post('qam', `/master/items/${ids.rm}/activate`, { reason: 'Back in use' })).body.status).toBe('ACTIVE');
+    expectError(await post('qam', `/master/items/${ids.rm}/activate`, { reason: 'Again' }), 409, 'INVALID_TRANSITION');
+
+    expect((await post('wm', `/master/items/${ids.spare}/deactivate`, { reason: 'Obsolete belt' })).body.status).toBe('INACTIVE');
+    expectError(await post('wm', `/master/items/${ids.spare}/activate`, { reason: 'Changed my mind' }), 403, 'SEGREGATION_OF_DUTIES');
+    expect((await post('pm', `/master/items/${ids.spare}/activate`, { reason: 'Still in use' })).body.status).toBe('ACTIVE');
+    expect(await history('master.items', ids.spare)).toEqual(['->DRAFT', 'DRAFT>ACTIVE', 'ACTIVE>INACTIVE', 'INACTIVE>ACTIVE']);
+  });
+
+  it('needs a QA countersign to change GMP fields of a GMP item after DRAFT; other fields and non-GMP items stay free', async () => {
+    const url = `/master/items/${ids.api}`;
+    expect((await patch('wm', url, { name: 'Paracetamol API' })).body.name).toBe('Paracetamol API');
+    for (const change of [{ shelfLifeDays: 730 }, { retestDays: 180 }, { storageZone: 'COLD_2_8C' }, { isControlled: false }]) {
+      expectError(await patch('wm', url, change), 403, 'COUNTERSIGN_REQUIRED');
+    }
+    expectError(await patch('wm', url, { shelfLifeDays: 730, countersign: countersign('pm') }), 403, 'FORBIDDEN');
+    expectError(await patch('wm', url, { shelfLifeDays: 730, countersign: countersign('wm') }), 403, 'SEGREGATION_OF_DUTIES');
+    expect((await get('wm', url)).body.shelfLifeDays).toBe(1095);
+    const ok = await patch('wm', url, { shelfLifeDays: 730, countersign: countersign('qam') });
+    expect(ok.body).toMatchObject({ shelfLifeDays: 730, status: 'ACTIVE' });
+    // Same value again is not a change: no countersign needed.
+    expect((await patch('wm', url, { shelfLifeDays: 730 })).status).toBe(200);
+    expect((await patch('wm', `/master/items/${ids.spare}`, { storageZone: 'COLD_2_8C' })).body.storageZone).toBe('COLD_2_8C');
+  });
+
   it('adds unit conversions (never edited: deactivate and add a new one)', async () => {
     const conv = await post('wm', '/master/uom-conversions', { fromUomId: ids.kg, toUomId: ids.g, factor: '1000' });
     expect(conv.status).toBe(201);

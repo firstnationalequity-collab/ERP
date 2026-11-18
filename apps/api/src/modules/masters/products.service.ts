@@ -11,16 +11,14 @@ import {
   type PermissionKey,
   type ProductDto,
   type UpdateProductRequest,
-  type WitnessSignRequest,
 } from '@albert/shared';
 import { db, withTransaction, type Tx } from '../../db/client';
 import { products } from '../../db/schema/masters';
 import { AppError } from '../../core/errors';
 import { txContext, type AuthContext, type RequestMeta } from '../../core/auth/auth.service';
-import { permissionKeysForUser } from '../../core/auth/auth.repo';
-import { recordSignature, verifyWitness, type SignatureProof } from '../../core/esign/esign.service';
+import { type SignatureProof } from '../../core/esign/esign.service';
 import * as repo from './masters.repo';
-import { assertReference, found, page, paging, sent, stamped } from './common';
+import { applyCountersign, assertReference, found, page, paging, sent, stamped, verifyCountersign } from './common';
 
 const COUNTERSIGN_KEY: PermissionKey = 'qa.product.countersign';
 
@@ -28,23 +26,9 @@ function toDto(row: repo.ProductListRow): ProductDto {
   return { ...stamped(row.p), itemCode: row.itemCode, itemName: row.itemName };
 }
 
-async function verifyCountersign(auth: AuthContext, cs: WitnessSignRequest | undefined, meta: RequestMeta): Promise<SignatureProof | undefined> {
-  if (!cs) return undefined;
-  if (cs.meaning !== 'APPROVED') throw new AppError('ESIGN_FAILED', 'A countersign must have the meaning APPROVED');
-  return verifyWitness(auth, cs, meta);
-}
-
-async function applyCountersign(tx: Tx, productId: string, proof: SignatureProof | undefined, fields: string[]): Promise<void> {
-  if (!proof) {
-    throw new AppError('COUNTERSIGN_REQUIRED', `Changing ${fields.join(', ')} needs a QA countersign (${COUNTERSIGN_KEY})`, {
-      fields,
-      permission: COUNTERSIGN_KEY,
-    });
-  }
-  if (!(await permissionKeysForUser(tx, proof.userId)).includes(COUNTERSIGN_KEY)) {
-    throw new AppError('FORBIDDEN', `The countersigner does not hold ${COUNTERSIGN_KEY}`, { permission: COUNTERSIGN_KEY });
-  }
-  await recordSignature(tx, proof, { table: 'master.products', id: productId }, ['APPROVED']);
+async function countersignProduct(tx: Tx, productId: string, proof: SignatureProof | undefined, fields: string[]): Promise<void> {
+  await applyCountersign(tx, proof, { table: 'master.products', id: productId }, COUNTERSIGN_KEY,
+    `Changing ${fields.join(', ')} needs a QA countersign (${COUNTERSIGN_KEY})`, fields);
 }
 
 export async function listProducts(auth: AuthContext, query: MasterListQuery): Promise<Page<ProductDto>> {
@@ -82,7 +66,7 @@ export async function createProduct(auth: AuthContext, input: CreateProductReque
       qualityAgreementSignedOn: fields.qualityAgreementSignedOn ?? null,
     });
     const regulated = ProductRegulatedFields.filter((f) => (fields[f] ?? null) !== null);
-    if (regulated.length > 0) await applyCountersign(tx, row.id, proof, regulated);
+    if (regulated.length > 0) await countersignProduct(tx, row.id, proof, regulated);
     return row.id;
   });
   return getProduct(auth, id);
@@ -99,7 +83,7 @@ export async function updateProduct(auth: AuthContext, id: string, input: Update
     }
     const regulated = ProductRegulatedFields.filter((f) => f in changes && (changes[f] ?? null) !== (current[f] ?? null));
     await repo.updateProduct(tx, id, changes);
-    if (regulated.length > 0) await applyCountersign(tx, id, proof, regulated);
+    if (regulated.length > 0) await countersignProduct(tx, id, proof, regulated);
   });
   return getProduct(auth, id);
 }

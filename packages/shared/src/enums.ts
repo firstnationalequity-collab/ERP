@@ -4,8 +4,19 @@
 export const ItemType = ['RM', 'PM', 'API', 'EXCIPIENT', 'BULK', 'FG', 'SPARE', 'CONSUMABLE'] as const;
 export type ItemType = (typeof ItemType)[number];
 
-/** Item types that are GMP-regulated: PO lines need an APPROVED approved-source row. */
-export const GmpItemTypes: readonly ItemType[] = ['RM', 'PM', 'API', 'EXCIPIENT'];
+/**
+ * GMP item types (owner decision 18-11-2026, fixed by type): only a holder of master.item.approve (QA Manager)
+ * activates, deactivates or reactivates them, and changing their GMP fields after DRAFT needs a QA countersign.
+ * Mirrored by master.is_gmp_item_type() in 0011_item_activation.sql (a test keeps them equal).
+ */
+export const GmpItemTypes: readonly ItemType[] = ['RM', 'PM', 'API', 'EXCIPIENT', 'BULK', 'FG'];
+
+/** GMP materials bought from vendors: approved sources (AVL) are kept for these, and PO lines need one. */
+export const AvlItemTypes: readonly ItemType[] = ['RM', 'PM', 'API', 'EXCIPIENT'];
+
+/** Item lifecycle: created DRAFT; ACTIVE items are usable in documents. */
+export const ItemStatus = ['DRAFT', 'ACTIVE', 'INACTIVE'] as const;
+export type ItemStatus = (typeof ItemStatus)[number];
 
 export const LotStatus = [
   'QUARANTINE',

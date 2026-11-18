@@ -1,4 +1,4 @@
-// Simple masters: tax codes (fin.master.manage), UoM / categories / items / conversions (master.item.manage),
+// Simple masters: tax codes (fin.master.manage), UoM / categories / conversions (master.item.manage; items: items.service),
 // warehouses / locations (master.location.manage), price lists (master.price.manage). Reads: master.view.
 // Masters are never deleted; they are deactivated (DB: core.forbid_delete). Permission keys are checked in
 // the routes; references to other masters must exist and be active.
@@ -8,14 +8,12 @@ import type {
   ConversionDto,
   CreateCategoryRequest,
   CreateConversionRequest,
-  CreateItemRequest,
   CreateLocationRequest,
   CreatePriceListLineRequest,
   CreatePriceListRequest,
   CreateTaxCodeRequest,
   CreateUomRequest,
   CreateWarehouseRequest,
-  ItemDto,
   LocationDto,
   MasterListQuery,
   Page,
@@ -23,7 +21,6 @@ import type {
   PriceListLineDto,
   TaxCodeDto,
   UomDto,
-  UpdateItemRequest,
   UpdateLocationRequest,
   UpdateNameRequest,
   UpdatePriceListLineRequest,
@@ -32,10 +29,9 @@ import type {
   UpdateWarehouseRequest,
   WarehouseDto,
 } from '@albert/shared';
-import { db, withTransaction, type Tx } from '../../db/client';
+import { db, withTransaction } from '../../db/client';
 import {
   itemCategories,
-  items,
   locations,
   priceLists,
   taxCodes,
@@ -53,7 +49,6 @@ export const ACTIVE_FLAG_MASTERS = {
   'tax-codes': { entity: 'master.tax_codes', label: 'Tax code' },
   uoms: { entity: 'master.uoms', label: 'Unit of measure' },
   'item-categories': { entity: 'master.item_categories', label: 'Item category' },
-  items: { entity: 'master.items', label: 'Item' },
   'uom-conversions': { entity: 'master.uom_conversions', label: 'Unit conversion' },
   warehouses: { entity: 'master.warehouses', label: 'Warehouse' },
   locations: { entity: 'master.locations', label: 'Location' },
@@ -141,54 +136,6 @@ export async function updateCategory(auth: AuthContext, id: string, input: Updat
     await repo.updateCategory(tx, id, input);
   });
   return getCategory(auth, id);
-}
-
-// ---------------------------------------------------------------- items
-
-async function assertItemTaxCode(tx: Tx, companyId: string, taxCodeId: string): Promise<void> {
-  const tc = await repo.findTaxCode(tx, companyId, taxCodeId);
-  if (!tc) throw new AppError('VALIDATION_FAILED', 'Tax code does not exist', { field: 'taxCodeId' });
-  if (!tc.isActive) throw new AppError('VALIDATION_FAILED', 'Tax code is not active', { field: 'taxCodeId' });
-  if (tc.kind !== 'SALES_TAX') throw new AppError('VALIDATION_FAILED', "An item's tax code must be a sales tax code", { field: 'taxCodeId' });
-}
-
-export async function listItems(auth: AuthContext, query: MasterListQuery): Promise<Page<ItemDto>> {
-  const where = repo.listWhere(
-    items.companyId,
-    { ...query, searchCols: [items.code, items.name], activeCol: items.isActive, extra: [query.type ? eq(items.type, query.type) : undefined] },
-    auth.companyId,
-  );
-  const rows = await repo.listItems(db, where, paging(query));
-  return page(rows.map(stamped), await repo.countWhere(db, items, where), query);
-}
-export async function getItem(auth: AuthContext, id: string): Promise<ItemDto> {
-  return stamped(found(await repo.findItem(db, auth.companyId, id), 'Item'));
-}
-export async function createItem(auth: AuthContext, input: CreateItemRequest): Promise<ItemDto> {
-  const row = await withTransaction(txContext(auth), async (tx) => {
-    await assertReference(tx, 'master.item_categories', auth.companyId, input.categoryId, 'Item category');
-    await assertReference(tx, 'master.uoms', auth.companyId, input.baseUomId, 'Base unit of measure');
-    if (input.taxCodeId) await assertItemTaxCode(tx, auth.companyId, input.taxCodeId);
-    return repo.insertItem(tx, input);
-  });
-  return stamped(row);
-}
-export async function updateItem(auth: AuthContext, id: string, input: UpdateItemRequest): Promise<ItemDto> {
-  await withTransaction(txContext(auth), async (tx) => {
-    const item = found(await repo.findItem(tx, auth.companyId, id), 'Item');
-    const changes = sent(input);
-    if (changes.categoryId && changes.categoryId !== item.categoryId) {
-      await assertReference(tx, 'master.item_categories', auth.companyId, changes.categoryId, 'Item category');
-    }
-    if (changes.taxCodeId && changes.taxCodeId !== item.taxCodeId) await assertItemTaxCode(tx, auth.companyId, changes.taxCodeId);
-    const shelf = changes.shelfLifeDays !== undefined ? changes.shelfLifeDays : item.shelfLifeDays;
-    const retest = changes.retestDays !== undefined ? changes.retestDays : item.retestDays;
-    if (shelf != null && retest != null && retest > shelf) {
-      throw new AppError('VALIDATION_FAILED', 'Retest period cannot exceed shelf life', { field: 'retestDays' });
-    }
-    await repo.updateItem(tx, id, changes);
-  });
-  return getItem(auth, id);
 }
 
 // ---------------------------------------------------------------- unit conversions

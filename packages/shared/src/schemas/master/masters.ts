@@ -8,6 +8,7 @@ import {
   AssayBasis,
   FormulaStatus,
   ItemType,
+  type ItemStatus,
   PartyStatus,
   StorageZone,
   TaxKind,
@@ -139,7 +140,14 @@ export const CreateItemRequest = z
   .strict()
   .refine(retestWithinShelfLife, { message: 'Retest period cannot exceed shelf life', path: ['retestDays'] });
 export type CreateItemRequest = z.infer<typeof CreateItemRequest>;
-export const UpdateItemRequest = z.object({ ...itemFields, name: name.optional(), categoryId: id.optional() }).strict();
+/**
+ * Fields of a GMP item whose change after DRAFT needs a countersign by a holder of master.item.approve who is
+ * not the editor (owner decision 18-11-2026; DB guard 0011). Name, category and tax code stay free.
+ */
+export const GmpItemSensitiveFields = ['shelfLifeDays', 'retestDays', 'storageZone', 'isControlled'] as const;
+export const UpdateItemRequest = z
+  .object({ ...itemFields, name: name.optional(), categoryId: id.optional(), countersign: WitnessSignRequest.optional() })
+  .strict();
 export type UpdateItemRequest = z.infer<typeof UpdateItemRequest>;
 export interface ItemDto extends Stamped {
   code: string;
@@ -152,6 +160,8 @@ export interface ItemDto extends Stamped {
   retestDays: number | null;
   isControlled: boolean;
   storageZone: StorageZone;
+  status: ItemStatus;
+  /** True only when status is ACTIVE (generated column). */
   isActive: boolean;
 }
 

@@ -23,17 +23,15 @@ import {
   type UpdateCustomerRequest,
   type UpdateVendorRequest,
   type VendorDto,
-  type WitnessSignRequest,
 } from '@albert/shared';
 import { db, withTransaction, type Tx } from '../../db/client';
 import { customers, vendors } from '../../db/schema/masters';
 import { AppError } from '../../core/errors';
 import { txContext, type AuthContext, type RequestMeta } from '../../core/auth/auth.service';
-import { permissionKeysForUser } from '../../core/auth/auth.repo';
-import { recordSignature, verifyWitness, type SignatureProof } from '../../core/esign/esign.service';
+import { type SignatureProof } from '../../core/esign/esign.service';
 import { defineTransitions, recordInitialStatus, transition } from '../../core/transition/transition';
 import * as repo from './masters.repo';
-import { found, page, paging, sent, stamped } from './common';
+import { applyCountersign, found, page, paging, sent, stamped, verifyCountersign } from './common';
 
 // ---------------------------------------------------------------- status maps (rule 7)
 
@@ -60,18 +58,7 @@ const KIND = {
 
 // ---------------------------------------------------------------- countersign
 
-/** Verify the countersigner's password before the business transaction, so failures are counted. */
-async function verifyCountersign(
-  auth: AuthContext,
-  countersign: WitnessSignRequest | undefined,
-  meta: RequestMeta,
-): Promise<SignatureProof | undefined> {
-  if (!countersign) return undefined;
-  if (countersign.meaning !== 'APPROVED') throw new AppError('ESIGN_FAILED', 'A countersign must have the meaning APPROVED');
-  return verifyWitness(auth, countersign, meta);
-}
-
-async function applyCountersign(
+async function countersignParty(
   tx: Tx,
   kind: Kind,
   id: string,
@@ -79,18 +66,8 @@ async function applyCountersign(
   changedSensitive: string[],
 ): Promise<void> {
   const k = KIND[kind];
-  if (!proof) {
-    throw new AppError(
-      'COUNTERSIGN_REQUIRED',
-      `Changing ${changedSensitive.join(', ')} of an active ${kind} needs a countersign by a holder of ${k.approveKey}`,
-      { fields: changedSensitive, permission: k.approveKey },
-    );
-  }
-  const keys = await permissionKeysForUser(tx, proof.userId);
-  if (!keys.includes(k.approveKey)) {
-    throw new AppError('FORBIDDEN', `The countersigner does not hold ${k.approveKey}`, { permission: k.approveKey });
-  }
-  await recordSignature(tx, proof, { table: k.table, id }, ['APPROVED']);
+  await applyCountersign(tx, proof, { table: k.table, id }, k.approveKey,
+    `Changing ${changedSensitive.join(', ')} of an active ${kind} needs a countersign by a holder of ${k.approveKey}`, changedSensitive);
 }
 
 /** Which of the sensitive fields really change (money compared as decimals, not text). */
@@ -160,7 +137,7 @@ export async function updateCustomer(auth: AuthContext, id: string, input: Updat
     if (!next.ntn && !next.cnic) throw new AppError('VALIDATION_FAILED', 'NTN or CNIC is required', { field: 'ntn' });
     const sensitive = changedSensitive(current, changes, CustomerSensitiveFields);
     await repo.updateCustomer(tx, id, changes);
-    if (current.status !== 'DRAFT' && sensitive.length > 0) await applyCountersign(tx, 'customer', id, proof, sensitive);
+    if (current.status !== 'DRAFT' && sensitive.length > 0) await countersignParty(tx, 'customer', id, proof, sensitive);
   });
   return getCustomer(auth, id);
 }
@@ -235,7 +212,7 @@ export async function updateVendor(auth: AuthContext, id: string, input: UpdateV
     assertVendorIdentity({ ...current, ...changes });
     const sensitive = changedSensitive(current, changes, VendorSensitiveFields);
     await repo.updateVendor(tx, id, changes);
-    if (current.status !== 'DRAFT' && sensitive.length > 0) await applyCountersign(tx, 'vendor', id, proof, sensitive);
+    if (current.status !== 'DRAFT' && sensitive.length > 0) await countersignParty(tx, 'vendor', id, proof, sensitive);
   });
   return getVendor(auth, id);
 }

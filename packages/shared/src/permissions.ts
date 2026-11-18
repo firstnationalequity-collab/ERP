@@ -25,7 +25,8 @@ export const Permissions = {
 
   // masters
   'master.view': view('View all masters'),
-  'master.item.manage': action('Items, categories, UoM'),
+  'master.item.manage': action('Items, categories, UoM (draft items; activates non-GMP items)'),
+  'master.item.approve': action('Activate, deactivate and countersign GMP items (QA)'),
   'master.customer.manage': action('Create/edit customers (draft)'),
   'master.customer.approve': action('Activate customers'),
   'master.vendor.manage': action('Create/edit vendors (draft)'),

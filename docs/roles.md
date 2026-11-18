@@ -27,7 +27,8 @@ Design context: `docs/architecture.md` §3 and §4.
 | `core.period.manage` | action | Create fiscal years and periods | new |
 | `core.period.close` | action | Close and reopen fiscal periods | existing |
 | `master.view` | view | View all masters | new |
-| `master.item.manage` | action | Items, categories, UoM | existing |
+| `master.item.manage` | action | Items (draft; activates non-GMP items), categories, UoM | existing |
+| `master.item.approve` | action | Activate, deactivate and countersign GMP items (types RM, PM, API, EXCIPIENT, BULK, FG) | new (M2) |
 | `master.customer.manage` | action | Create/edit customers (draft) | existing |
 | `master.customer.approve` | action | Activate customers | existing |
 | `master.vendor.manage` | action | Create/edit vendors (draft) | existing |
@@ -116,7 +117,7 @@ Every role except SYSTEM also holds `core.approval.inbox` (not repeated below). 
 | 16 | QC Analyst | `qc.view`, `inv.stock.view`, `master.view` | `qc.result.enter`, `qc.spec.manage` |
 | 17 | QC Manager | `qc.view`, `inv.stock.view`, `master.view` | `qc.result.review`, `qc.lot.change_status`, `qc.coa.issue`, `qc.spec.approve` |
 | 18 | QA Officer | `qa.view`, `qc.view`, `prod.view`, `master.view` | `qa.deviation.manage` |
-| 19 | QA Manager | `qa.view`, `qc.view`, `prod.view`, `inv.stock.view`, `master.view`, `core.audit.view` | `qa.deviation.manage`, `qa.deviation.close`, `qa.batch.release`, `qa.lot.hold`, `qa.lot.witness`, `qa.access.countersign`, `master.avl.approve`, `master.formula.approve`, `inv.adjustment.approve` (second approver for adjustments), `qa.product.countersign` |
+| 19 | QA Manager | `qa.view`, `qc.view`, `prod.view`, `inv.stock.view`, `master.view`, `core.audit.view` | `qa.deviation.manage`, `qa.deviation.close`, `qa.batch.release`, `qa.lot.hold`, `qa.lot.witness`, `qa.access.countersign`, `master.avl.approve`, `master.formula.approve`, `inv.adjustment.approve` (second approver for adjustments), `qa.product.countersign`, `master.item.approve` |
 | 20 | System Admin | `core.audit.view` | `core.user.manage`, `core.role.manage`, `core.settings.manage` (admin keys only) |
 | — | SYSTEM (user, not a role) | — | none; cannot log in; actor for seeds and jobs |
 

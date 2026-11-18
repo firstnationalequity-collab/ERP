@@ -125,7 +125,7 @@ const roles: RoleSeed[] = [
       'qa.view', 'qc.view', 'prod.view', 'inv.stock.view', 'master.view', 'core.audit.view',
       'qa.deviation.manage', 'qa.deviation.close', 'qa.batch.release', 'qa.lot.hold', 'qa.lot.witness',
       'qa.access.countersign', 'master.avl.approve', 'master.formula.approve', 'inv.adjustment.approve',
-      'qa.product.countersign',
+      'qa.product.countersign', 'master.item.approve',
     ],
   },
   {
