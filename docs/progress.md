@@ -43,7 +43,7 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 - Products: changing registration_no / artwork_version / quality_agreement_signed_on needs a countersign body (username, password, meaning APPROVED, reason) from a holder of `qa.product.countersign`, not the editor; write the e-signature on `master.products`/id in the same tx (the DB trigger checks it).
 - Tax codes and (task 4) finance masters use `fin.master.manage`; price lists `master.price.manage`; warehouses/locations `master.location.manage`; items/categories/UoM/conversions `master.item.manage`; all reads `master.view`.
 
-**Existing local dev DB after task 1:** add the new keys on the Roles page (Sales Manager: `master.product.manage`, `master.price.manage`; Finance Manager: `fin.master.manage`; QA Manager: `qa.product.countersign` — needs QA countersign). Fresh databases get them from the seed.
+**Roles on existing databases:** `pnpm db:seed` now adds any key in `docs/roles.md` that a role is missing (no Roles-page clicks; decisions.md 18-11-2026). If it stops with "roles hold keys that docs/roles.md does not list", ask the owner per key; never remove keys yourself. Local dev DB synced 18-11-2026.
 
 **Waiting for the owner (not blocking M2):**
 1. BATCH_CLOSE lock is "roles holding `prod.batch.approve_close`" (Production Manager) — confirm or change.
@@ -55,8 +55,6 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 
 **Local dev database notes:**
 - No QA Manager yet: create the user in the app, then run `pnpm --filter @albert/api bootstrap:qa-manager -- --user <code> --reason "..."` once.
-- Finance Manager role lacks `fin.approval_rules.countersign` (seeded before rules-review B): add it on the Roles page.
-- Planner needs `master.item.manage`, QA Officer `master.formula.manage` (needs QA countersign).
 
 **M1 evidence** is in git history (`7925fc2` handoff) and CI run #13.
 
@@ -78,3 +76,4 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 - 18-11-2026 · M1 · Roles: `master.item.manage` → Planner, `master.formula.manage` → QA Officer. CI #13 green; M1 marked done and tagged `m1`. · Next: M2 — Masters and engines (`/milestone M2`).
 - 18-11-2026 · M2 · Plan approved (owner answers Q1–Q6: lot-actual costing, product QA countersign, placeholder chart, AVL with attachments, creator ≠ activator, tax per item). Task 1 done: 4 new keys in permissions/seed/roles.md, docs updated (architecture §6, decisions). 272 tests green. · Next: task 2 (0008_masters.sql).
 - 18-11-2026 · M2 · Task 2 done: `0008_masters.sql` (new `master` schema, 16 tables, DB guards: no delete, NTN/CNIC, FG product, product QA countersign, formula lock + filler rule + one APPROVED/open version, AVL identity lock), Drizzle `schema/masters.ts`, 14 DB tests (mutation-checked), enum↔CHECK test now covers `master`; DB check/FK violations mapped to VALIDATION_FAILED / IN_USE. 296 tests green. · Next: task 3 (masters service + routes).
+- 18-11-2026 · M2 · Seed role sync (owner request before task 3): `pnpm db:seed` adds keys from `docs/roles.md` missing on existing roles, never removes, stops on keys not in roles.md (`RoleBundleDriftError`); countersign-key exception recorded in decisions. 4 new seed tests (mutation-checked). Local dev DB synced: SALES_MANAGER +master.price.manage, +master.product.manage; FINANCE_MANAGER +fin.approval_rules.countersign, +fin.master.manage; PLANNER +master.item.manage; QA_OFFICER +master.formula.manage; QA_MANAGER +qa.product.countersign; second run no changes. 299 tests green. · Next: task 3 (masters service + routes).

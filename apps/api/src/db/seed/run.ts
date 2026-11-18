@@ -1,6 +1,9 @@
 // Idempotent seed: running it twice changes nothing.
 // 1. Sync core.permissions with packages/shared/src/permissions.ts (insert new, update text, deactivate removed).
-// 2. Create missing roles with their bundles from seed/roles.ts (existing roles are never touched).
+// 2. Sync roles with seed/roles.ts (= docs/roles.md): create missing roles and add missing keys to existing
+//    roles. Keys are never removed: if a seeded role holds an active key that roles.md does not list, the seed
+//    stops and writes nothing until the owner decides (RoleBundleDriftError). Keys that need a QA countersign
+//    are added directly: the seed runs as SYSTEM from the approved roles.md (decisions.md, 18-11-2026).
 // 3. Create the first admin from INITIAL_ADMIN_PASSWORD (forced change at first login).
 // Acts as the SYSTEM user. Refuses to run in production without INITIAL_ADMIN_PASSWORD (decision Q7).
 import { and, eq, inArray, sql } from 'drizzle-orm';
@@ -64,6 +67,8 @@ export interface SeedReport {
   permissionsUpdated: number;
   permissionsDeactivated: number;
   rolesCreated: string[];
+  /** Keys added to roles that already existed, per role code. */
+  keysAdded: Record<string, string[]>;
   seriesCreated: string[];
   approvalRulesCreated: string[];
   adminCreated: boolean;
@@ -84,12 +89,13 @@ export async function runSeed(opts: SeedOptions): Promise<SeedReport> {
       permissionsUpdated: 0,
       permissionsDeactivated: 0,
       rolesCreated: [],
+      keysAdded: {},
       seriesCreated: [],
       approvalRulesCreated: [],
       adminCreated: false,
     };
     await syncPermissions(tx, report);
-    await createMissingRoles(tx, report);
+    await syncRoles(tx, report);
     await createMissingSeries(tx, report);
     await createMissingApprovalRules(tx, report);
     await createFirstAdmin(tx, opts.initialAdminPassword, report);
@@ -125,22 +131,82 @@ async function syncPermissions(tx: Tx, report: SeedReport): Promise<void> {
   }
 }
 
-async function createMissingRoles(tx: Tx, report: SeedReport): Promise<void> {
-  const keyToId = new Map((await tx.select({ id: permissions.id, key: permissions.key }).from(permissions)).map((p) => [p.key, p.id]));
-  const existingCodes = new Set((await tx.select({ code: roles.code }).from(roles)).map((r) => r.code));
+/** Seeded roles hold active keys that docs/roles.md does not list. The seed stops; nothing is written. */
+export class RoleBundleDriftError extends Error {
+  constructor(readonly extraKeys: Record<string, string[]>) {
+    super(
+      'Seed stopped: these roles hold keys that docs/roles.md does not list. The seed never removes keys; ' +
+        'decide per key (add it to docs/roles.md + seed/roles.ts, or remove it on the Roles page), then re-run.\n' +
+        Object.entries(extraKeys)
+          .map(([role, keys]) => `  ${role}: ${keys.join(', ')}`)
+          .join('\n'),
+    );
+    this.name = 'RoleBundleDriftError';
+  }
+}
 
+/** Audit reason on every role row the seed writes. */
+export const ROLE_SYNC_REASON =
+  'seed: role bundle synced from approved docs/roles.md (SYSTEM; countersign exception, decisions.md 18-11-2026)';
+
+async function syncRoles(tx: Tx, report: SeedReport): Promise<void> {
+  const keyToId = new Map((await tx.select({ id: permissions.id, key: permissions.key }).from(permissions)).map((p) => [p.key, p.id]));
+  const existingRoles = new Map((await tx.select({ id: roles.id, code: roles.code }).from(roles)).map((r) => [r.code, r.id]));
+
+  // Current bundles (active keys only: a deactivated key grants nothing and is not drift).
+  const held = new Map<string, Set<string>>();
+  const heldRows = await tx
+    .select({ code: roles.code, key: permissions.key })
+    .from(rolePermissions)
+    .innerJoin(roles, eq(roles.id, rolePermissions.roleId))
+    .innerJoin(permissions, eq(permissions.id, rolePermissions.permissionId))
+    .where(eq(permissions.isActive, true));
+  for (const r of heldRows) {
+    const set = held.get(r.code) ?? new Set<string>();
+    set.add(r.key);
+    held.set(r.code, set);
+  }
+
+  // 1. Before writing anything: refuse if a seeded role holds keys that roles.md does not list.
+  //    Roles that are not in roles.md (created later on the Roles page) are not checked.
+  const extras: Record<string, string[]> = {};
   for (const seed of ROLE_SEEDS) {
-    if (existingCodes.has(seed.code)) continue;
-    const [role] = await tx.insert(roles).values({ code: seed.code, name: seed.name }).returning({ id: roles.id });
-    if (!role) throw new Error(`Seed: role ${seed.code} was not created`);
-    const rows = seed.keys.map((key) => {
+    if (!existingRoles.has(seed.code)) continue;
+    const wanted = new Set<string>(seed.keys);
+    const extra = [...(held.get(seed.code) ?? [])].filter((k) => !wanted.has(k)).sort();
+    if (extra.length > 0) extras[seed.code] = extra;
+  }
+  if (Object.keys(extras).length > 0) throw new RoleBundleDriftError(extras);
+
+  // 2. Create missing roles; add missing keys to existing roles. Never remove a key.
+  let reasonSet = false;
+  for (const seed of ROLE_SEEDS) {
+    const existingId = existingRoles.get(seed.code);
+    const missing = seed.keys.filter((k) => !(held.get(seed.code)?.has(k) ?? false));
+    if (existingId && missing.length === 0) continue;
+    if (!reasonSet) {
+      await tx.execute(sql`select set_config('app.reason', ${ROLE_SYNC_REASON}, true)`);
+      reasonSet = true;
+    }
+    let roleId = existingId;
+    if (!roleId) {
+      const [role] = await tx.insert(roles).values({ code: seed.code, name: seed.name }).returning({ id: roles.id });
+      if (!role) throw new Error(`Seed: role ${seed.code} was not created`);
+      roleId = role.id;
+      report.rolesCreated.push(seed.code);
+    } else {
+      report.keysAdded[seed.code] = [...missing].sort();
+    }
+    const id = roleId;
+    const rows = missing.map((key) => {
       const permissionId = keyToId.get(key);
       if (!permissionId) throw new Error(`Seed: permission ${key} missing for role ${seed.code}`);
-      return { roleId: role.id, permissionId };
+      return { roleId: id, permissionId };
     });
-    await tx.insert(rolePermissions).values(rows);
-    report.rolesCreated.push(seed.code);
+    // A (role, key) row can already exist when the key was inactive and is active again: keep it.
+    await tx.insert(rolePermissions).values(rows).onConflictDoNothing();
   }
+  if (reasonSet) await tx.execute(sql`select set_config('app.reason', 'seed', true)`);
 }
 
 /**

@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 import { Permissions, PermissionKeys, ViewPermissionKeys } from '@albert/shared';
 import { databaseUrl } from '../config/env';
-import { runSeed } from '../db/seed/run';
+import { ROLE_SYNC_REASON, RoleBundleDriftError, runSeed } from '../db/seed/run';
 import { FIRST_ADMIN_USERNAME, ROLE_SEEDS } from '../db/seed/roles';
 
 const client = new pg.Client({ connectionString: databaseUrl });
@@ -26,6 +26,14 @@ async function keysOf(roleCode: string): Promise<string[]> {
     [roleCode],
   );
   return rows.map((r) => r.key);
+}
+
+/** Run one statement as the SYSTEM user (what the role admin would do, minus its service checks). */
+async function asSystem(sqlText: string): Promise<void> {
+  await client.query('BEGIN');
+  await client.query(`SELECT set_config('app.user_id','1',true), set_config('app.company_id','1',true)`);
+  await client.query(sqlText);
+  await client.query('COMMIT');
 }
 
 beforeAll(async () => {
@@ -140,6 +148,7 @@ describe('second seed', () => {
       permissionsUpdated: 0,
       permissionsDeactivated: 0,
       rolesCreated: [],
+      keysAdded: {},
       seriesCreated: [],
       approvalRulesCreated: [],
       adminCreated: false,
@@ -148,16 +157,67 @@ describe('second seed', () => {
     expect(await count('SELECT count(*) FROM core.audit_log')).toBe(auditBefore);
   });
 
-  it('never edits an existing role (role changes go through the role admin)', async () => {
-    await client.query('BEGIN');
-    await client.query(`SELECT set_config('app.user_id','1',true), set_config('app.company_id','1',true)`);
-    await client.query(
-      `DELETE FROM core.role_permissions WHERE role_id = (SELECT id FROM core.roles WHERE code = 'PLANNER')
-         AND permission_id = (SELECT id FROM core.permissions WHERE key = 'sales.view')`,
+  it('adds keys missing from existing roles, reports them and audits them as SYSTEM with the sync reason', async () => {
+    await asSystem(
+      `DELETE FROM core.role_permissions WHERE role_id IN (SELECT id FROM core.roles WHERE code IN ('PLANNER','QA_MANAGER'))
+         AND permission_id IN (SELECT id FROM core.permissions WHERE key IN ('sales.view','qa.product.countersign'))`,
     );
-    await client.query('COMMIT');
-    await runSeed({ nodeEnv: 'development' });
-    expect(await keysOf('PLANNER')).not.toContain('sales.view');
+    const auditBefore = await count('SELECT max(id) FROM core.audit_log');
+    const report = await runSeed({ nodeEnv: 'development' });
+    expect(report.rolesCreated).toEqual([]);
+    expect(report.keysAdded).toEqual({ PLANNER: ['sales.view'], QA_MANAGER: ['qa.product.countersign'] });
+    expect(await keysOf('PLANNER')).toContain('sales.view');
+    const { rows } = await client.query<{ changed_by: string; reason: string }>(
+      `SELECT changed_by::text, reason FROM core.audit_log WHERE id > $1 AND table_name = 'core.role_permissions'`,
+      [auditBefore],
+    );
+    expect(rows).toHaveLength(2);
+    for (const r of rows) expect(r).toEqual({ changed_by: '1', reason: ROLE_SYNC_REASON });
+  });
+
+  it('adds a key that needs a QA countersign (qa.product.countersign) without one: SYSTEM from approved roles.md', async () => {
+    // Covered by the previous test's QA_MANAGER row; here: no e-signature was needed or written.
+    expect(await keysOf('QA_MANAGER')).toContain('qa.product.countersign');
+    expect(await count(`SELECT count(*) FROM core.e_signatures`)).toBe(0);
+  });
+
+  it('stops when a role holds a key roles.md does not list: lists it, removes nothing, adds nothing', async () => {
+    await asSystem(
+      `INSERT INTO core.role_permissions (role_id, permission_id)
+       SELECT r.id, p.id FROM core.roles r, core.permissions p WHERE r.code = 'PLANNER' AND p.key = 'purch.view'`,
+    );
+    // A missing key elsewhere must NOT be added by the refused run.
+    await asSystem(
+      `DELETE FROM core.role_permissions WHERE role_id = (SELECT id FROM core.roles WHERE code = 'CEO')
+         AND permission_id = (SELECT id FROM core.permissions WHERE key = 'fin.view')`,
+    );
+    const auditBefore = await count('SELECT count(*) FROM core.audit_log');
+    const err = await runSeed({ nodeEnv: 'development' }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RoleBundleDriftError);
+    expect((err as RoleBundleDriftError).extraKeys).toEqual({ PLANNER: ['purch.view'] });
+    expect((err as RoleBundleDriftError).message).toContain('PLANNER: purch.view');
+    expect(await keysOf('PLANNER')).toContain('purch.view');
+    expect(await keysOf('CEO')).not.toContain('fin.view');
+    expect(await count('SELECT count(*) FROM core.audit_log')).toBe(auditBefore);
+
+    // Owner decides: remove the extra key; the next run then restores the CEO key.
+    await asSystem(
+      `DELETE FROM core.role_permissions WHERE role_id = (SELECT id FROM core.roles WHERE code = 'PLANNER')
+         AND permission_id = (SELECT id FROM core.permissions WHERE key = 'purch.view')`,
+    );
+    const report = await runSeed({ nodeEnv: 'development' });
+    expect(report.keysAdded).toEqual({ CEO: ['fin.view'] });
+  });
+
+  it('does not check roles that are not in roles.md (created later on the Roles page)', async () => {
+    await asSystem(`INSERT INTO core.roles (code, name) VALUES ('AUDITOR_TEMP', 'Temp auditor')`);
+    await asSystem(
+      `INSERT INTO core.role_permissions (role_id, permission_id)
+       SELECT r.id, p.id FROM core.roles r, core.permissions p WHERE r.code = 'AUDITOR_TEMP' AND p.key = 'fin.view'`,
+    );
+    const report = await runSeed({ nodeEnv: 'development' });
+    expect(report.keysAdded).toEqual({});
+    expect(await keysOf('AUDITOR_TEMP')).toEqual(['fin.view']);
   });
 
   it('deactivates a key that was removed from the code', async () => {

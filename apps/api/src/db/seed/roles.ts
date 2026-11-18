@@ -1,6 +1,7 @@
 // Phase 1 roles and their permission bundles — a transcription of docs/roles.md ("Role → keys").
-// Change docs/roles.md first, then this file. The seed only CREATES missing roles; it never edits an
-// existing role (after go-live, role changes go through the role admin so they are audited and countersigned).
+// Change docs/roles.md first, then this file (a test keeps them identical). The seed creates missing roles
+// and ADDS missing keys to existing roles; it never removes a key — if a role holds a key not listed here,
+// the seed stops for the owner's decision (decisions.md 18-11-2026).
 // master.item.manage → Planner; master.formula.manage → QA Officer (owner decision 18-11-2026).
 import { ViewPermissionKeys, type PermissionKey } from '@albert/shared';
 
