@@ -394,3 +394,75 @@ describe('audit (rule 6)', () => {
     expect(rows.map((r) => r.table_name)).toEqual(['inv.lots', 'inv.stock_balances', 'inv.stock_movements', 'inv.stock_reservations']);
   });
 });
+
+// 0015_movement_valuation.sql: owner decision 2026-11-18 "Rounding of stock values" (Option A).
+describe('movement valuation (0015)', () => {
+  async function ledgerTotals(lot: string): Promise<{ qty: string; value: string }> {
+    const { rows } = await client.query<{ qty: string; value: string }>(
+      `SELECT sum(qty)::text AS qty, sum(value)::text AS value FROM inv.stock_movements WHERE lot_id = $1`,
+      [lot],
+    );
+    return rows[0]!;
+  }
+
+  it('values a movement at qty × unit cost, rounded half-up to 2 decimals', async () => {
+    const lot = await newLot({ unitCost: '0.01' });
+    // 0.5 × 0.01 = 0.005 → 0.01 (half-up), never 0.00 or the unrounded amount
+    await expect(move('RECEIPT', lot, '0.5', { unitCost: '0.01', value: '0.00' })).rejects.toThrow(/valued 0.01, not 0.00/);
+    await move('RECEIPT', lot, '0.5', { unitCost: '0.01', value: '0.01' });
+    const lot2 = await newLot({ unitCost: '3.33' });
+    await expect(move('RECEIPT', lot2, '1.2345', { unitCost: '3.33', value: '4.12' })).rejects.toThrow(/valued 4.11/); // 4.110885
+    await move('RECEIPT', lot2, '1.2345', { unitCost: '3.33', value: '4.11' });
+  });
+
+  it('gives the movement that empties a lot the residual value, so the lot ends at exactly zero', async () => {
+    const lot = await newLot({ unitCost: '0.03' });
+    await move('RECEIPT', lot, '1', { unitCost: '0.03', value: '0.03' });
+    await setLot(lot, 'UNDER_TEST', 'APPROVED');
+    await move('ISSUE', lot, '-0.5', { unitCost: '0.03', value: '-0.02' }); // 0.015 → 0.02
+    // The last 0.5 is nominally 0.02 too, but only 0.01 is left on the lot.
+    await expect(move('ISSUE', lot, '-0.5', { unitCost: '0.03', value: '-0.02' })).rejects.toThrow(/valued -0.01, not -0.02/);
+    await move('ISSUE', lot, '-0.5', { unitCost: '0.03', value: '-0.01' });
+    expect(await ledgerTotals(lot)).toEqual({ qty: '0.0000', value: '0.00' });
+  });
+
+  it('never takes more value out than the lot still holds while stock remains', async () => {
+    const lot = await newLot({ unitCost: '0.03' });
+    await move('RECEIPT', lot, '1', { unitCost: '0.03', value: '0.03' });
+    await setLot(lot, 'UNDER_TEST', 'APPROVED');
+    await move('ISSUE', lot, '-0.5', { unitCost: '0.03', value: '-0.02' });
+    await move('ISSUE', lot, '-0.25', { unitCost: '0.03', value: '-0.01' }); // 0.0075 → 0.01 = all that is left
+    await expect(move('ISSUE', lot, '-0.2', { unitCost: '0.03', value: '-0.01' })).rejects.toThrow(/valued 0.00, not -0.01/);
+    await move('ISSUE', lot, '-0.2', { unitCost: '0.03', value: '0' });
+    expect(await ledgerTotals(lot)).toEqual({ qty: '0.0500', value: '0.00' });
+  });
+
+  it('books finished goods at the exact batch cost; the lot unit cost is that cost ÷ qty', async () => {
+    const fg = await newLot({ item: ids.fg, unitCost: '333.33' }); // 1000.00 ÷ 3
+    await expect(move('OUTPUT', fg, '3', { unitCost: '333.33', value: '1000.02' })).rejects.toThrow(/batch cost/);
+    await move('OUTPUT', fg, '3', { unitCost: '333.33', value: '1000.00' });
+    await setLot(fg, 'UNDER_TEST', 'APPROVED', 'RELEASED');
+    await move('DISPATCH', fg, '-1', { unitCost: '333.33', value: '-333.33' });
+    await expect(move('DISPATCH', fg, '-2', { unitCost: '333.33', value: '-666.66' })).rejects.toThrow(/valued -666.67/);
+    await move('DISPATCH', fg, '-2', { unitCost: '333.33', value: '-666.67' });
+    expect(await ledgerTotals(fg)).toEqual({ qty: '0.0000', value: '0.00' });
+  });
+
+  it('moves value with a transfer and refuses, at commit, a transfer that does not net to zero', async () => {
+    const lot = await newLot({ unitCost: '0.03' });
+    await move('RECEIPT', lot, '1', { unitCost: '0.03', value: '0.03' });
+    await expect(move('TRANSFER_OUT', lot, '-1', { unitCost: '0.03', value: '-0.03' })).rejects.toThrow(/without moving it in/);
+    await expect(
+      tx(async () => {
+        await insertMove('TRANSFER_OUT', lot, '-0.5', { unitCost: '0.03', value: '-0.02' });
+        await insertMove('TRANSFER_IN', lot, '0.4', { unitCost: '0.03', value: '0.01', location: ids.loc2 });
+      }),
+    ).rejects.toThrow(/without moving it in/);
+    await tx(async () => {
+      await insertMove('TRANSFER_OUT', lot, '-1', { unitCost: '0.03', value: '-0.03' });
+      await insertMove('TRANSFER_IN', lot, '1', { unitCost: '0.03', value: '0.03', location: ids.loc2 });
+    });
+    expect(await ledgerTotals(lot)).toEqual({ qty: '1.0000', value: '0.03' });
+    expect(await balance(lot, ids.loc2)).toBe('1.0000');
+  });
+});

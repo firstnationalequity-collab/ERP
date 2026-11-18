@@ -36,7 +36,7 @@ Tasks:
 - [x] Masters: uoms, uom_conversions, item_categories, items, customers, customer_addresses, vendors, approved_sources, warehouses, locations, products, master_formulas (+ lines, versioned, QA approval), price_lists, tax_codes.
 - [x] Finance masters: accounts (seed a pharma chart of accounts), cost_centers, posting_rules, fiscal periods for FY2026-27 (Jul–Jun). (PLACEHOLDER chart, rules and tax codes seeded; FY2026-27 is created on the Fiscal periods page by the Finance Manager — decisions 18-11-2026.)
 - [x] `inv` tables: lots (status history in `core.status_history`), stock_movements (immutable), stock_balances (CHECK qty >= 0), stock_reservations. (`0014_inventory.sql`, decisions 18-11-2026 M2 task 5.)
-- [ ] `engines/inventory`: `postMovement()`, `reserve()`, `fefoCandidates()`, lot-actual cost (no moving average; GL inventory = Σ lot qty × lot cost), toll stock at zero value.
+- [x] `engines/inventory`: `postMovement()`, `reserve()`, `fefoCandidates()`, lot-actual cost (no moving average; GL inventory = Σ ledger movement values, rounding per decisions 2026-11-18), toll stock at zero value. (`apps/api/src/engines/inventory`, `0015_movement_valuation.sql`.)
 - [ ] `engines/posting`: `postJournal()` (balanced, open period, posting_rules lookup), `reverse()`.
 - [ ] Web: CRUD screens for all masters (shared DataTable / DocForm).
 
