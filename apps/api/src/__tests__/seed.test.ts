@@ -377,6 +377,34 @@ describe('lot-decision segregation (owner 2026-11-18: QC decides material lots, 
   });
 });
 
+/**
+ * FG output doer + checker (owner 2026-11-18, Option A): the doer signs output/yield with prod.stage.sign; a
+ * different user verifies with prod.output.verify, a Production Supervisor key. The Operator never holds it.
+ */
+function outputCheckerBreaches(bundles: Map<string, string[]>): string[] {
+  const breaches: string[] = [];
+  for (const [code, keys] of bundles) {
+    if (code === 'PRODUCTION_OPERATOR' && keys.includes('prod.output.verify')) breaches.push(`${code} holds prod.output.verify`);
+  }
+  return breaches;
+}
+
+describe('FG output checker segregation (owner 2026-11-18: doer + checker, Option A)', () => {
+  const bundles = new Map(ROLE_SEEDS.map((r) => [r.code, [...r.keys] as string[]]));
+
+  it('holds for the bundles in seed/roles.ts (= docs/roles.md): only the Production Supervisor verifies output', () => {
+    expect(outputCheckerBreaches(bundles)).toEqual([]);
+    expect([...bundles].filter(([, keys]) => keys.includes('prod.output.verify')).map(([code]) => code)).toEqual(['PRODUCTION_SUPERVISOR']);
+    expect(bundles.get('PRODUCTION_OPERATOR')).toContain('prod.stage.sign');
+  });
+
+  it('catches an Operator holding prod.output.verify (the check itself works)', () => {
+    expect(outputCheckerBreaches(new Map([['PRODUCTION_OPERATOR', ['prod.stage.sign', 'prod.output.verify']]]))).toEqual([
+      'PRODUCTION_OPERATOR holds prod.output.verify',
+    ]);
+  });
+});
+
 describe('docs/roles.md and seed/roles.ts agree', () => {
   it('has the same keys per role in the document as in the seed', async () => {
     const here = path.dirname(fileURLToPath(import.meta.url));

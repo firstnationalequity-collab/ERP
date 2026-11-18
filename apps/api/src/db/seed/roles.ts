@@ -96,7 +96,7 @@ const roles: RoleSeed[] = [
   {
     code: 'PRODUCTION_SUPERVISOR',
     name: 'Production Supervisor',
-    keys: ['prod.view', 'inv.stock.view', 'prod.stage.sign', 'prod.batch.close'],
+    keys: ['prod.view', 'inv.stock.view', 'prod.stage.sign', 'prod.output.verify', 'prod.batch.close'],
   },
   {
     code: 'PRODUCTION_MANAGER',

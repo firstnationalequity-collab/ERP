@@ -87,6 +87,7 @@ export const Permissions = {
   'prod.view': view('View production orders, stages, outputs'),
   'prod.order.manage': action('Create, release, cancel production orders'),
   'prod.stage.sign': action('Execute and sign batch stages, record yield and resource hours'),
+  'prod.output.verify': action('Verify a signed output/yield entry with e-signature (checker; creates the FG lot)'),
   'prod.batch.close': action('Submit batch close (Supervisor)'),
   'prod.batch.approve_close': action('Approve batch close with e-signature (Production Manager)'),
 

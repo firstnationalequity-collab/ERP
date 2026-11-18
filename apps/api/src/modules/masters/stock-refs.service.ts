@@ -48,8 +48,17 @@ export async function assertTollCustomer(q: Queryable, companyId: string, custom
   }
 }
 
-/** The customer named on a dispatch or a customer return must exist in the company (0018). */
-export async function assertCustomerExists(q: Queryable, companyId: string, customerId: string): Promise<void> {
+/**
+ * The customer named on a dispatch or a customer return must exist in the company (0018). A customer return may
+ * come from an inactive customer; a dispatch goes only to an ACTIVE one (owner 2026-11-18; 0019).
+ */
+export async function assertCustomerFor(q: Queryable, companyId: string, customerId: string, use: 'DISPATCH' | 'SALES_RETURN'): Promise<void> {
   const row = await repo.findCustomer(q, companyId, customerId);
   if (!row) throw new AppError('NOT_FOUND', `Customer ${customerId} not found`);
+  if (use === 'DISPATCH' && row.status !== 'ACTIVE') {
+    throw new AppError('CUSTOMER_NOT_ACTIVE', `Customer ${row.code} is ${row.status}; goods are dispatched only to an ACTIVE customer`, {
+      customerId,
+      status: row.status,
+    });
+  }
 }

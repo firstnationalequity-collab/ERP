@@ -87,8 +87,8 @@ Access is permission-based: each action is a permission key (`purch.po.approve`,
 | Storekeeper | Warehouse | Gate entry, GRN, put-away, issues, picking, dispatch, labels | Change lot status, adjust stock |
 | Warehouse Manager | Warehouse | Request stock adjustments, gate pass approval, returns; move a REJECTED lot to DESTROYED / RETURNED (with QA witness e-signature) | Approve own adjustment; any other lot status change |
 | Planner | Planning | Production orders, release orders to the floor | Issue material |
-| Production Operator | Production | Execute and sign stages, record yield | Close or release batch, edit master formula |
-| Production Supervisor | Production | Execute and sign stages; submit batch close (`prod.batch.close`) | Approve batch close, release batch |
+| Production Operator | Production | Execute and sign stages, record yield (doer) | Verify output (`prod.output.verify`), close or release batch, edit master formula |
+| Production Supervisor | Production | Execute and sign stages; verify another user's output/yield entry (`prod.output.verify`, checker; creates the FG lot); submit batch close (`prod.batch.close`) | Verify own output entry, approve batch close, release batch |
 | Production Manager | Production | Approve batch close with e-signature (`prod.batch.approve_close`), raise deviations | Release batch |
 | QC Analyst | QC | Enter results, take samples | Approve own results |
 | QC Manager | QC | Review results, approve/reject material lots (RM, PM, API, EXCIPIENT), issue CoA, approve specs | Release batch, place or lift HOLD, reject FG or return lots |
@@ -136,11 +136,12 @@ Three status chains hold the system together: lot status (QC approves and reject
 
 | From | To | Who / trigger | Permission key | Condition |
 | --- | --- | --- | --- | --- |
-| (new) | QUARANTINE | GRN posted (Storekeeper), or FG output recorded at packing (Production Supervisor / Operator) | `purch.grn.post` / `prod.stage.sign` | Automatic; QC sample request created. An FG lot starts at the provisional value of the materials issued to the batch so far (owner 2026-11-18, Q8). **Owner 2026-11-18:** the FG lot and its journal are created only when the output/yield entry is signed by the doer AND verified by a different user (checker) holding a supervisor-level key; an operator signature alone creates nothing. How the checker step works is PENDING OWNER (Handoff); today the engine creates the lot on one `prod.stage.sign` signature |
+| (new) | QUARANTINE | GRN posted (Storekeeper), or FG output verified (Production Supervisor, checker) | `purch.grn.post` / `prod.output.verify` | Automatic; QC sample request created. An FG lot starts at the provisional value of the materials issued to the batch so far (owner 2026-11-18, Q8). **FG output doer + checker (owner 2026-11-18, Option A):** the doer records output/yield and signs with `prod.stage.sign` (e-signature) — this creates nothing. A **different user** holding `prod.output.verify` (Production Supervisor only; never the Operator) verifies with e-signature; the same user → 403 `SEGREGATION_OF_DUTIES`. Two Supervisors may be doer and checker: the rule is different users, not different roles. The verify transaction creates the FG lot in QUARANTINE and posts FG_OUTPUT. Scope: the output/yield entry only (other stage steps: M6 list) |
 | (new) | HOLD | Customer return received (Storekeeper / Warehouse Manager) | `fg.delivery.manage` | A new return lot linked to the original lot, numbered original + "-R" + sequence (e.g. `AP26-0001-R1`), at a returns area; never back into the released lot. Only QA moves it on: re-release or reject (rows below) (owner 2026-11-18, Q9) |
 | QUARANTINE | UNDER\_TEST | QC Analyst takes sample | `qc.result.enter` | — |
 | UNDER\_TEST | APPROVED | QC Manager, e-signature | `qc.lot.change_status` | All spec tests passed and reviewed. For an FG lot this records the QC result, which is input to QA's release decision (owner 2026-11-18) |
-| UNDER\_TEST | REJECTED | QC Manager, e-signature | `qc.lot.change_status` | **Material lots** (RM, PM, API, EXCIPIENT). Any test failed; reason required. Who rejects an FG lot whose QC test fails is PENDING OWNER (Handoff open questions) |
+| UNDER\_TEST | REJECTED | QC Manager, e-signature | `qc.lot.change_status` | **Material lots** (RM, PM, API, EXCIPIENT). Any test failed; reason required |
+| UNDER\_TEST | HOLD | QC records a failed result on an **FG lot** (automatic with the result) | `qc.result.enter` (the QC result key) | **FG lots** only (owner 2026-11-18). QC never rejects an FG lot directly: QA rejects it (HOLD → REJECTED, `qa.lot.reject_fg`) after the OOS investigation. While a failed result is open, QA release is refused, unless the investigation closes it as invalid and a retest passes |
 | APPROVED | HOLD | QA Manager | `qa.lot.hold` | Reason required |
 | HOLD | APPROVED | QA Manager lifts hold, e-signature | `qa.lot.hold` | Reason required |
 | HOLD | REJECTED | QC Manager, e-signature | `qc.lot.change_status` | **Material lots** only. Reason required |
@@ -161,7 +162,7 @@ Only **APPROVED** material lots can be issued or reserved; only **RELEASED** FG 
 | PLANNED | CANCELLED | Planner | `prod.order.manage` | Nothing issued |
 | RELEASED | IN\_PROCESS | System | (issue posting service) | First material issue posted |
 | IN\_PROCESS | AWAITING\_QA | Production Supervisor submits close (`prod.batch.close`, opens an approval step); Production Manager approves with e-signature | `prod.batch.approve_close` | All stages signed; yield and output recorded (FG lot already created in QUARANTINE at output). In the same transaction as the close journal, a value-only adjustment adds conversion cost and the true-up to the FG lot and marks its batch closed (owner 2026-11-18, Q8) |
-| AWAITING\_QA | RELEASED\_FOR\_SALE | QA Manager, e-signature | `qa.batch.release` | FG lot QC APPROVED; no OPEN deviation on the batch; checklist complete |
+| AWAITING\_QA | RELEASED\_FOR\_SALE | QA Manager, e-signature | `qa.batch.release` | FG lot QC APPROVED; no OPEN deviation on the batch; no open failed QC result on the FG lot (owner 2026-11-18); checklist complete |
 | AWAITING\_QA | REJECTED | QA Manager, e-signature | `qa.batch.release` | Reason required; FG lot set REJECTED |
 
 **Quotation:** DRAFT → PENDING\_APPROVAL → APPROVED → SENT → ACCEPTED or LOST. An approved quotation is locked; a change creates a new version.
@@ -217,7 +218,7 @@ Accounts are not hard-coded: `posting_rules` maps (event, account role, item cat
 | Material issued to batch | − lot, + batch WIP | WIP (production order) | Inventory |
 | Material returned from floor | + lot | Inventory | WIP |
 | Conversion absorbed at batch close | — | WIP | Labour absorbed; Machine overhead absorbed |
-| FG output recorded | + FG lot in QUARANTINE at the provisional value (materials issued so far) | FG inventory | WIP |
+| FG output verified (checker, `prod.output.verify`) | + FG lot in QUARANTINE at the provisional value (materials issued so far) | FG inventory | WIP |
 | FG cost adjustment at batch close (owner Q8) | Value-only row: lot value + (actual batch cost − value booked at output) | FG inventory (WIP if the batch cost is lower) | WIP (FG inventory if lower) |
 | Dispatch posted | − FG lot (batch closed) | Cost of goods sold | FG inventory |
 | Customer return received — `SALES_RETURN_RECEIPT` (owner Q9) | + new return lot in HOLD at a returns area; value = original lot's unit cost × returned qty, same rounding (reverses the COGS taken at dispatch). Toll stock: zero value, no journal | FG inventory | Cost of goods sold |
@@ -277,22 +278,22 @@ Each module below lists its screens and the rules its services must enforce; end
 ### 7.6 QC
 
 - Screens: specifications, sample queue, result entry, review queue, lot disposition, CoA print.
-- Rules: sample auto-created on GRN and on FG output; pass/fail computed from limits; reviewer must differ from the analyst; disposition writes assay and water onto the lot; a failed result cannot be edited, only re-tested as a new row with a reason.
+- Rules: sample auto-created on GRN and on FG output; pass/fail computed from limits; a failed result on an FG lot moves the lot UNDER_TEST → HOLD automatically under `qc.result.enter` — QC never rejects an FG lot, QA does (`qa.lot.reject_fg`) after the OOS investigation (owner 2026-11-18, §4); reviewer must differ from the analyst; disposition writes assay and water onto the lot; a failed result cannot be edited, only re-tested as a new row with a reason.
 
 ### 7.7 Production
 
 - Screens: production orders, release check (shows any material short or not approved), material requirement with potency calculation, issue by scan, stage execution (sign each stage in order), output and yield, batch close, resource hours.
-- Rules: batch number format set in number series (e.g. `AP26-0001`); stages follow the formula's routing and cannot be signed out of order; yield outside the product's range (e.g. 98–101%) requires a deviation before close.
+- Rules: batch number format set in number series (e.g. `AP26-0001`); output/yield has a doer and a checker (§4, owner 2026-11-18): the doer signs (`prod.stage.sign`), a different user verifies (`prod.output.verify`), and only the verification creates the FG lot and posts FG_OUTPUT; stages follow the formula's routing and cannot be signed out of order; yield outside the product's range (e.g. 98–101%) requires a deviation before close.
 
 ### 7.8 QA
 
 - Screens: deviations (raise, investigate, close), batch release queue and checklist, AVL approvals, master formula approvals.
-- Rules: release button disabled — and the API refuses — while any deviation on the batch is OPEN or the FG lot is not QC APPROVED.
+- Rules: release button disabled — and the API refuses — while any deviation on the batch is OPEN, the FG lot is not QC APPROVED, or a failed QC result on the FG lot is open (unless the OOS investigation closed it as invalid and a retest passed; owner 2026-11-18). An FG lot whose failure is confirmed is rejected by QA (HOLD → REJECTED, `qa.lot.reject_fg`).
 
 ### 7.9 Finished Goods and Dispatch
 
 - Screens: delivery orders from sales orders, FEFO pick list, pick by scan, gate pass, proof of delivery, returns receipt.
-- Rules: only RELEASED FG lots; dispatch posting creates the stock move, the COGS entry and the sales invoice draft; returns go into a new HOLD return lot linked to the original lot, at a returns area, valued at the original unit cost (§4, §6; owner 2026-11-18, Q9); a return never exceeds what was dispatched to that customer from the original lot (incl. its re-released return lots) less that customer's earlier returns, so every dispatch and return movement names the customer (0018); QA then re-releases the return lot (`qa.batch.release`, e-signature, mandatory assessment reason) or rejects it (`qa.lot.reject_fg`, e-signature, QA Manager only); the credit note (revenue, tax, receivable) is the sales module's.
+- Rules: only RELEASED FG lots; a dispatch goes only to an ACTIVE customer (`CUSTOMER_NOT_ACTIVE`, engine + DB, 0019; owner 2026-11-18), while a return may come from an inactive one; dispatch posting creates the stock move, the COGS entry and the sales invoice draft; returns go into a new HOLD return lot linked to the original lot, at a returns area, valued at the original unit cost (§4, §6; owner 2026-11-18, Q9); a return never exceeds what was dispatched to that customer from the original lot (incl. its re-released return lots) less that customer's earlier returns, so every dispatch and return movement names the customer (0018); QA then re-releases the return lot (`qa.batch.release`, e-signature, mandatory assessment reason) or rejects it (`qa.lot.reject_fg`, e-signature, QA Manager only); the credit note (revenue, tax, receivable) is the sales module's.
 
 ### 7.10 Finance
 

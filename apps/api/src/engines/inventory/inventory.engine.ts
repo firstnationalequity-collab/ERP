@@ -33,7 +33,7 @@ import type { stockMovements } from '../../db/schema/inv';
 import { AppError, fromDbError } from '../../core/errors';
 import { defineTransitions, recordInitialStatus, type Actor, type TransitionMap } from '../../core/transition/transition';
 import {
-  assertCustomerExists,
+  assertCustomerFor,
   assertReturnsArea,
   assertStockLocation,
   assertTollCustomer,
@@ -50,12 +50,14 @@ export const LOT_TABLE = 'inv.lots';
  * Who may create a lot, and in which status (architecture §4: "(new) → QUARANTINE: GRN posted, or FG output
  * recorded"; owner 2026-11-18). Each source has its own complete map so the key for the move is fixed per source.
  *  - GRN → purch.grn.post (Storekeeper).
- *  - PRODUCTION_OUTPUT → prod.stage.sign ("record yield": output recorded at packing, owner Q8).
+ *  - PRODUCTION_OUTPUT → prod.output.verify: the checker's verification of a signed output/yield entry creates
+ *    the lot (owner 2026-11-18, doer + checker Option A); the doer's prod.stage.sign alone creates nothing. The
+ *    output record and its doer ≠ checker check are M6's production module; this key is the engine's half.
  *  - SALES_RETURN → fg.delivery.manage ("returns receipt"), created in HOLD (owner Q9).
  */
 export const LotCreationKeys = {
   GRN: 'purch.grn.post',
-  PRODUCTION_OUTPUT: 'prod.stage.sign',
+  PRODUCTION_OUTPUT: 'prod.output.verify',
   SALES_RETURN: 'fg.delivery.manage',
 } as const satisfies Record<LotSource, PermissionKey>;
 
@@ -272,7 +274,9 @@ export async function postMovement(tx: Tx, actor: Actor, input: MovementInput): 
   const lot = await lockLotOrFail(tx, actor.companyId, input.lotId);
   assertLotAllows(input.type, lot);
   await assertStockLocation(tx, actor.companyId, input.locationId, inbound);
-  if (input.customerId !== undefined) await assertCustomerExists(tx, actor.companyId, input.customerId);
+  if (input.customerId !== undefined) {
+    await assertCustomerFor(tx, actor.companyId, input.customerId, input.type === 'DISPATCH' ? 'DISPATCH' : 'SALES_RETURN');
+  }
   const qty = inbound ? new Decimal(input.qty) : new Decimal(input.qty).neg();
   if (input.type === 'SALES_RETURN' && input.customerId !== undefined) {
     await assertReturnable(tx, actor, lot, input.locationId, qty, input.customerId);

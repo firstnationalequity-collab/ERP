@@ -66,6 +66,7 @@ Design context: `docs/architecture.md` §3 and §4.
 | `prod.view` | view | View production orders, stages, outputs | new |
 | `prod.order.manage` | action | Create, release, cancel production orders | existing |
 | `prod.stage.sign` | action | Execute and sign batch stages, record yield and resource hours | existing |
+| `prod.output.verify` | action | Verify a signed output/yield entry with e-signature (checker ≠ doer); creates the FG lot in QUARANTINE and posts FG_OUTPUT | new (owner 2026-11-18) |
 | `prod.batch.close` | action | Submit batch close (Supervisor) | existing |
 | `prod.batch.approve_close` | action | Approve batch close with e-signature (Production Manager) | new |
 | `qa.view` | view | View deviations and batch releases | new |
@@ -113,7 +114,7 @@ Every role except SYSTEM also holds `core.approval.inbox` (not repeated below). 
 | 11 | Warehouse Manager | `inv.stock.view`, `purch.view`, `prod.view`, `fg.view`, `master.view` | `inv.adjustment.request`, `fg.gatepass.approve`, `fg.delivery.manage` (returns), `inv.lot.dispose`, `master.location.manage`, `master.item.manage` |
 | 12 | Planner | `prod.view`, `sales.view`, `inv.stock.view`, `master.view` | `prod.order.manage` |
 | 13 | Production Operator | `prod.view` | `prod.stage.sign` |
-| 14 | Production Supervisor | `prod.view`, `inv.stock.view` | `prod.stage.sign`, `prod.batch.close` |
+| 14 | Production Supervisor | `prod.view`, `inv.stock.view` | `prod.stage.sign`, `prod.output.verify`, `prod.batch.close` |
 | 15 | Production Manager | `prod.view`, `qa.view`, `inv.stock.view`, `master.view` | `prod.batch.approve_close`, `qa.deviation.manage`, `master.formula.manage` |
 | 16 | QC Analyst | `qc.view`, `inv.stock.view`, `master.view` | `qc.result.enter`, `qc.spec.manage` |
 | 17 | QC Manager | `qc.view`, `inv.stock.view`, `master.view` | `qc.result.review`, `qc.lot.change_status`, `qc.coa.issue`, `qc.spec.approve` |

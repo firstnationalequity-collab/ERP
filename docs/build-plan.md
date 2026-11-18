@@ -56,6 +56,7 @@ Done when: PO → GRN → invoice → payment posts the GL exactly as architectu
 - [ ] Disposition: APPROVED / REJECTED with e-signature; writes assay/water to lot.
 - [ ] Re-test as new row (original never edited); CoA PDF.
 - [ ] Nightly pg-boss job: APPROVED → RETEST_DUE / EXPIRED.
+- [ ] FG lot failing QC (owner 2026-11-18, architecture §4): recording a failed result on an FG lot moves it UNDER_TEST → HOLD automatically under `qc.result.enter`; QC never rejects an FG lot (`qc.lot.change_status` refuses FG lots). Tests: failed FG result → HOLD; QC Manager rejecting an FG lot refused.
 
 Done when: a quarantined lot becomes issuable only after QC approval; a rejected lot cannot move except destroy/return.
 
@@ -71,7 +72,8 @@ Done when: an over-limit order waits on ON_CREDIT_HOLD until the Finance Manager
 - [ ] Production order (batch number series), release check (approved formula, approved stock, reservation).
 - [ ] Material requirement with potency adjustment + filler compensation (architecture §6).
 - [ ] Issue by scan (APPROVED lots only, FEFO), returns from floor.
-- [ ] Stages in order with sign-off; IPC notes; output recorded at packing (`prod.stage.sign`) → FG lot in QUARANTINE at the provisional value of the materials issued so far (owner 2026-11-18, Q8); yield; resource hours. **Owner 2026-11-18:** the FG lot and its journal are created only when the output/yield entry is signed by the doer AND verified by a different user (checker) with a supervisor-level key; the checker model is PENDING OWNER (options in the Handoff) and must be settled before this task.
+- [ ] Stages in order with sign-off; IPC notes; yield; resource hours. Output/yield has a doer and a checker (owner 2026-11-18, Option A; architecture §4): the doer records output/yield and signs (`prod.stage.sign`, e-signature) — record status SIGNED, nothing created; a different user holding `prod.output.verify` (Production Supervisor; two Supervisors may be doer and checker) verifies with e-signature — same user → 403 `SEGREGATION_OF_DUTIES` — and that transaction creates the FG lot in QUARANTINE at the provisional value of the materials issued so far (Q8) and posts FG_OUTPUT. Key, role grant, engine keys and the "Operator never holds `prod.output.verify`" test built in M2. Tests: doer = checker refused; Operator cannot verify; signing alone creates no lot.
+- [ ] Decide with the owner which other stage steps need a checker (at least dispensing/weighing of API) (owner 2026-11-18).
 - [ ] Conversion cost when the whole FG lot left before batch close (`closeBatchCost` refuses with `LOT_EMPTY`): PENDING OWNER; likely answer (not confirmed) — post it to a production-variance expense account (placeholder; Finance to confirm).
 - [ ] Batch close (Production Manager e-signature): conversion absorbed into WIP, and in the same transaction `closeBatchCost` adds conversion + true-up to the FG lot as a value-only adjustment (Dr FG inventory / Cr WIP) and marks the batch closed; the FG lot cannot be dispatched before that (engines built in M2).
 
@@ -81,7 +83,8 @@ Done when: release blocked if any material is not approved; API quantity compute
 - [ ] Deviations (raise, investigate, close); batch release checklist + e-signature; release refused with open deviation or FG not QC-approved.
 - [ ] Delivery order from SO, FEFO pick by scan, gate pass, proof of delivery, customer returns into a new HOLD return lot `<lot>-R<n>` at a returns area (`createReturnLot` + SALES_RETURN, posting built in M2; owner 2026-11-18, Q9); every dispatch and return names the customer, and a return never exceeds what went to that customer (built in M2, 0018); QA moves return lots on.
 - [ ] Lot decisions by QA (owner 2026-11-18, rule 1 clarification; keys and role segregation tests built in M2): return lot HOLD → RELEASED (`qa.batch.release`, e-signature, mandatory assessment reason); FG / return lot HOLD → REJECTED (`qa.lot.reject_fg`, QA Manager, e-signature); material lot HOLD → REJECTED stays `qc.lot.change_status`. The lot transition map refuses each key on the other kind of lot; HTTP tests for each move and each refusal (QC Manager rejecting an FG lot, QA rejecting a material lot, re-release without reason).
-- [ ] Dispatch posts stock out + COGS and creates the sales invoice draft.
+- [ ] FG lot after a failed QC result (owner 2026-11-18, architecture §4/§7.8): QA rejects it (HOLD → REJECTED, `qa.lot.reject_fg`) after the OOS investigation; QA release is refused while a failed result is open, unless the investigation closes it as invalid and a retest passes. Tests for each.
+- [ ] Dispatch posts stock out + COGS and creates the sales invoice draft; dispatch only to an ACTIVE customer (engine + DB built in M2, 0019).
 
 Done when: unreleased FG cannot be picked; QA release blocked by an open deviation.
 

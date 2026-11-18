@@ -44,14 +44,14 @@ export const SYSTEM_JOURNAL_SERIES = 'SJ';
  * must hold it (rule 7: every move names its key). Architecture §4: "Each module's map lists its keys when that
  * module is built" — events of later milestones (landed cost, invoices, payments, receipts, conversion) are
  * added with their module. ROUNDING_DIFFERENCE is posted with the key of the movements that left the paisa.
- * Owner — confirmed 2026-11-18 (each key checked against docs/roles.md): FG_OUTPUT is the output-recording key
- * (Q8), FG_COST_ADJUSTMENT the batch-close key, SALES_RETURN_RECEIPT the returns-receipt key (Q9).
+ * Owner — confirmed 2026-11-18 (each key checked against docs/roles.md): FG_OUTPUT is the output-verification key
+ * (Q8; doer + checker Option A, owner 2026-11-18: the checker's verify posts it), FG_COST_ADJUSTMENT the batch-close key, SALES_RETURN_RECEIPT the returns-receipt key (Q9).
  */
 export const JournalPostingKeys: Readonly<Partial<Record<PostingEvent, PermissionKey>>> = {
   GRN_RECEIPT: 'purch.grn.post',
   MATERIAL_ISSUE: 'inv.movement.post',
   MATERIAL_RETURN: 'inv.movement.post',
-  FG_OUTPUT: 'prod.stage.sign',
+  FG_OUTPUT: 'prod.output.verify',
   FG_COST_ADJUSTMENT: 'prod.batch.approve_close',
   DISPATCH: 'fg.dispatch.post',
   SALES_RETURN_RECEIPT: 'fg.delivery.manage',

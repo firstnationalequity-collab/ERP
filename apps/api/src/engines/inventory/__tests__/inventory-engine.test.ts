@@ -125,6 +125,7 @@ beforeAll(async () => {
   actors.store = await actorFor('e_store', ['STOREKEEPER']);
   actors.pm = await actorFor('e_pm', ['PRODUCTION_MANAGER']);
   actors.sup = await actorFor('e_sup', ['PRODUCTION_SUPERVISOR']);
+  actors.op = await actorFor('e_op', ['PRODUCTION_OPERATOR']);
   actors.analyst = await actorFor('e_qca', ['QC_ANALYST']);
   const wm = await createTestUser({ username: 'e_wm', roleCodes: ['WAREHOUSE_MANAGER'] });
   const qa = await createTestUser({ username: 'e_qa', roleCodes: ['QA_MANAGER'] });
@@ -203,8 +204,13 @@ describe('createLot', () => {
   it('refuses an actor without the key for the source; nothing is saved', async () => {
     await expect(lot({ lotNo: 'NOKEY' }, 'analyst')).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(lot({ lotNo: 'NOKEY', source: 'PRODUCTION_OUTPUT', itemId: ids.fg }, 'store')).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    // Owner Q8: output is recorded (prod.stage.sign), not created by the batch-close key.
+    // Owner Q8: the FG lot is made at output, not by the batch-close key.
     await expect(lot({ lotNo: 'NOKEY', source: 'PRODUCTION_OUTPUT', itemId: ids.fg }, 'pm')).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // Owner 2026-11-18 (doer + checker): the doer's prod.stage.sign creates nothing; the checker's prod.output.verify does.
+    await expect(lot({ lotNo: 'NOKEY', source: 'PRODUCTION_OUTPUT', itemId: ids.fg }, 'op')).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      details: { permission: 'prod.output.verify' },
+    });
     expect(await raw(`SELECT 1 FROM inv.lots WHERE lot_no = 'NOKEY'`)).toEqual([]);
     const fg = await lot({ source: 'PRODUCTION_OUTPUT', itemId: ids.fg, unitCost: fgUnitCost('1000', '3') }, 'sup');
     expect(fg.unitCost).toBe('333.33');

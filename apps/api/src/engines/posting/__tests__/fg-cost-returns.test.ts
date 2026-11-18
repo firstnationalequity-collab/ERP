@@ -1,5 +1,5 @@
 // Owner decisions 2026-11-18 (Q8, Q9), engines/inventory + engines/posting against the real database (0017):
-//  Q8 — an FG lot is created at output (prod.stage.sign) at the provisional value of the materials issued so far;
+//  Q8 — an FG lot is created at output (prod.output.verify, the checker; owner 2026-11-18) at the provisional value of the materials issued so far;
 //       batch close (prod.batch.approve_close) adds conversion + true-up as a value-only VALUE_ADJUSTMENT in the
 //       same transaction as its journal, on the stock still held (samples keep their provisional value); the lot is
 //       dispatched only after its batch is closed. A value-only adjustment never takes a lot below zero and is
@@ -214,7 +214,7 @@ afterAll(async () => {
 // ---------------------------------------------------------------- Q8: FG lot valuation
 
 describe('FG lot valuation (owner Q8, Option A)', () => {
-  it('books output at the provisional value (prod.stage.sign); batch close adds conversion + true-up to the lot (Dr FG / Cr WIP)', async () => {
+  it('books output at the provisional value (prod.output.verify); batch close adds conversion + true-up to the lot (Dr FG / Cr WIP)', async () => {
     const { fg, order, provisional } = await producedLot({ fgQty: '10', rmQty: '100', rmCost: '9.99' });
     expect(provisional).toBe('999.00');
     expect(await ledger(fg)).toEqual({ qty: '10.0000', value: '999.00' });
@@ -605,5 +605,58 @@ describe('customer sales returns (owner Q9)', () => {
     await expect(insert('DISPATCH', original, '2', ids.cust2!, { loc: ids.loc, reversalOf: rows[0]!.id })).rejects.toThrow(
       /reversal carries the customer/,
     );
+  });
+
+  it('a dispatch goes only to an ACTIVE customer; a return may come from an inactive one; a reversal still works (owner 2026-11-18, 0019)', async () => {
+    const newCustomer = async (code: string, status: string) => {
+      let id = '';
+      await inTx('1', async () => {
+        const { rows } = await client.query<{ id: string }>(
+          `INSERT INTO master.customers (code, name, ntn, status) VALUES ($1, $1, '7654321', $2) RETURNING id`,
+          [code, status],
+        );
+        id = rows[0]!.id;
+        await history('master.customers', id, null, status);
+      });
+      return id;
+    };
+    const draft = await newCustomer('CUSTD', 'DRAFT');
+    const leaving = await newCustomer('CUSTX', 'ACTIVE');
+    const p = await producedLot({ fgQty: '3', rmQty: '10', rmCost: '10' });
+    await closeBatch(p.fg, p.order, '100.00');
+    await setLot(p.fg, 'UNDER_TEST', 'APPROVED', 'RELEASED');
+    const dispatch = (customerId: string) => postWithJournal('store', { type: 'DISPATCH', lotId: p.fg, qty: '1', customerId });
+
+    await expect(dispatch(draft)).rejects.toMatchObject({ code: 'CUSTOMER_NOT_ACTIVE', details: { customerId: draft, status: 'DRAFT' } });
+    await dispatch(leaving);
+    const second = await dispatch(leaving);
+    await inTx('1', async () => {
+      await history('master.customers', leaving, 'ACTIVE', 'INACTIVE');
+      await client.query(`UPDATE master.customers SET status = 'INACTIVE' WHERE id = $1`, [leaving]);
+    });
+    await expect(dispatch(leaving)).rejects.toMatchObject({ code: 'CUSTOMER_NOT_ACTIVE', details: { status: 'INACTIVE' } });
+
+    // Returns: the customer only has to exist (owner confirmed). Reversal of a dispatch to a now-inactive customer works.
+    const r = await returnLot(p.fg);
+    await receiveReturn(r.id, '1', { customerId: leaving });
+    await as('store', async (tx, a) => {
+      const rows = await reverseMovements(tx, a, { movementIds: [second.m.id], date: DATE, refDocType: 'TEST', refDocId: doc() });
+      await reverseStockJournal(tx, a, { entryId: second.entry!.id, movements: rows, reason: 'customer closed before delivery' });
+    });
+    expect(await ledger(p.fg)).toMatchObject({ qty: '2.0000' });
+
+    // The database refuses the same dispatch on its own (engine bypassed).
+    for (const customer of [draft, leaving]) {
+      await expect(
+        inTx(actors.store!.userId, async () => {
+          await client.query(
+            `INSERT INTO inv.stock_movements (movement_type, movement_date, lot_id, from_location_id, qty, unit_cost, value, ref_doc_type, ref_doc_id, customer_id)
+             VALUES ('DISPATCH', $1, $2, $3, -1, 33.33, -33.33, 'TEST', 1, $4)`,
+            [DATE, p.fg, ids.loc, customer],
+          );
+        }),
+      ).rejects.toThrow(/CUSTOMER_NOT_ACTIVE: customer [0-9]+ is (DRAFT|INACTIVE)/);
+    }
+    await expectGlEqualsLedger();
   });
 });
