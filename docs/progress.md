@@ -1,10 +1,10 @@
 # Progress
 
-Current milestone: **M1 — Foundation**
+Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 
 | Milestone | Status | Started | Finished | Notes |
 | --- | --- | --- | --- | --- |
-| M1 Foundation | In progress | 17-11-2026 | | All 12 tasks and rules-review fixes A–F done; Done-when green locally; waiting for owner to confirm CI, then mark done + tag `m1` |
+| M1 Foundation | Done | 17-11-2026 | 18-11-2026 | All 12 tasks, rules-review fixes A–F, first-QA-Manager bootstrap; CI run #13 green on `04ef009`; tag `m1` |
 | M2 Masters & engines | Not started | | | |
 | M3 Procurement | Not started | | | |
 | M4 QC | Not started | | | |
@@ -29,7 +29,7 @@ Current milestone: **M1 — Foundation**
 | `audit_log` never contains a password hash | ✅ | core-identity-db: audit_log never contains it; auth: no password or token hash anywhere; audit-settings: never shows a hash |
 | User without permission gets 403 | ✅ | access: CEO/QA/Planner refused user admin; esign-transition: QC Analyst, QA Manager, System Admin, CEO refused lot approval; approvals: refused without step role / admin-key role; attachments: refused at the route |
 | Wrong e-signature password refused | ✅ | esign-transition: ESIGN_FAILED + counted, lockout on 5th; approvals: wrong password counted |
-| `pnpm test` green locally **and in CI** | ✅ locally / **⏳ CI: owner to confirm** | Repo is private; the agent cannot see GitHub Actions |
+| `pnpm test` green locally **and in CI** | ✅ | CI run #13 (`04ef009`): install, typecheck, test all success. Runs #1, 7, 8, 9, 11 show "cancelled" only because a newer push superseded them (`cancel-in-progress`); each later run tested the full tree green |
 
 **Rules review (`/check-rules`) findings — all fixed, one commit each:** A admin roles never approve (`204d264`) · B GMP approvals locked in code + Finance countersign for matrix changes (`ff55100`) · C attachment permission at the route (`87c9f48`) · D NUMERIC split, migration 0007 (`923dde9`) · E refusal-path tests (`6e971fe`) · F conventions + enum↔CHECK test (`30d55e5`).
 
@@ -65,3 +65,4 @@ Current milestone: **M1 — Foundation**
 - 17-11-2026 · M1 · Task 11 done: web app — API client (in-memory token, silent refresh, retry on 401, idempotency keys), auth context with 30-min idle logout, login, forced/voluntary change password with live policy check, permission-driven layout with inbox badge, ESignModal with QA countersign, pages: home, my approvals (approve/reject e-signed), users, roles, approval rules, number series, fiscal periods, audit trail (changes with field diffs, record history drawer, sign-in events). 10 web unit tests; vite build OK; smoke test of real API + Vite proxy (login, cookie path, forced change block, refresh, logout). Local dev DB has first admin (temporary password given to the owner in chat). 232/232 tests green. · Next: task 12 (Done-when checks + /check-rules).
 - 17-11-2026 · M1 · Task 12: Done-when checks run with evidence; /check-rules found A–F; owner chose fixes (B = options 1+2, D = migration split). Fixed and pushed one commit each (A 204d264, B ff55100, C 87c9f48, D 923dde9, E 6e971fe, F 30d55e5); Done-when re-run: all green locally, 265 tests. Handoff written. · Next: owner confirms CI → mark M1 done, tag m1; then M2.
 - 18-11-2026 · M1 · Ran the app locally (Docker DB, `pnpm dev`). The countersign rule had no starting point, so added the one-time first-QA-Manager bootstrap command (SYSTEM, audited; refused once a QA Manager exists, for inactive users and for admin-role holders); 7 tests, mutation-checked. 272 tests green. · Next: owner confirms CI → close M1, tag m1; then M2.
+- 18-11-2026 · M1 · Roles: `master.item.manage` → Planner, `master.formula.manage` → QA Officer. CI #13 green; M1 marked done and tagged `m1`. · Next: M2 — Masters and engines (`/milestone M2`).
