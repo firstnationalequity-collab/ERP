@@ -159,6 +159,25 @@ export async function list(auth: AuthContext, recordTable: string, recordId: str
   return rows.map((r) => toDto(r.a, r.uploader));
 }
 
+/**
+ * Files of a document for display beside it (e.g. on the approval e-signature screen). Never throws for
+ * access: returns [] when the record type takes no attachments or the viewer lacks its read key.
+ */
+export async function listForDocument(auth: AuthContext, recordTable: string, recordId: string): Promise<AttachmentDto[]> {
+  const target = targets.get(recordTable);
+  if (!target || !auth.permissions.has(target.readPermission)) return [];
+  return list(auth, recordTable, recordId);
+}
+
+/** How many files a record has (for module rules such as "AVL approval needs evidence"). */
+export async function countForDocument(q: Queryable, companyId: string, recordTable: string, recordId: string): Promise<number> {
+  const rows = await q
+    .select({ id: attachments.id })
+    .from(attachments)
+    .where(and(eq(attachments.companyId, companyId), eq(attachments.recordTable, recordTable), eq(attachments.recordId, recordId)));
+  return rows.length;
+}
+
 /** Read a file, refusing it if it no longer matches the SHA-256 recorded at upload. */
 export async function download(auth: AuthContext, id: string): Promise<{ meta: AttachmentDto; bytes: Buffer }> {
   const [row] = await db

@@ -26,11 +26,12 @@ import {
   type PermissionKey,
   type SetApprovalRulesRequest,
 } from '@albert/shared';
-import { db, withTransaction, type Tx } from '../../db/client';
+import { db, withTransaction, type Queryable, type Tx } from '../../db/client';
 import { AppError } from '../errors';
 import { txContext, type AuthContext, type RequestMeta } from '../auth/auth.service';
 import { recordSignature, verifySignature, verifyWitness } from '../esign/esign.service';
 import * as authRepo from '../auth/auth.repo';
+import { listForDocument } from '../attachments/attachments.service';
 import { defineTransitions, recordInitialStatus, transition, type Actor } from '../transition/transition';
 import * as repo from './approvals.repo';
 import type { ApprovalRow, ApprovalRuleRow, ApprovalStepRow } from './approvals.repo';
@@ -300,6 +301,11 @@ export async function reject(auth: AuthContext, approvalId: string, input: Appro
 
 // ---------------------------------------------------------------- reading
 
+/** For module lists: the latest approval id of each document (so the UI can link to it). */
+export async function latestApprovalIds(q: Queryable, companyId: string, docTable: string, docIds: string[]): Promise<Map<string, string>> {
+  return repo.latestApprovalIds(q, companyId, docTable, docIds);
+}
+
 export async function getApproval(auth: AuthContext, approvalId: string): Promise<ApprovalDto> {
   const approval = await repo.findApproval(db, auth.companyId, approvalId);
   if (!approval) throw new AppError('NOT_FOUND', 'Approval not found');
@@ -342,6 +348,7 @@ export async function getApproval(auth: AuthContext, approvalId: string): Promis
       actedBy: s.actedBy ? (user(s.actedBy)?.fullName ?? null) : null,
       actedAt: s.actedAt?.toISOString() ?? null,
     })),
+    attachments: await listForDocument(auth, approval.docTable, approval.docId),
   };
 }
 

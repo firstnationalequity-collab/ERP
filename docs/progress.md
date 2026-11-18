@@ -5,7 +5,7 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 | Milestone | Status | Started | Finished | Notes |
 | --- | --- | --- | --- | --- |
 | M1 Foundation | Done | 17-11-2026 | 18-11-2026 | All 12 tasks, rules-review fixes A–F, first-QA-Manager bootstrap; CI run #13 green on `04ef009`; tag `m1` |
-| M2 Masters & engines | In progress | 18-11-2026 | | Tasks 1–2 done; see Handoff |
+| M2 Masters & engines | In progress | 18-11-2026 | | Tasks 1–3 done; see Handoff |
 | M3 Procurement | Not started | | | |
 | M4 QC | Not started | | | |
 | M5 Sales | Not started | | | |
@@ -26,22 +26,22 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 | --- | --- | --- |
 | 1 | Shared definitions: keys `master.product.manage`, `master.price.manage` (Sales Mgr), `fin.master.manage` (Finance Mgr), `qa.product.countersign` (QA Mgr); docs for lot-actual costing, tax per item, AVL with attachments | ✅ |
 | 2 | `0008_masters.sql` + `schema/masters.ts` (uoms, conversions, categories, items+tax_code_id, warehouses, locations, customers, addresses, vendors, approved_sources, products, master_formulas+lines, price_lists+lines, tax_codes) with DB rules | ✅ |
-| 3 | Masters service/tests/routes `/api/v1/master/*`: CRUD, customer/vendor DRAFT→ACTIVE (creator ≠ activator), AVL via approvals (attachments shown at signing) + block, formula versions via approvals (old APPROVED → OBSOLETE), product regulatory fields need `qa.product.countersign` | ⏳ next |
-| 4 | `0009_finance_masters.sql`: accounts, cost_centers, posting_rules, journal_entries/lines (balance, period, immutability); seed PLACEHOLDER chart + rules, FY2026-27 periods, JV series | |
-| 5 | `0010_inventory.sql`: lots, stock_movements (append-only), stock_balances (≥0), stock_reservations; DB guard: ISSUE/RESERVE only APPROVED, DISPATCH only RELEASED; toll lots zero value. **No item_costs** (lot-actual costing) | |
+| 3 | Masters service/tests/routes `/api/v1/master/*`: CRUD, customer/vendor DRAFT→ACTIVE (creator ≠ activator), AVL via approvals (attachments shown at signing) + block, formula versions via approvals (old APPROVED → OBSOLETE), product regulatory fields need `qa.product.countersign`; `0009_party_guards.sql` (activation SoD, sensitive-field countersign) | ✅ |
+| 4 | `0010_finance_masters.sql`: accounts, cost_centers, posting_rules, journal_entries/lines (balance, period, immutability); seed PLACEHOLDER chart + rules, FY2026-27 periods, JV series | ⏳ next |
+| 5 | `0011_inventory.sql`: lots, stock_movements (append-only), stock_balances (≥0), stock_reservations; DB guard: ISSUE/RESERVE only APPROVED, DISPATCH only RELEASED; toll lots zero value. **No item_costs** (lot-actual costing) | |
 | 6 | `engines/inventory`: postMovement, reserve/release, fefoCandidates; every movement valued at lot cost | |
 | 7 | `engines/posting`: postJournal, reverse; read-only journal routes | |
 | 8 | Done-when test: receipt = movement + balanced journal in one tx; forced error rolls back both; DB refuses negative stock; toll = no journal; **GL inventory = Σ(lot qty × lot cost) after every movement type** | |
 | 9 | Web: DataTable (search, filters, paging, Excel export) / DocForm; all master screens incl. formula and AVL approval with attachments; journals list | |
 | 10 | Done-when evidence, `/check-rules`, docs, CI | |
 
-**Notes for task 3 (read first in a fresh chat):**
-- Patterns to copy: `core/access/access.service.ts` (service + countersign via `verifyWitness`), `core/transition` (allowed-moves map with a key per move), `core/approvals` (`startApproval`, module handlers called on approve/reject in the same tx), `core/attachments` (register a target table with its read/write keys).
-- Customers/vendors: insert DRAFT through core/transition; moves DRAFT→ACTIVE, ACTIVE→INACTIVE, INACTIVE→ACTIVE with `master.customer.approve` / `master.vendor.approve`; refuse `SEGREGATION_OF_DUTIES` when the actor created the record.
-- AVL: Purchase Officer creates PENDING row (`master.vendor.manage`) + `startApproval('AVL')`; handler moves PENDING→APPROVED / REJECTED; block APPROVED→BLOCKED needs `master.avl.approve` + e-signature + reason. Register attachments target `master.approved_sources` (read `master.view`, write `master.vendor.manage`); the approval detail must list them (shown on the e-sign screen in task 9).
-- Formulas: new version copies the latest version's lines; submit DRAFT→PENDING_APPROVAL + `startApproval('MASTER_FORMULA')`; approve handler: old APPROVED→OBSOLETE **first** (unique index), then PENDING→APPROVED; reject handler: PENDING→DRAFT. Creator ≠ approver comes from the approvals engine.
-- Products: changing registration_no / artwork_version / quality_agreement_signed_on needs a countersign body (username, password, meaning APPROVED, reason) from a holder of `qa.product.countersign`, not the editor; write the e-signature on `master.products`/id in the same tx (the DB trigger checks it).
-- Tax codes and (task 4) finance masters use `fin.master.manage`; price lists `master.price.manage`; warehouses/locations `master.location.manage`; items/categories/UoM/conversions `master.item.manage`; all reads `master.view`.
+**Notes for task 4 (read first in a fresh chat):**
+- Task 3 built `apps/api/src/modules/masters/` — copy its layout for finance masters: `masters.repo.ts` (queries only, `listWhere`/`countWhere` helpers), services per area, `common.ts` (`stamped`, `assertReference`, `setActive`, `sent`), routes with `requirePermission` per route and `activeFlagRoutes` for activate/deactivate; tests in `modules/<module>/__tests__/` (HTTP via supertest, seeded roles).
+- Migration numbers moved: `0009_party_guards.sql` is taken, so finance masters = **0010**, inventory = **0011**.
+- Finance masters use `fin.master.manage` (reads `fin.view` / `master.view` as the docs say). Seed the PLACEHOLDER tax codes (sales tax 18%, common WHT sections, `is_placeholder = true`, decision M2 Q6) with the placeholder chart — task 3 did not seed any.
+- Service validation errors are `VALIDATION_FAILED` (HTTP 400); DB guard errors map through `fromDbError`.
+- `FOR UPDATE OF <schema.table>` is invalid SQL from Drizzle's `.for('update', { of })`: lock the row in its own query (see `findProduct`).
+- Approval detail (`ApprovalDto.attachments`) now lists a document's attachments; module lists show `approvalId` via `latestApprovalIds` from the approvals service (never read `core.approvals` from a module).
 
 **Roles on existing databases:** `pnpm db:seed` now adds any key in `docs/roles.md` that a role is missing (no Roles-page clicks; decisions.md 18-11-2026). If it stops with "roles hold keys that docs/roles.md does not list", ask the owner per key; never remove keys yourself. Local dev DB synced 18-11-2026.
 
@@ -77,3 +77,4 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 - 18-11-2026 · M2 · Plan approved (owner answers Q1–Q6: lot-actual costing, product QA countersign, placeholder chart, AVL with attachments, creator ≠ activator, tax per item). Task 1 done: 4 new keys in permissions/seed/roles.md, docs updated (architecture §6, decisions). 272 tests green. · Next: task 2 (0008_masters.sql).
 - 18-11-2026 · M2 · Task 2 done: `0008_masters.sql` (new `master` schema, 16 tables, DB guards: no delete, NTN/CNIC, FG product, product QA countersign, formula lock + filler rule + one APPROVED/open version, AVL identity lock), Drizzle `schema/masters.ts`, 14 DB tests (mutation-checked), enum↔CHECK test now covers `master`; DB check/FK violations mapped to VALIDATION_FAILED / IN_USE. 296 tests green. · Next: task 3 (masters service + routes).
 - 18-11-2026 · M2 · Seed role sync (owner request before task 3): `pnpm db:seed` adds keys from `docs/roles.md` missing on existing roles, never removes, stops on keys not in roles.md (`RoleBundleDriftError`); countersign-key exception recorded in decisions. 4 new seed tests (mutation-checked). Local dev DB synced: SALES_MANAGER +master.price.manage, +master.product.manage; FINANCE_MANAGER +fin.approval_rules.countersign, +fin.master.manage; PLANNER +master.item.manage; QA_OFFICER +master.formula.manage; QA_MANAGER +qa.product.countersign; second run no changes. 299 tests green. · Next: task 3 (masters service + routes).
+- 18-11-2026 · M2 · Task 3 done: masters module `modules/masters` (catalog, parties, AVL, products, formulas; ~60 routes under `/api/v1/master/*`); owner chose sensitive-field countersign for active customers/vendors → `0009_party_guards.sql` (activator ≠ creator/last editor; countersign by approve-key holder, DB-checked); AVL approval needs evidence and approval detail lists attachments; formula versions with QA approval and obsolete-first. 27 HTTP + 3 new DB tests, 4 service rules mutation-checked. Dev DB migrated to 0009. 329 tests green (310 API, 10 web, 9 shared). · Next: task 4 (0010 finance masters).

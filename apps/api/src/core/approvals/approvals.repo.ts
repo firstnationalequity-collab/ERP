@@ -1,5 +1,5 @@
 // Queries for the approval engine. No business rules here — see approvals.service.ts.
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, max, sql } from 'drizzle-orm';
 import type { ApprovalMeasure, ApprovalStepStatus } from '@albert/shared';
 import type { Queryable } from '../../db/client';
 import { approvalRules, approvalSteps, approvals, roles, users } from '../../db/schema/core';
@@ -7,6 +7,19 @@ import { approvalRules, approvalSteps, approvals, roles, users } from '../../db/
 export type ApprovalRuleRow = typeof approvalRules.$inferSelect;
 export type ApprovalRow = typeof approvals.$inferSelect;
 export type ApprovalStepRow = typeof approvalSteps.$inferSelect;
+
+/** Latest approval id per document of a table (open or decided). */
+export async function latestApprovalIds(q: Queryable, companyId: string, docTable: string, docIds: string[]): Promise<Map<string, string>> {
+  if (docIds.length === 0) return new Map();
+  const rows = await q
+    .select({ docId: approvals.docId, id: max(approvals.id) })
+    .from(approvals)
+    .where(and(eq(approvals.companyId, companyId), eq(approvals.docTable, docTable), inArray(approvals.docId, docIds)))
+    .groupBy(approvals.docId);
+  const out = new Map<string, string>();
+  for (const r of rows) if (r.id !== null) out.set(r.docId, r.id);
+  return out;
+}
 
 export async function activeRules(q: Queryable, companyId: string, docType: string): Promise<ApprovalRuleRow[]> {
   return q

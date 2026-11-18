@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { ApprovalMeasure, type ApprovalStatus, type ApprovalStepStatus } from '../../enums';
 import type { PermissionKey } from '../../permissions';
 import { ESignRequest, WitnessSignRequest } from './esign';
+import type { AttachmentDto } from './attachments';
 
 /**
  * GMP document types whose approvers are fixed in code (rules review B, option 2): every approver role
@@ -88,6 +89,9 @@ export interface ApprovalDto {
   createdAt: string;
   decidedAt: string | null;
   steps: ApprovalStepDto[];
+  /** Files attached to the document (e.g. AVL evidence), shown on the e-signature screen. Empty if the
+   *  document type takes no attachments or the viewer lacks its read key. */
+  attachments: AttachmentDto[];
 }
 
 /** One line in "my approvals". */

@@ -26,7 +26,8 @@ const userIds: Record<string, string> = {};
 // ---- a stand-in module handler: records what the engine told it, can be told to fail
 const events: { kind: 'approved' | 'rejected'; docId: string; by: string; reason?: string }[] = [];
 let failNextApproval = false;
-for (const docType of ['PO', 'QUOTATION_DISCOUNT', 'STOCK_ADJUSTMENT', 'AVL', 'BATCH_CLOSE', 'TEST_DOC', 'MATRIX_DEMO']) {
+// AVL uses the real masters handler (registered when the app loads); these tests only start AVL approvals.
+for (const docType of ['PO', 'QUOTATION_DISCOUNT', 'STOCK_ADJUSTMENT', 'BATCH_CLOSE', 'TEST_DOC', 'MATRIX_DEMO']) {
   registerApprovalHandler(docType, {
     async onApproved(_tx, approval, actor) {
       if (failNextApproval) {

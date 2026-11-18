@@ -125,9 +125,48 @@ describe('customers and vendors', () => {
 
   it('refuses a status change that did not go through core/transition', async () => {
     const id = await tx('1', () => insertWithStatus('master.customers', 'code, name, cnic', ['C2', 'Person', '35202-1234567-1'], 'DRAFT', '1'));
-    await expect(tx('1', () => client.query(`UPDATE master.customers SET status = 'ACTIVE' WHERE id = $1`, [id]))).rejects.toThrow(
+    // Acting as someone other than the creator, so only the transition guard applies (0009 covers the creator).
+    await expect(tx(editor, () => client.query(`UPDATE master.customers SET status = 'ACTIVE' WHERE id = $1`, [id]))).rejects.toThrow(
       /INVALID_TRANSITION/,
     );
+  });
+});
+
+describe('customer/vendor segregation and countersign (0009)', () => {
+  it('refuses activation by the creator or the last editor of the draft, allows another person', async () => {
+    const id = await tx(editor, () => insertWithStatus('master.vendors', 'code, name, ntn', ['V10', 'Vendor', '1111111'], 'DRAFT', editor));
+    await expect(tx(editor, () => setStatus('master.vendors', id, 'DRAFT', 'ACTIVE', editor))).rejects.toThrow(/SEGREGATION_OF_DUTIES/);
+    await tx(qa, () => client.query(`UPDATE master.vendors SET name = 'Vendor edited' WHERE id = $1`, [id]));
+    await expect(tx(qa, () => setStatus('master.vendors', id, 'DRAFT', 'ACTIVE', qa))).rejects.toThrow(/SEGREGATION_OF_DUTIES/);
+    await tx('1', () => setStatus('master.vendors', id, 'DRAFT', 'ACTIVE', '1'));
+  });
+
+  it('lets a DRAFT change its bank details without a countersign', async () => {
+    const id = await tx(editor, () => insertWithStatus('master.vendors', 'code, name, ntn', ['V11', 'Vendor', '2222222'], 'DRAFT', editor));
+    await tx(editor, () => client.query(`UPDATE master.vendors SET bank_account = 'PK00BANK1' WHERE id = $1`, [id]));
+  });
+
+  it('needs a countersign by another person to change sensitive fields of an active party; other fields are free', async () => {
+    const vendor = await tx('1', () => insertWithStatus('master.vendors', 'code, name, ntn', ['V12', 'Vendor', '3333333'], 'ACTIVE', '1'));
+    const customer = await tx('1', () => insertWithStatus('master.customers', 'code, name, ntn', ['C12', 'Customer', '4444444'], 'ACTIVE', '1'));
+    await expect(tx(editor, () => client.query(`UPDATE master.vendors SET bank_account = 'PK00X' WHERE id = $1`, [vendor]))).rejects.toThrow(
+      /COUNTERSIGN_REQUIRED/,
+    );
+    await expect(
+      tx(editor, () => client.query(`UPDATE master.customers SET credit_limit = 500000 WHERE id = $1`, [customer])),
+    ).rejects.toThrow(/COUNTERSIGN_REQUIRED/);
+    // Own signature does not count.
+    await expect(
+      tx(editor, async () => {
+        await sign(editor, 'master.vendors', vendor);
+        await client.query(`UPDATE master.vendors SET bank_account = 'PK00X' WHERE id = $1`, [vendor]);
+      }),
+    ).rejects.toThrow(/COUNTERSIGN_REQUIRED/);
+    await tx(editor, async () => {
+      await sign(qa, 'master.vendors', vendor);
+      await client.query(`UPDATE master.vendors SET bank_account = 'PK00X' WHERE id = $1`, [vendor]);
+    });
+    await tx(editor, () => client.query(`UPDATE master.customers SET name = 'Renamed', payment_terms_days = 30 WHERE id = $1`, [customer]));
   });
 });
 

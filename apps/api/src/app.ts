@@ -13,6 +13,7 @@ import { settingsRouter } from './core/settings/settings.routes';
 import { approvalsRouter } from './core/approvals/approvals.routes';
 import { attachmentsRouter } from './core/attachments/attachments.routes';
 import { auditRouter } from './core/audit/audit.routes';
+import { mastersRouter } from './modules/masters/masters.routes';
 
 export function createApp(): express.Express {
   const app = express();
@@ -32,6 +33,7 @@ export function createApp(): express.Express {
   api.use('/core/auth', authRouter);
   // Every other router is mounted behind authenticate + requireCurrentPassword; each route checks its permission.
   api.use('/core', authenticate, requireCurrentPassword, accessRouter, settingsRouter, approvalsRouter, attachmentsRouter, auditRouter);
+  api.use('/master', authenticate, requireCurrentPassword, mastersRouter);
 
   app.use('/api/v1', api);
   app.use(notFound);
