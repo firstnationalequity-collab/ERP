@@ -2,7 +2,8 @@
 // Change docs/roles.md first, then this file (a test keeps them identical). The seed creates missing roles
 // and ADDS missing keys to existing roles; it never removes a key — if a role holds a key not listed here,
 // the seed stops for the owner's decision (decisions.md 18-11-2026).
-// master.item.manage → Planner; master.formula.manage → QA Officer (owner decision 18-11-2026).
+// master.item.manage → Warehouse Manager + Purchase Manager; master.formula.manage → Production Manager
+// (owner decision, corrected 18-11-2026; migration 0010 removed the earlier Planner / QA Officer grants).
 import { ViewPermissionKeys, type PermissionKey } from '@albert/shared';
 
 export interface RoleSeed {
@@ -64,7 +65,7 @@ const roles: RoleSeed[] = [
   {
     code: 'PURCHASE_MANAGER',
     name: 'Purchase Manager',
-    keys: ['purch.view', 'master.view', 'inv.stock.view', 'purch.po.approve', 'master.vendor.approve'],
+    keys: ['purch.view', 'master.view', 'inv.stock.view', 'purch.po.approve', 'master.vendor.approve', 'master.item.manage'],
   },
   {
     code: 'STOREKEEPER',
@@ -79,13 +80,13 @@ const roles: RoleSeed[] = [
     name: 'Warehouse Manager',
     keys: [
       'inv.stock.view', 'purch.view', 'prod.view', 'fg.view', 'master.view',
-      'inv.adjustment.request', 'fg.gatepass.approve', 'fg.delivery.manage', 'inv.lot.dispose', 'master.location.manage',
+      'inv.adjustment.request', 'fg.gatepass.approve', 'fg.delivery.manage', 'inv.lot.dispose', 'master.location.manage', 'master.item.manage',
     ],
   },
   {
     code: 'PLANNER',
     name: 'Planner',
-    keys: ['prod.view', 'sales.view', 'inv.stock.view', 'master.view', 'prod.order.manage', 'master.item.manage'],
+    keys: ['prod.view', 'sales.view', 'inv.stock.view', 'master.view', 'prod.order.manage'],
   },
   {
     code: 'PRODUCTION_OPERATOR',
@@ -100,7 +101,7 @@ const roles: RoleSeed[] = [
   {
     code: 'PRODUCTION_MANAGER',
     name: 'Production Manager',
-    keys: ['prod.view', 'qa.view', 'inv.stock.view', 'master.view', 'prod.batch.approve_close', 'qa.deviation.manage'],
+    keys: ['prod.view', 'qa.view', 'inv.stock.view', 'master.view', 'prod.batch.approve_close', 'qa.deviation.manage', 'master.formula.manage'],
   },
   {
     code: 'QC_ANALYST',
@@ -115,7 +116,7 @@ const roles: RoleSeed[] = [
   {
     code: 'QA_OFFICER',
     name: 'QA Officer',
-    keys: ['qa.view', 'qc.view', 'prod.view', 'master.view', 'qa.deviation.manage', 'master.formula.manage'],
+    keys: ['qa.view', 'qc.view', 'prod.view', 'master.view', 'qa.deviation.manage'],
   },
   {
     code: 'QA_MANAGER',

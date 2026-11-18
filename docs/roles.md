@@ -106,16 +106,16 @@ Every role except SYSTEM also holds `core.approval.inbox` (not repeated below). 
 | 6 | AP Officer | `fin.view`, `purch.view`, `master.view` | `fin.payment.manage` |
 | 7 | Finance Manager | `fin.view`, `fin.report.view`, `fin.costing.view`, `sales.view`, `purch.view`, `inv.stock.view`, `master.view` | `fin.payment.approve`, `sales.order.credit_override`, `sales.quotation.approve` (discount > 5% second step), `purch.po.approve`, `inv.adjustment.approve`, `core.period.manage`, `core.period.close`, `fin.approval_rules.countersign`, `fin.master.manage` |
 | 8 | Purchase Officer | `purch.view`, `master.view`, `inv.stock.view` | `purch.pr.manage`, `purch.po.manage`, `master.vendor.manage`, `purch.landed_cost.manage` |
-| 9 | Purchase Manager | `purch.view`, `master.view`, `inv.stock.view` | `purch.po.approve`, `master.vendor.approve` |
+| 9 | Purchase Manager | `purch.view`, `master.view`, `inv.stock.view` | `purch.po.approve`, `master.vendor.approve`, `master.item.manage` |
 | 10 | Storekeeper | `inv.stock.view`, `purch.view`, `prod.view`, `fg.view`, `master.view` | `purch.grn.post`, `inv.movement.post`, `inv.label.print`, `fg.delivery.manage`, `fg.dispatch.post` |
-| 11 | Warehouse Manager | `inv.stock.view`, `purch.view`, `prod.view`, `fg.view`, `master.view` | `inv.adjustment.request`, `fg.gatepass.approve`, `fg.delivery.manage` (returns), `inv.lot.dispose`, `master.location.manage` |
-| 12 | Planner | `prod.view`, `sales.view`, `inv.stock.view`, `master.view` | `prod.order.manage`, `master.item.manage` |
+| 11 | Warehouse Manager | `inv.stock.view`, `purch.view`, `prod.view`, `fg.view`, `master.view` | `inv.adjustment.request`, `fg.gatepass.approve`, `fg.delivery.manage` (returns), `inv.lot.dispose`, `master.location.manage`, `master.item.manage` |
+| 12 | Planner | `prod.view`, `sales.view`, `inv.stock.view`, `master.view` | `prod.order.manage` |
 | 13 | Production Operator | `prod.view` | `prod.stage.sign` |
 | 14 | Production Supervisor | `prod.view`, `inv.stock.view` | `prod.stage.sign`, `prod.batch.close` |
-| 15 | Production Manager | `prod.view`, `qa.view`, `inv.stock.view`, `master.view` | `prod.batch.approve_close`, `qa.deviation.manage` |
+| 15 | Production Manager | `prod.view`, `qa.view`, `inv.stock.view`, `master.view` | `prod.batch.approve_close`, `qa.deviation.manage`, `master.formula.manage` |
 | 16 | QC Analyst | `qc.view`, `inv.stock.view`, `master.view` | `qc.result.enter`, `qc.spec.manage` |
 | 17 | QC Manager | `qc.view`, `inv.stock.view`, `master.view` | `qc.result.review`, `qc.lot.change_status`, `qc.coa.issue`, `qc.spec.approve` |
-| 18 | QA Officer | `qa.view`, `qc.view`, `prod.view`, `master.view` | `qa.deviation.manage`, `master.formula.manage` |
+| 18 | QA Officer | `qa.view`, `qc.view`, `prod.view`, `master.view` | `qa.deviation.manage` |
 | 19 | QA Manager | `qa.view`, `qc.view`, `prod.view`, `inv.stock.view`, `master.view`, `core.audit.view` | `qa.deviation.manage`, `qa.deviation.close`, `qa.batch.release`, `qa.lot.hold`, `qa.lot.witness`, `qa.access.countersign`, `master.avl.approve`, `master.formula.approve`, `inv.adjustment.approve` (second approver for adjustments), `qa.product.countersign` |
 | 20 | System Admin | `core.audit.view` | `core.user.manage`, `core.role.manage`, `core.settings.manage` (admin keys only) |
 | — | SYSTEM (user, not a role) | — | none; cannot log in; actor for seeds and jobs |
@@ -129,6 +129,6 @@ Approved by the owner on 2026-11-17 (decisions log):
 4. Sales Executive delivery requests come under `sales.order.manage`; there is no separate key.
 5. The countersigner must be a different person from the admin who made the change. Nobody countersigns a change to their own roles.
 
-Decided by the owner on 2026-11-18 (may be revised later):
+Decided by the owner (corrected 18-11-2026; commit 04ef009 had recorded an agent default instead):
 
-2. `master.item.manage` (items, categories, UoM) → **Planner**. `master.formula.manage` (drafting master formulas) → **QA Officer**; the QA Manager approves (`master.formula.approve`), so drafter ≠ approver, and Production cannot edit formulas.
+2. `master.item.manage` (items, categories, UoM) → **Warehouse Manager** and **Purchase Manager**. `master.formula.manage` (drafting master formulas) → **Production Manager**; the QA Manager approves (`master.formula.approve`). Segregation: no role holds both `master.formula.manage` and `master.formula.approve`, and no QA role holds `master.formula.manage` (QA does not draft what it approves). A test enforces both.

@@ -60,6 +60,7 @@ beforeAll(async () => {
   const people: [string, string[]][] = [
     ['planner', ['PLANNER']],
     ['qao', ['QA_OFFICER']],
+    ['prodm', ['PRODUCTION_MANAGER']],
     ['qam', ['QA_MANAGER']],
     ['po', ['PURCHASE_OFFICER']],
     ['po2', ['PURCHASE_OFFICER']],
@@ -107,35 +108,35 @@ describe('catalog masters: tax codes, UoM, categories, items, conversions', () =
     expectError(await get('admin', '/master/tax-codes'), 403, 'FORBIDDEN');
   });
 
-  it('lets the Planner keep UoM and categories; codes are unique', async () => {
-    const kg = await post('planner', '/master/uoms', { code: 'KG', name: 'Kilogram' });
+  it('lets the Warehouse Manager keep UoM and categories (Planner no longer can); codes are unique', async () => {
+    const kg = await post('wm', '/master/uoms', { code: 'KG', name: 'Kilogram' });
     expect(kg.status).toBe(201);
     ids.kg = kg.body.id;
-    ids.g = (await post('planner', '/master/uoms', { code: 'G', name: 'Gram' })).body.id;
-    ids.tab = (await post('planner', '/master/uoms', { code: 'TAB', name: 'Tablet' })).body.id;
-    expectError(await post('planner', '/master/uoms', { code: 'KG', name: 'Dup' }), 409, 'ALREADY_EXISTS');
-    expectError(await post('wm', '/master/uoms', { code: 'L', name: 'Litre' }), 403, 'FORBIDDEN');
+    ids.g = (await post('wm', '/master/uoms', { code: 'G', name: 'Gram' })).body.id;
+    ids.tab = (await post('wm', '/master/uoms', { code: 'TAB', name: 'Tablet' })).body.id;
+    expectError(await post('wm', '/master/uoms', { code: 'KG', name: 'Dup' }), 409, 'ALREADY_EXISTS');
+    expectError(await post('planner', '/master/uoms', { code: 'L', name: 'Litre' }), 403, 'FORBIDDEN');
 
-    ids.catRm = (await post('planner', '/master/item-categories', { code: 'RM', name: 'Raw materials' })).body.id;
-    ids.catFg = (await post('planner', '/master/item-categories', { code: 'FG', name: 'Finished goods' })).body.id;
-    ids.catOld = (await post('planner', '/master/item-categories', { code: 'OLD', name: 'Old' })).body.id;
-    expect((await patch('planner', `/master/item-categories/${ids.catOld}`, { name: 'Retired' })).body.name).toBe('Retired');
+    ids.catRm = (await post('wm', '/master/item-categories', { code: 'RM', name: 'Raw materials' })).body.id;
+    ids.catFg = (await post('wm', '/master/item-categories', { code: 'FG', name: 'Finished goods' })).body.id;
+    ids.catOld = (await post('wm', '/master/item-categories', { code: 'OLD', name: 'Old' })).body.id;
+    expect((await patch('wm', `/master/item-categories/${ids.catOld}`, { name: 'Retired' })).body.name).toBe('Retired');
   });
 
   it('deactivates with a reason (never deletes); refuses repeating the same move', async () => {
-    expectError(await post('planner', `/master/item-categories/${ids.catOld}/deactivate`, {}), 400, 'VALIDATION_FAILED');
-    expect((await post('planner', `/master/item-categories/${ids.catOld}/deactivate`, { reason: 'No longer used' })).status).toBe(204);
-    expectError(await post('planner', `/master/item-categories/${ids.catOld}/deactivate`, { reason: 'Again' }), 409, 'INVALID_TRANSITION');
+    expectError(await post('wm', `/master/item-categories/${ids.catOld}/deactivate`, {}), 400, 'VALIDATION_FAILED');
+    expect((await post('wm', `/master/item-categories/${ids.catOld}/deactivate`, { reason: 'No longer used' })).status).toBe(204);
+    expectError(await post('wm', `/master/item-categories/${ids.catOld}/deactivate`, { reason: 'Again' }), 409, 'INVALID_TRANSITION');
     const { rows } = await client.query(`SELECT reason FROM core.audit_log WHERE table_name = 'master.item_categories' AND record_id = $1 ORDER BY id DESC LIMIT 1`, [
       ids.catOld,
     ]);
     expect(rows[0].reason).toContain('No longer used');
-    expect((await request(app).delete(`/api/v1/master/item-categories/${ids.catOld}`).set('Authorization', `Bearer ${tokens.planner}`)).status).toBe(404);
+    expect((await request(app).delete(`/api/v1/master/item-categories/${ids.catOld}`).set('Authorization', `Bearer ${tokens.wm}`)).status).toBe(404);
   });
 
   it('creates items with active references and a sales tax code; code, type and base unit are fixed', async () => {
     const item = (code: string, type: string, extra: Body = {}) =>
-      post('planner', '/master/items', { code, name: `${code} name`, type, categoryId: type === 'FG' ? ids.catFg : ids.catRm, baseUomId: ids.kg, ...extra });
+      post('wm', '/master/items', { code, name: `${code} name`, type, categoryId: type === 'FG' ? ids.catFg : ids.catRm, baseUomId: ids.kg, ...extra });
     const api = await item('API-PARA', 'API', { shelfLifeDays: 1095, retestDays: 365, storageZone: 'BELOW_25C' });
     expect(api.status).toBe(201);
     expect(api.body).toMatchObject({ code: 'API-PARA', type: 'API', storageZone: 'BELOW_25C', isControlled: false });
@@ -151,9 +152,9 @@ describe('catalog masters: tax codes, UoM, categories, items, conversions', () =
     expectError(await item('X-2', 'RM', { categoryId: ids.catOld }), 400, 'VALIDATION_FAILED');
     expectError(await item('X-3', 'RM', { categoryId: '999999' }), 400, 'VALIDATION_FAILED');
     expectError(await item('X-4', 'RM', { shelfLifeDays: 100, retestDays: 200 }), 400, 'VALIDATION_FAILED');
-    expectError(await patch('planner', `/master/items/${ids.api}`, { type: 'RM' }), 400, 'VALIDATION_FAILED');
-    expectError(await patch('planner', `/master/items/${ids.api}`, { retestDays: 2000 }), 400, 'VALIDATION_FAILED');
-    expect((await patch('planner', `/master/items/${ids.api}`, { isControlled: true })).body.isControlled).toBe(true);
+    expectError(await patch('wm', `/master/items/${ids.api}`, { type: 'RM' }), 400, 'VALIDATION_FAILED');
+    expectError(await patch('wm', `/master/items/${ids.api}`, { retestDays: 2000 }), 400, 'VALIDATION_FAILED');
+    expect((await patch('wm', `/master/items/${ids.api}`, { isControlled: true })).body.isControlled).toBe(true);
 
     const fgOnly = await get('ceo', '/master/items?type=FG');
     expect(fgOnly.body.items.map((i: Body) => i.code)).toEqual(['FG-PARA250', 'FG-PARA500']);
@@ -161,15 +162,15 @@ describe('catalog masters: tax codes, UoM, categories, items, conversions', () =
   });
 
   it('adds unit conversions (never edited: deactivate and add a new one)', async () => {
-    const conv = await post('planner', '/master/uom-conversions', { fromUomId: ids.kg, toUomId: ids.g, factor: '1000' });
+    const conv = await post('wm', '/master/uom-conversions', { fromUomId: ids.kg, toUomId: ids.g, factor: '1000' });
     expect(conv.status).toBe(201);
     expect(conv.body).toMatchObject({ itemId: null, factor: '1000.000000' });
-    expectError(await post('planner', '/master/uom-conversions', { fromUomId: ids.kg, toUomId: ids.kg, factor: '1' }), 400, 'VALIDATION_FAILED');
-    expectError(await post('planner', '/master/uom-conversions', { fromUomId: ids.kg, toUomId: ids.g, factor: '0' }), 400, 'VALIDATION_FAILED');
-    expectError(await post('planner', '/master/uom-conversions', { fromUomId: ids.kg, toUomId: ids.g, factor: '1000' }), 409, 'ALREADY_EXISTS');
-    expect((await patch('planner', `/master/uom-conversions/${conv.body.id}`, { factor: '999' })).status).toBe(404);
-    expect((await post('planner', `/master/uom-conversions/${conv.body.id}/deactivate`, { reason: 'Wrong factor' })).status).toBe(204);
-    expect((await post('planner', '/master/uom-conversions', { fromUomId: ids.kg, toUomId: ids.g, factor: '1000' })).status).toBe(201);
+    expectError(await post('wm', '/master/uom-conversions', { fromUomId: ids.kg, toUomId: ids.kg, factor: '1' }), 400, 'VALIDATION_FAILED');
+    expectError(await post('wm', '/master/uom-conversions', { fromUomId: ids.kg, toUomId: ids.g, factor: '0' }), 400, 'VALIDATION_FAILED');
+    expectError(await post('wm', '/master/uom-conversions', { fromUomId: ids.kg, toUomId: ids.g, factor: '1000' }), 409, 'ALREADY_EXISTS');
+    expect((await patch('wm', `/master/uom-conversions/${conv.body.id}`, { factor: '999' })).status).toBe(404);
+    expect((await post('wm', `/master/uom-conversions/${conv.body.id}/deactivate`, { reason: 'Wrong factor' })).status).toBe(204);
+    expect((await post('wm', '/master/uom-conversions', { fromUomId: ids.kg, toUomId: ids.g, factor: '1000' })).status).toBe(201);
   });
 });
 
@@ -381,58 +382,59 @@ describe('master formulas (versions, QA approval, one APPROVED per product)', ()
     { itemId: ids.exc2, qtyPerBatch: '9.5', uomId: ids.kg },
   ];
 
-  it('lets the QA Officer draft version 1; a first version needs its batch size', async () => {
-    expectError(await post('qao', '/master/formulas', { productId: ids.product }), 400, 'VALIDATION_FAILED');
+  it('lets the Production Manager draft version 1 (QA Officer cannot); a first version needs its batch size', async () => {
+    expectError(await post('prodm', '/master/formulas', { productId: ids.product }), 400, 'VALIDATION_FAILED');
+    expectError(await post('qao', '/master/formulas', { productId: ids.product, batchSize: '100', batchUomId: ids.kg }), 403, 'FORBIDDEN');
     expectError(await post('planner', '/master/formulas', { productId: ids.product, batchSize: '100', batchUomId: ids.kg }), 403, 'FORBIDDEN');
-    const f = await post('qao', '/master/formulas', { productId: ids.product, batchSize: '100', batchUomId: ids.kg });
+    const f = await post('prodm', '/master/formulas', { productId: ids.product, batchSize: '100', batchUomId: ids.kg });
     expect(f.status).toBe(201);
     expect(f.body).toMatchObject({ version: 1, status: 'DRAFT', batchSize: '100.0000', lines: [] });
     ids.f1 = f.body.id;
-    expectError(await post('qao', '/master/formulas', { productId: ids.product, batchSize: '100', batchUomId: ids.kg }), 409, 'ALREADY_EXISTS');
+    expectError(await post('prodm', '/master/formulas', { productId: ids.product, batchSize: '100', batchUomId: ids.kg }), 409, 'ALREADY_EXISTS');
   });
 
   it('validates lines', async () => {
     const url = `/master/formulas/${ids.f1}/lines`;
-    expectError(await put('qao', url, { lines: [{ itemId: ids.api, qtyPerBatch: '1', uomId: ids.kg, isApi: true }] }), 400, 'VALIDATION_FAILED');
-    expectError(await put('qao', url, { lines: [{ itemId: ids.exc, qtyPerBatch: '1', uomId: ids.kg, isApi: true, assayBasis: 'AS_IS' }] }), 400, 'VALIDATION_FAILED');
-    expectError(await put('qao', url, { lines: [{ itemId: ids.fg, qtyPerBatch: '1', uomId: ids.kg }] }), 400, 'VALIDATION_FAILED');
-    expectError(await put('qao', url, { lines: [{ itemId: ids.exc, qtyPerBatch: '0', uomId: ids.kg }] }), 400, 'VALIDATION_FAILED');
+    expectError(await put('prodm', url, { lines: [{ itemId: ids.api, qtyPerBatch: '1', uomId: ids.kg, isApi: true }] }), 400, 'VALIDATION_FAILED');
+    expectError(await put('prodm', url, { lines: [{ itemId: ids.exc, qtyPerBatch: '1', uomId: ids.kg, isApi: true, assayBasis: 'AS_IS' }] }), 400, 'VALIDATION_FAILED');
+    expectError(await put('prodm', url, { lines: [{ itemId: ids.fg, qtyPerBatch: '1', uomId: ids.kg }] }), 400, 'VALIDATION_FAILED');
+    expectError(await put('prodm', url, { lines: [{ itemId: ids.exc, qtyPerBatch: '0', uomId: ids.kg }] }), 400, 'VALIDATION_FAILED');
     expectError(
-      await put('qao', url, { lines: [{ itemId: ids.exc, qtyPerBatch: '1', uomId: ids.kg, isFiller: true }, { itemId: ids.exc2, qtyPerBatch: '1', uomId: ids.kg, isFiller: true }] }),
+      await put('prodm', url, { lines: [{ itemId: ids.exc, qtyPerBatch: '1', uomId: ids.kg, isFiller: true }, { itemId: ids.exc2, qtyPerBatch: '1', uomId: ids.kg, isFiller: true }] }),
       400,
       'VALIDATION_FAILED',
     );
   });
 
   it('refuses to submit an API formula without a filler line (DB completeness check)', async () => {
-    await put('qao', `/master/formulas/${ids.f1}/lines`, { lines: [lines()[0], lines()[2]] });
-    expectError(await post('qao', `/master/formulas/${ids.f1}/submit`), 400, 'VALIDATION_FAILED');
-    expect((await get('qao', `/master/formulas/${ids.f1}`)).body.status).toBe('DRAFT');
+    await put('prodm', `/master/formulas/${ids.f1}/lines`, { lines: [lines()[0], lines()[2]] });
+    expectError(await post('prodm', `/master/formulas/${ids.f1}/submit`), 400, 'VALIDATION_FAILED');
+    expect((await get('prodm', `/master/formulas/${ids.f1}`)).body.status).toBe('DRAFT');
   });
 
   it('submits, locks the draft, and returns it to DRAFT when QA rejects', async () => {
-    const set = await put('qao', `/master/formulas/${ids.f1}/lines`, { lines: lines() });
+    const set = await put('prodm', `/master/formulas/${ids.f1}/lines`, { lines: lines() });
     expect(set.body.lines.map((l: Body) => [l.lineNo, l.itemCode, l.isApi, l.isFiller])).toEqual([
       [1, 'API-PARA', true, false],
       [2, 'EXC-MCC', false, true],
       [3, 'EXC-LAC', false, false],
     ]);
-    const sub = await post('qao', `/master/formulas/${ids.f1}/submit`);
+    const sub = await post('prodm', `/master/formulas/${ids.f1}/submit`);
     expect(sub.body.status).toBe('PENDING_APPROVAL');
-    expectError(await patch('qao', `/master/formulas/${ids.f1}`, { notes: 'late change' }), 409, 'RECORD_LOCKED');
-    expectError(await put('qao', `/master/formulas/${ids.f1}/lines`, { lines: lines() }), 409, 'RECORD_LOCKED');
+    expectError(await patch('prodm', `/master/formulas/${ids.f1}`, { notes: 'late change' }), 409, 'RECORD_LOCKED');
+    expectError(await put('prodm', `/master/formulas/${ids.f1}/lines`, { lines: lines() }), 409, 'RECORD_LOCKED');
 
     const rej = await post('qam', `/core/approvals/${sub.body.approvalId}/reject`, { signature: sig('REJECTED', 'Check filler quantity') });
     expect(rej.body.status).toBe('REJECTED');
-    expect((await get('qao', `/master/formulas/${ids.f1}`)).body.status).toBe('DRAFT');
+    expect((await get('prodm', `/master/formulas/${ids.f1}`)).body.status).toBe('DRAFT');
   });
 
   it('is approved by the QA Manager only (not the drafter)', async () => {
-    const sub = await post('qao', `/master/formulas/${ids.f1}/submit`);
-    expectError(await post('qao', `/core/approvals/${sub.body.approvalId}/approve`, { signature: sig('APPROVED') }), 403, 'SEGREGATION_OF_DUTIES');
+    const sub = await post('prodm', `/master/formulas/${ids.f1}/submit`);
+    expectError(await post('prodm', `/core/approvals/${sub.body.approvalId}/approve`, { signature: sig('APPROVED') }), 403, 'SEGREGATION_OF_DUTIES');
     expectError(await post('sm', `/core/approvals/${sub.body.approvalId}/approve`, { signature: sig('APPROVED') }), 403, 'FORBIDDEN');
     expect((await post('qam', `/core/approvals/${sub.body.approvalId}/approve`, { signature: sig('APPROVED') })).body.status).toBe('APPROVED');
-    expect((await get('qao', `/master/formulas/${ids.f1}`)).body.status).toBe('APPROVED');
+    expect((await get('prodm', `/master/formulas/${ids.f1}`)).body.status).toBe('APPROVED');
     expect(await history('master.master_formulas', ids.f1)).toEqual([
       '->DRAFT',
       'DRAFT>PENDING_APPROVAL',
@@ -443,17 +445,17 @@ describe('master formulas (versions, QA approval, one APPROVED per product)', ()
   });
 
   it('copies the latest version into version 2; approving it makes version 1 OBSOLETE', async () => {
-    const v2 = await post('qao', '/master/formulas', { productId: ids.product, notes: 'Lactose reduced' });
+    const v2 = await post('prodm', '/master/formulas', { productId: ids.product, notes: 'Lactose reduced' });
     expect(v2.body).toMatchObject({ version: 2, status: 'DRAFT', batchSize: '100.0000', notes: 'Lactose reduced' });
     expect(v2.body.lines.map((l: Body) => [l.itemCode, l.qtyPerBatch, l.assayBasis])).toEqual([
       ['API-PARA', '50.0000', 'DRIED'],
       ['EXC-MCC', '40.5000', null],
       ['EXC-LAC', '9.5000', null],
     ]);
-    const sub = await post('qao', `/master/formulas/${v2.body.id}/submit`);
+    const sub = await post('prodm', `/master/formulas/${v2.body.id}/submit`);
     await post('qam', `/core/approvals/${sub.body.approvalId}/approve`, { signature: sig('APPROVED') });
-    expect((await get('qao', `/master/formulas/${ids.f1}`)).body.status).toBe('OBSOLETE');
-    expect((await get('qao', `/master/formulas/${v2.body.id}`)).body.status).toBe('APPROVED');
+    expect((await get('prodm', `/master/formulas/${ids.f1}`)).body.status).toBe('OBSOLETE');
+    expect((await get('prodm', `/master/formulas/${v2.body.id}`)).body.status).toBe('APPROVED');
     const approved = await get('ceo', `/master/formulas?productId=${ids.product}&status=APPROVED`);
     expect(approved.body.items.map((f: Body) => f.version)).toEqual([2]);
   });
