@@ -136,7 +136,8 @@ Three status chains hold the system together: lot status (QC approves and reject
 
 | From | To | Who / trigger | Permission key | Condition |
 | --- | --- | --- | --- | --- |
-| (new) | QUARANTINE | GRN posted, or FG output recorded | (posting service) | Automatic; QC sample request created |
+| (new) | QUARANTINE | GRN posted (Storekeeper), or FG output recorded at packing (Production Supervisor / Operator) | `purch.grn.post` / `prod.stage.sign` | Automatic; QC sample request created. An FG lot starts at the provisional value of the materials issued to the batch so far (owner 2026-11-18, Q8) |
+| (new) | HOLD | Customer return received (Storekeeper / Warehouse Manager) | `fg.delivery.manage` | A new return lot linked to the original lot, numbered original + "-R" + sequence (e.g. `AP26-0001-R1`), at a returns area; never back into the released lot. Only QA moves it on (re-release or reject; keys set when M7 builds returns) (owner 2026-11-18, Q9) |
 | QUARANTINE | UNDER\_TEST | QC Analyst takes sample | `qc.result.enter` | — |
 | UNDER\_TEST | APPROVED | QC Manager, e-signature | `qc.lot.change_status` | All spec tests passed and reviewed |
 | UNDER\_TEST | REJECTED | QC Manager, e-signature | `qc.lot.change_status` | Any test failed; reason required |
@@ -148,7 +149,7 @@ Three status chains hold the system together: lot status (QC approves and reject
 | REJECTED | DESTROYED / RETURNED | Warehouse Manager, plus QA Manager witness e-signature | `inv.lot.dispose` + witness `qa.lot.witness` | Stock moved out, value written off or debit note |
 | QC APPROVED (FG only) | RELEASED | QA Manager via batch release | `qa.batch.release` | See batch release below |
 
-Only **APPROVED** material lots can be issued or reserved; only **RELEASED** FG lots can be picked for dispatch.
+Only **APPROVED** material lots can be issued or reserved; only **RELEASED** FG lots can be picked for dispatch, and an FG lot made by production is dispatched only after its batch is closed (`BATCH_NOT_CLOSED`, enforced in the service and the database; owner 2026-11-18, Q8).
 
 **Production order / batch** (`production_orders.status`):
 
@@ -157,7 +158,7 @@ Only **APPROVED** material lots can be issued or reserved; only **RELEASED** FG 
 | PLANNED | RELEASED | Planner | `prod.order.manage` | Master formula version APPROVED; every required material has enough APPROVED stock; stock reserved |
 | PLANNED | CANCELLED | Planner | `prod.order.manage` | Nothing issued |
 | RELEASED | IN\_PROCESS | System | (issue posting service) | First material issue posted |
-| IN\_PROCESS | AWAITING\_QA | Production Supervisor submits close (`prod.batch.close`, opens an approval step); Production Manager approves with e-signature | `prod.batch.approve_close` | All stages signed; yield and output recorded; FG lot created in QUARANTINE |
+| IN\_PROCESS | AWAITING\_QA | Production Supervisor submits close (`prod.batch.close`, opens an approval step); Production Manager approves with e-signature | `prod.batch.approve_close` | All stages signed; yield and output recorded (FG lot already created in QUARANTINE at output). In the same transaction as the close journal, a value-only adjustment adds conversion cost and the true-up to the FG lot and marks its batch closed (owner 2026-11-18, Q8) |
 | AWAITING\_QA | RELEASED\_FOR\_SALE | QA Manager, e-signature | `qa.batch.release` | FG lot QC APPROVED; no OPEN deviation on the batch; checklist complete |
 | AWAITING\_QA | REJECTED | QA Manager, e-signature | `qa.batch.release` | Reason required; FG lot set REJECTED |
 
@@ -197,7 +198,11 @@ About 80 tables in 9 groups, all in one PostgreSQL schema per module (`core`, `i
 
 ## 6. Inventory ledger and GL posting rules
 
-Every business event calls the inventory engine and the posting engine inside one transaction; if either fails, nothing is saved. Valuation is **lot-actual cost**: each lot carries its own unit cost (receipt price + allocated landed cost), and every issue, dispatch, adjustment and disposal is valued at that lot's cost. A movement is valued at qty × lot unit cost rounded half-up to 2 decimals; the movement that empties a lot takes the residual so the lot ends at exactly zero; an FG lot is booked at the exact batch cost; the inventory GL balance always equals the sum of the ledger movement values (owner decision 2026-11-18, "Rounding of stock values"; DB guard 0015). A lot with zero quantity always has zero value: if a movement or reversal leaves paisa on an empty lot, the posting engine sweeps them to the Rounding difference account in the same transaction (owner decision 2026-11-18, "Rounding sweep"; DB guard 0016). There is no item-level moving average; an item's average cost for reports is computed from its lots (decision 18-11-2026; Finance to confirm under IAS 2). Customer-owned (toll) material moves in the stock ledger at zero value and creates **no** journal entry.
+Every business event calls the inventory engine and the posting engine inside one transaction; if either fails, nothing is saved. Valuation is **lot-actual cost**: each lot carries its own unit cost (receipt price + allocated landed cost), and every issue, dispatch, adjustment and disposal is valued at that lot's cost. A movement is valued at qty × lot unit cost rounded half-up to 2 decimals; the movement that empties a lot takes the residual so the lot ends at exactly zero; an FG lot is booked at output at the given provisional value (unit cost = value ÷ quantity) and brought to the actual batch cost at batch close; the inventory GL balance always equals the sum of the ledger movement values (owner decision 2026-11-18, "Rounding of stock values"; DB guard 0015). A lot with zero quantity always has zero value: if a movement or reversal leaves paisa on an empty lot, the posting engine sweeps them to the Rounding difference account in the same transaction (owner decision 2026-11-18, "Rounding sweep"; DB guard 0016). There is no item-level moving average; an item's average cost for reports is computed from its lots (decision 18-11-2026; Finance to confirm under IAS 2). Customer-owned (toll) material moves in the stock ledger at zero value and creates **no** journal entry.
+
+**Value-only adjustment** (owner decision 2026-11-18, Q8; DB guard 0017): a ledger row `VALUE_ADJUSTMENT` with quantity 0 and no location changes a lot's value (never its stock) and resets the lot's unit cost to its new value ÷ quantity, rounded half-up. It is refused on a lot with zero quantity (`LOT_EMPTY`), when it would take the lot's value below zero (`LOT_VALUE_NEGATIVE`) and on customer-owned stock. Its reason decides its GL event: `BATCH_CLOSE` → FG cost adjustment; M3 landed cost reuses it with its own reason. A lot's unit cost changes only through such a row (checked at commit). Batch close is final: neither the adjustment nor the batch's output is reversed afterwards.
+
+**FG lot valuation** (owner decision 2026-11-18, Q8, Option A): the FG lot is created in QUARANTINE when output is recorded at packing, valued at the actual cost of the materials issued to the batch so far. At batch close the difference between the actual batch cost and the value booked at output (conversion + true-up) is added to the lot as a value-only adjustment, in the same transaction as the close journal; stock that left the lot before close (e.g. samples) keeps its provisional value, and the adjustment applies to the stock still held.
 
 Accounts are not hard-coded: `posting_rules` maps (event, account role, item category) to an account, so Finance can change the chart without code. Each event uses the account roles listed in `PostingEventRoles` (`packages/shared/src/enums.ts`); a rule with no item category is the default for every category. Journal entries are created DRAFT and posted only when balanced (≥ 2 lines, debits = credits); posted lines never change (decisions 18-11-2026, M2 task 4).
 
@@ -210,8 +215,10 @@ Accounts are not hard-coded: `posting_rules` maps (event, account role, item cat
 | Material issued to batch | − lot, + batch WIP | WIP (production order) | Inventory |
 | Material returned from floor | + lot | Inventory | WIP |
 | Conversion absorbed at batch close | — | WIP | Labour absorbed; Machine overhead absorbed |
-| FG output recorded | + FG lot in QUARANTINE at actual batch cost | FG inventory | WIP |
-| Dispatch posted | − FG lot | Cost of goods sold | FG inventory |
+| FG output recorded | + FG lot in QUARANTINE at the provisional value (materials issued so far) | FG inventory | WIP |
+| FG cost adjustment at batch close (owner Q8) | Value-only row: lot value + (actual batch cost − value booked at output) | FG inventory (WIP if the batch cost is lower) | WIP (FG inventory if lower) |
+| Dispatch posted | − FG lot (batch closed) | Cost of goods sold | FG inventory |
+| Customer return received — `SALES_RETURN_RECEIPT` (owner Q9) | + new return lot in HOLD at a returns area; value = original lot's unit cost × returned qty, same rounding (reverses the COGS taken at dispatch). Toll stock: zero value, no journal | FG inventory | Cost of goods sold |
 | Sales invoice (own product) | — | Accounts receivable | Sales revenue; Output sales tax |
 | Sales invoice (toll conversion) | — | Accounts receivable | Conversion revenue; Output sales tax |
 | Customer receipt | — | Bank; WHT receivable (deducted by customer) | Accounts receivable |
@@ -283,7 +290,7 @@ Each module below lists its screens and the rules its services must enforce; end
 ### 7.9 Finished Goods and Dispatch
 
 - Screens: delivery orders from sales orders, FEFO pick list, pick by scan, gate pass, proof of delivery, returns receipt.
-- Rules: only RELEASED FG lots; dispatch posting creates the stock move, the COGS entry and the sales invoice draft; returns go to QUARANTINE.
+- Rules: only RELEASED FG lots; dispatch posting creates the stock move, the COGS entry and the sales invoice draft; returns go into a new HOLD return lot linked to the original lot, at a returns area, valued at the original unit cost (§4, §6; owner 2026-11-18, Q9); the credit note (revenue, tax, receivable) is the sales module's.
 
 ### 7.10 Finance
 

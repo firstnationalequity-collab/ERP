@@ -25,6 +25,7 @@ import {
   type PermissionKey,
   type PostingEvent,
   type StockMovementType,
+  type ValueAdjustmentReason,
 } from '@albert/shared';
 import type { Tx } from '../../db/client';
 import { AppError, fromDbError } from '../../core/errors';
@@ -43,35 +44,54 @@ export const SYSTEM_JOURNAL_SERIES = 'SJ';
  * must hold it (rule 7: every move names its key). Architecture §4: "Each module's map lists its keys when that
  * module is built" — events of later milestones (landed cost, invoices, payments, receipts, conversion) are
  * added with their module. ROUNDING_DIFFERENCE is posted with the key of the movements that left the paisa.
- * Agent default — PENDING OWNER (decisions.md, M2 task 7); FG_OUTPUT follows open question 8.
+ * Owner — confirmed 2026-11-18 (each key checked against docs/roles.md): FG_OUTPUT is the output-recording key
+ * (Q8), FG_COST_ADJUSTMENT the batch-close key, SALES_RETURN_RECEIPT the returns-receipt key (Q9).
  */
 export const JournalPostingKeys: Readonly<Partial<Record<PostingEvent, PermissionKey>>> = {
   GRN_RECEIPT: 'purch.grn.post',
   MATERIAL_ISSUE: 'inv.movement.post',
   MATERIAL_RETURN: 'inv.movement.post',
-  FG_OUTPUT: 'prod.batch.approve_close',
+  FG_OUTPUT: 'prod.stage.sign',
+  FG_COST_ADJUSTMENT: 'prod.batch.approve_close',
   DISPATCH: 'fg.dispatch.post',
+  SALES_RETURN_RECEIPT: 'fg.delivery.manage',
   STOCK_ADJUSTMENT: 'inv.adjustment.approve',
   LOT_DESTROYED: 'inv.lot.dispose',
   LOT_RETURNED: 'inv.lot.dispose',
 };
 
+type Posting = { event: PostingEvent; counter: AccountRole };
+
 /**
  * Stock movement type → posting event and the account role on the other side of INVENTORY (architecture §6).
- * Not here: transfers (no journal) and SALES_RETURN (§6 has no posting rule for it yet; refused until defined).
+ * Not here: transfers (no journal) and VALUE_ADJUSTMENT (its event follows its reason: ValueAdjustmentPosting).
  */
-export const StockMovementPosting: Readonly<Partial<Record<StockMovementType, { event: PostingEvent; counter: AccountRole }>>> = {
+export const StockMovementPosting: Readonly<Partial<Record<StockMovementType, Posting>>> = {
   RECEIPT: { event: 'GRN_RECEIPT', counter: 'GRNI' },
   ISSUE: { event: 'MATERIAL_ISSUE', counter: 'WIP' },
   ISSUE_RETURN: { event: 'MATERIAL_RETURN', counter: 'WIP' },
   OUTPUT: { event: 'FG_OUTPUT', counter: 'WIP' },
   DISPATCH: { event: 'DISPATCH', counter: 'COGS' },
+  SALES_RETURN: { event: 'SALES_RETURN_RECEIPT', counter: 'COGS' },
   ADJUSTMENT_IN: { event: 'STOCK_ADJUSTMENT', counter: 'INVENTORY_GAIN' },
   ADJUSTMENT_OUT: { event: 'STOCK_ADJUSTMENT', counter: 'INVENTORY_LOSS' },
   DESTROY: { event: 'LOT_DESTROYED', counter: 'REJECTION_WRITE_OFF' },
   RETURN_TO_VENDOR: { event: 'LOT_RETURNED', counter: 'ACCOUNTS_PAYABLE' },
   ROUNDING_SWEEP: { event: 'ROUNDING_DIFFERENCE', counter: 'ROUNDING_DIFFERENCE' },
 };
+
+/** VALUE_ADJUSTMENT reason → posting event and counter role (owner Q8, 2026-11-18). M3 adds LANDED_COST. */
+export const ValueAdjustmentPosting: Readonly<Record<ValueAdjustmentReason, Posting>> = {
+  BATCH_CLOSE: { event: 'FG_COST_ADJUSTMENT', counter: 'WIP' },
+};
+
+/** The event and counter role of one movement (undefined: no posting rule). */
+export function movementPosting(m: Pick<PostedMovement, 'movementType' | 'reasonCode'>): Posting | undefined {
+  if (m.movementType === 'VALUE_ADJUSTMENT') {
+    return ValueAdjustmentPosting[m.reasonCode as ValueAdjustmentReason];
+  }
+  return StockMovementPosting[m.movementType];
+}
 
 const journalMaps = new Map<PermissionKey, TransitionMap<PostingStatus>>();
 /** One complete map per key, so each move names exactly one key (as for lot creation in engines/inventory). */
@@ -263,7 +283,7 @@ export async function postStockJournal(tx: Tx, actor: Actor, input: StockJournal
       throw new AppError('VALIDATION_FAILED', 'Transfers move value between locations and post no journal');
     }
     if (m.movementType === 'ROUNDING_SWEEP') throw new AppError('VALIDATION_FAILED', 'Rounding sweeps are posted by the sweep itself');
-    if (!StockMovementPosting[m.movementType]) {
+    if (!movementPosting(m)) {
       throw new AppError('VALIDATION_FAILED', `No posting rule is defined for ${m.movementType} movements (architecture §6)`, {
         movementType: m.movementType,
       });
@@ -337,7 +357,7 @@ export async function reverseStockJournal(tx: Tx, actor: Actor, input: ReverseSt
 const hasValue = (m: PostedMovement) => !m.customerOwned && !new Decimal(m.value).isZero();
 
 function oneEvent(movements: readonly PostedMovement[]): PostingEvent {
-  const events = [...new Set(movements.map((m) => StockMovementPosting[m.movementType]?.event))];
+  const events = [...new Set(movements.map((m) => movementPosting(m)?.event))];
   const [event] = events;
   if (events.length !== 1 || !event) {
     throw new AppError('VALIDATION_FAILED', 'One journal posts one event; post these movements separately', { events });
@@ -368,7 +388,7 @@ function stockLines(movements: readonly PostedMovement[], dims: LineDimensions =
   };
   for (const m of movements) {
     if (!hasValue(m)) continue;
-    const { counter } = StockMovementPosting[m.movementType]!;
+    const { counter } = movementPosting(m)!;
     const v = new Decimal(m.value);
     const into = v.gt(0);
     add('INVENTORY', m.itemCategoryId, into ? 'debit' : 'credit', v.abs(), {});

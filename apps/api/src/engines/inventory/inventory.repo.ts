@@ -38,6 +38,45 @@ export async function lotLedgerTotals(q: Queryable, lotId: string): Promise<{ qt
   return row ?? { qty: '0', value: '0' };
 }
 
+/** Sets a lot's unit cost (only with the VALUE_ADJUSTMENT row that justifies it; DB check at commit, 0017). */
+export async function setLotUnitCost(tx: Tx, lotId: string, unitCost: string): Promise<void> {
+  await tx.update(lots).set({ unitCost }).where(eq(lots.id, lotId));
+}
+
+/** Marks a production lot's batch closed (once; DB guard 0017). */
+export async function markBatchClosed(tx: Tx, lotId: string): Promise<LotRow> {
+  const [row] = await tx.update(lots).set({ batchClosedAt: sql`now()` }).where(eq(lots.id, lotId)).returning();
+  if (!row) throw new Error('lot update returned no row');
+  return row;
+}
+
+/** Return lots of an original lot (their numbers give the next "-R" sequence). */
+export async function returnLotsOf(q: Queryable, parentLotId: string): Promise<LotRow[]> {
+  return q.select().from(lots).where(eq(lots.parentLotId, parentLotId)).orderBy(asc(lots.id));
+}
+
+/** Net quantity dispatched from an original lot and its return lots, and net quantity returned into its return lots. */
+export async function dispatchedAndReturned(q: Queryable, parentLotId: string): Promise<{ dispatched: string; returned: string }> {
+  const [row] = await q
+    .select({
+      dispatched: sql<string>`COALESCE(-sum(${stockMovements.qty}) FILTER (WHERE ${stockMovements.movementType} = 'DISPATCH'), 0)::text`,
+      returned: sql<string>`COALESCE(sum(${stockMovements.qty}) FILTER (WHERE ${stockMovements.movementType} = 'SALES_RETURN'), 0)::text`,
+    })
+    .from(stockMovements)
+    .innerJoin(lots, eq(lots.id, stockMovements.lotId))
+    .where(sql`(${lots.id} = ${parentLotId} OR ${lots.parentLotId} = ${parentLotId})`);
+  return row ?? { dispatched: '0', returned: '0' };
+}
+
+/** Sum of a lot's OUTPUT rows (with their reversals): the provisional value booked at output. */
+export async function outputValue(q: Queryable, lotId: string): Promise<string> {
+  const [row] = await q
+    .select({ v: sql<string>`COALESCE(sum(${stockMovements.value}), 0)::text` })
+    .from(stockMovements)
+    .where(and(eq(stockMovements.lotId, lotId), eq(stockMovements.movementType, 'OUTPUT')));
+  return row?.v ?? '0';
+}
+
 /** The lot's balance rows, locked FOR UPDATE. */
 export async function lockBalances(tx: Tx, lotId: string): Promise<{ locationId: string; qty: string }[]> {
   return tx

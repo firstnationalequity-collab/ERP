@@ -1,6 +1,10 @@
 // engines/inventory — every stock change goes through here (CLAUDE.md "Code layout"; architecture §4–§6).
 //
 //  - createLot():          a new lot in QUARANTINE, through core/transition (rule 7).
+//  - createReturnLot():    a customer-return lot in HOLD, linked to the original lot, "<lot>-R<n>" (owner Q9).
+//  - postValueAdjustment(): value-only VALUE_ADJUSTMENT row; resets the lot's unit cost (owner Q8; 0017).
+//  - closeBatchCost():     at batch close, the adjustment that brings an FG lot to the batch cost; marks the
+//                          batch closed so the lot may be dispatched (owner Q8; 0017).
 //  - postMovement():       one ledger row (receipt, issue, output, dispatch, adjustment, destroy, return ...),
 //                          valued at the lot's cost with the owner's rounding rules (valuation.ts).
 //  - transfer():           TRANSFER_OUT + TRANSFER_IN pair, value moves with the stock.
@@ -19,6 +23,8 @@ import { Decimal } from 'decimal.js';
 import {
   InboundMovementTypes,
   LotStatus,
+  ValueAdjustmentReason,
+  type LotSource,
   type PermissionKey,
   type StockMovementType,
 } from '@albert/shared';
@@ -26,7 +32,7 @@ import type { Queryable, Tx } from '../../db/client';
 import type { stockMovements } from '../../db/schema/inv';
 import { AppError, fromDbError } from '../../core/errors';
 import { defineTransitions, recordInitialStatus, type Actor, type TransitionMap } from '../../core/transition/transition';
-import { assertStockLocation, assertTollCustomer, stockItem } from '../../modules/masters/stock-refs.service';
+import { assertReturnsArea, assertStockLocation, assertTollCustomer, stockItem } from '../../modules/masters/stock-refs.service';
 import * as repo from './inventory.repo';
 import { money, movementValue, quantity } from './valuation';
 
@@ -35,15 +41,19 @@ import { money, movementValue, quantity } from './valuation';
 export const LOT_TABLE = 'inv.lots';
 
 /**
- * Who may create a lot (architecture §4: "(new) → QUARANTINE: GRN posted, or FG output recorded (posting service)").
- * Each source has its own complete map so the key for the move is fixed per source.
- * PRODUCTION_OUTPUT → prod.batch.approve_close: agent default, PENDING OWNER (M6 confirms).
+ * Who may create a lot, and in which status (architecture §4: "(new) → QUARANTINE: GRN posted, or FG output
+ * recorded"; owner 2026-11-18). Each source has its own complete map so the key for the move is fixed per source.
+ *  - GRN → purch.grn.post (Storekeeper).
+ *  - PRODUCTION_OUTPUT → prod.stage.sign ("record yield": output recorded at packing, owner Q8).
+ *  - SALES_RETURN → fg.delivery.manage ("returns receipt"), created in HOLD (owner Q9).
  */
 export const LotCreationKeys = {
   GRN: 'purch.grn.post',
-  PRODUCTION_OUTPUT: 'prod.batch.approve_close',
-} as const satisfies Record<string, PermissionKey>;
-export type LotSource = keyof typeof LotCreationKeys;
+  PRODUCTION_OUTPUT: 'prod.stage.sign',
+  SALES_RETURN: 'fg.delivery.manage',
+} as const satisfies Record<LotSource, PermissionKey>;
+
+const initialLotStatus = (source: LotSource): LotStatus => (source === 'SALES_RETURN' ? 'HOLD' : 'QUARANTINE');
 
 const lotCreationMaps = Object.fromEntries(
   Object.entries(LotCreationKeys).map(([source, key]) => [
@@ -51,13 +61,17 @@ const lotCreationMaps = Object.fromEntries(
     defineTransitions<LotStatus>({
       entityTable: LOT_TABLE,
       statuses: LotStatus,
-      moves: [{ from: null, to: 'QUARANTINE', permission: key }],
+      moves: [{ from: null, to: initialLotStatus(source as LotSource), permission: key }],
     }),
   ]),
 ) as Record<LotSource, TransitionMap<LotStatus>>;
 
+/** Batch close (architecture §4, Production Manager e-signature): the key that closes an FG lot's cost. */
+export const BATCH_CLOSE_KEY: PermissionKey = 'prod.batch.approve_close';
+
 export interface NewLot {
-  source: LotSource;
+  /** SALES_RETURN lots are made by createReturnLot(). */
+  source: Exclude<LotSource, 'SALES_RETURN'>;
   itemId: string;
   lotNo: string;
   mfrBatchNo?: string;
@@ -69,13 +83,16 @@ export interface NewLot {
   waterPct?: string;
   /** Set for customer-owned (toll) stock: unit cost must be 0 (rule 12). */
   ownerCustomerId?: string;
-  /** Lot-actual cost per base unit, 2 decimals. FG lots: fgUnitCost(batchCost, qty). */
+  /** Lot-actual cost per base unit, 2 decimals. FG lots: fgUnitCost(provisional output value, qty) (owner Q8). */
   unitCost: string;
 }
 
 export type Lot = repo.LotRow;
 
 export async function createLot(tx: Tx, actor: Actor, input: NewLot): Promise<Lot> {
+  if ((input.source as LotSource) === 'SALES_RETURN') {
+    throw new AppError('VALIDATION_FAILED', 'A customer-return lot is created with createReturnLot()');
+  }
   const map = lotCreationMaps[input.source];
   if (!map) throw new AppError('VALIDATION_FAILED', `Unknown lot source ${String(input.source)}`);
   assertMoney(input.unitCost, 'Unit cost');
@@ -104,9 +121,58 @@ export async function createLot(tx: Tx, actor: Actor, input: NewLot): Promise<Lo
       ownerType: input.ownerCustomerId === undefined ? 'OWN' : 'CUSTOMER',
       ownerCustomerId: input.ownerCustomerId ?? null,
       unitCost: money(input.unitCost),
+      source: input.source,
     }),
   );
   await recordInitialStatus(tx, map, { entityId: lot.id, to: 'QUARANTINE', actor });
+  return lot;
+}
+
+export interface NewReturnLot {
+  /** The lot the goods were dispatched from (if a return lot is named, its original lot is used). */
+  originalLotId: string;
+}
+
+/**
+ * A customer return never goes back into the released lot (owner 2026-11-18, Q9): a new lot linked to the
+ * original, numbered "<original>-R<n>", with the original's item, owner, dates, assay and unit cost, created in
+ * HOLD; only QA moves it on. The SALES_RETURN movement then receives the goods into it at a returns area.
+ */
+export async function createReturnLot(tx: Tx, actor: Actor, input: NewReturnLot): Promise<Lot> {
+  // Permission first, so nothing is written for an actor without the key.
+  if (!actor.permissions.has(LotCreationKeys.SALES_RETURN)) {
+    throw new AppError('FORBIDDEN', `Receiving a customer return needs ${LotCreationKeys.SALES_RETURN}`, { permission: LotCreationKeys.SALES_RETURN });
+  }
+  const named = await lockLotOrFail(tx, actor.companyId, input.originalLotId);
+  const original = named.parentLotId ? await lockLotOrFail(tx, actor.companyId, named.parentLotId) : named;
+  const item = await stockItem(tx, actor.companyId, original.itemId);
+  if (item.type !== 'FG') {
+    throw new AppError('VALIDATION_FAILED', `Lot ${original.lotNo} is not finished goods; customer returns are finished-goods lots`);
+  }
+  const prefix = `${original.lotNo}-R`;
+  const used = (await repo.returnLotsOf(tx, original.id)).map((l) => Number(l.lotNo.slice(prefix.length))).filter(Number.isInteger);
+  const lotNo = `${prefix}${Math.max(0, ...used) + 1}`;
+  if (lotNo.length > 40) throw new AppError('VALIDATION_FAILED', `Return lot number ${lotNo} is longer than 40 characters`);
+  const lot = await guarded(() =>
+    repo.insertLot(tx, {
+      itemId: original.itemId,
+      lotNo,
+      mfrBatchNo: original.mfrBatchNo,
+      manufacturer: original.manufacturer,
+      mfgDate: original.mfgDate,
+      expiryDate: original.expiryDate,
+      retestDate: original.retestDate,
+      assayPct: original.assayPct,
+      waterPct: original.waterPct,
+      status: 'HOLD',
+      ownerType: original.ownerType,
+      ownerCustomerId: original.ownerCustomerId,
+      unitCost: original.unitCost,
+      source: 'SALES_RETURN',
+      parentLotId: original.id,
+    }),
+  );
+  await recordInitialStatus(tx, lotCreationMaps.SALES_RETURN, { entityId: lot.id, to: 'HOLD', actor });
   return lot;
 }
 
@@ -127,7 +193,7 @@ export interface PostedMovement {
   lotNo: string;
   itemId: string;
   itemCategoryId: string;
-  /** null only for a ROUNDING_SWEEP row (value only, no stock moved). */
+  /** null only for a value-only row (ROUNDING_SWEEP, VALUE_ADJUSTMENT): no stock moved. */
   locationId: string | null;
   /** Signed: + in, − out. */
   qty: string;
@@ -138,6 +204,8 @@ export interface PostedMovement {
   customerOwned: boolean;
   refDocType: string;
   refDocId: string;
+  /** VALUE_ADJUSTMENT: its ValueAdjustmentReason, which decides the GL event. */
+  reasonCode: string | null;
   reversalOf: string | null;
 }
 
@@ -150,7 +218,7 @@ export interface DocumentRef {
 type TransferType = 'TRANSFER_OUT' | 'TRANSFER_IN';
 
 export interface MovementInput extends DocumentRef {
-  type: Exclude<StockMovementType, TransferType | 'ROUNDING_SWEEP'>;
+  type: Exclude<StockMovementType, TransferType | 'ROUNDING_SWEEP' | 'VALUE_ADJUSTMENT'>;
   lotId: string;
   locationId: string;
   /** Quantity moved, > 0, up to 4 decimals; the engine signs it by type. */
@@ -158,7 +226,7 @@ export interface MovementInput extends DocumentRef {
   /** Business date; must fall in an OPEN period (rule 11). */
   date: string;
   reasonCode?: string;
-  /** OUTPUT only: the exact batch cost of this output (owner decision 2026-11-18). */
+  /** OUTPUT only: the provisional value = cost of the materials issued to the batch so far (owner Q8, 2026-11-18). */
   value?: string;
   /** Outbound only: consume this document's reservation on the lot (up to qty). */
   consumeReservation?: DocumentRef;
@@ -174,6 +242,9 @@ export async function postMovement(tx: Tx, actor: Actor, input: MovementInput): 
   if (requested === 'ROUNDING_SWEEP') {
     throw new AppError('VALIDATION_FAILED', 'A rounding sweep is written only by the posting engine (sweepEmptyLot)');
   }
+  if (requested === 'VALUE_ADJUSTMENT') {
+    throw new AppError('VALIDATION_FAILED', 'A value-only adjustment is posted with postValueAdjustment()');
+  }
   assertQty(input.qty);
   assertDate(input.date);
   assertDocument(input);
@@ -185,6 +256,7 @@ export async function postMovement(tx: Tx, actor: Actor, input: MovementInput): 
   assertLotAllows(input.type, lot);
   await assertStockLocation(tx, actor.companyId, input.locationId, inbound);
   const qty = inbound ? new Decimal(input.qty) : new Decimal(input.qty).neg();
+  if (input.type === 'SALES_RETURN') await assertReturnable(tx, actor, lot, input.locationId, qty);
 
   if (!inbound) await assertCanTakeOut(tx, lot, input.locationId, qty.neg(), input.consumeReservation);
   const totals = await repo.lotLedgerTotals(tx, lot.id);
@@ -289,6 +361,9 @@ export async function reverseMovements(tx: Tx, actor: Actor, input: ReversalInpu
   for (const m of originals) {
     if (m.reversalOf) throw new AppError('VALIDATION_FAILED', `Movement ${m.id} is itself a reversal; post a new movement instead`);
     if (m.movementType === 'ROUNDING_SWEEP') throw new AppError('VALIDATION_FAILED', `Movement ${m.id} is a rounding sweep; it is never reversed`);
+    if (m.movementType === 'VALUE_ADJUSTMENT') {
+      throw new AppError('VALIDATION_FAILED', `Movement ${m.id} is a value adjustment; it is not reversed (batch close is final; M3 defines landed-cost corrections)`);
+    }
   }
   const already = await repo.reversalsOf(tx, ids);
   if (already.length > 0) throw new AppError('INVALID_TRANSITION', `Movement ${already.join(', ')} is already reversed`, { movementIds: already });
@@ -299,6 +374,9 @@ export async function reverseMovements(tx: Tx, actor: Actor, input: ReversalInpu
     const lot = await lockLotOrFail(tx, actor.companyId, lotId);
     if (lot.status === 'DESTROYED' || lot.status === 'RETURNED') {
       throw new AppError('INVALID_TRANSITION', `Lot ${lot.lotNo} is ${lot.status}; it never moves again`);
+    }
+    if (lot.batchClosedAt && originals.some((m) => m.lotId === lotId && m.movementType === 'OUTPUT')) {
+      throw new AppError('INVALID_TRANSITION', `Lot ${lot.lotNo}'s batch is closed; its output is not reversed`);
     }
     lots.set(lotId, lot);
   }
@@ -337,6 +415,121 @@ export async function reverseMovements(tx: Tx, actor: Actor, input: ReversalInpu
 export async function movementDocuments(q: Queryable, companyId: string, ids: string[]): Promise<Map<string, DocumentRef>> {
   const rows = await repo.findMovements(q, companyId, [...new Set(ids)]);
   return new Map(rows.map((m) => [m.id, { refDocType: m.refDocType, refDocId: m.refDocId }]));
+}
+
+export interface ValueAdjustmentInput extends DocumentRef {
+  lotId: string;
+  /** Signed amount, 2 decimals, not zero: + raises the lot's value, − lowers it. */
+  value: string;
+  /** Why: decides the GL event (engines/posting ValueAdjustmentPosting). */
+  reason: ValueAdjustmentReason;
+  /** Business date; must fall in an OPEN period (rule 11). */
+  date: string;
+}
+
+/**
+ * Value-only adjustment (owner 2026-11-18, Q8): a VALUE_ADJUSTMENT row (qty 0, no location) carrying the amount,
+ * and the lot's unit cost reset to its new value ÷ quantity (rounded half-up). Own stock only (rule 12); refused on
+ * a lot with zero quantity (LOT_EMPTY) and when it would take the lot's value below zero (LOT_VALUE_NEGATIVE).
+ * The caller posts its journal with postStockJournal in the same transaction (rule 5).
+ */
+export async function postValueAdjustment(tx: Tx, actor: Actor, input: ValueAdjustmentInput): Promise<PostedMovement> {
+  assertDate(input.date);
+  assertDocument(input);
+  if (!ValueAdjustmentReason.includes(input.reason)) {
+    throw new AppError('VALIDATION_FAILED', `Unknown value adjustment reason ${String(input.reason)}`);
+  }
+  if (!/^-?\d{1,16}(\.\d{1,2})?$/.test(input.value) || new Decimal(input.value).isZero()) {
+    throw new AppError('VALIDATION_FAILED', `An adjustment is a non-zero amount with at most 2 decimals (got "${input.value}")`);
+  }
+  const lot = await lockLotOrFail(tx, actor.companyId, input.lotId);
+  const details = { lotId: lot.id, lotNo: lot.lotNo };
+  if (lot.ownerType === 'CUSTOMER') {
+    throw new AppError('VALIDATION_FAILED', `Lot ${lot.lotNo} is customer-owned and carries no value (rule 12)`, details);
+  }
+  if (lot.status === 'DESTROYED' || lot.status === 'RETURNED') {
+    throw new AppError('INVALID_TRANSITION', `Lot ${lot.lotNo} is ${lot.status}; it never moves again`, details);
+  }
+  if (input.reason === 'BATCH_CLOSE' && (lot.source !== 'PRODUCTION_OUTPUT' || lot.batchClosedAt)) {
+    throw new AppError('INVALID_TRANSITION', `The batch-close adjustment applies once, to a production lot whose batch is not closed (lot ${lot.lotNo})`, details);
+  }
+  const totals = await repo.lotLedgerTotals(tx, lot.id);
+  const lotQty = new Decimal(totals.qty);
+  const adjustment = new Decimal(input.value);
+  const newValue = new Decimal(totals.value).plus(adjustment);
+  if (lotQty.lte(0)) {
+    throw new AppError('LOT_EMPTY', `Lot ${lot.lotNo} holds no stock; its value is not adjusted`, details);
+  }
+  if (newValue.lt(0)) {
+    throw new AppError('LOT_VALUE_NEGATIVE', `Lot ${lot.lotNo} holds ${money(totals.value)}; an adjustment of ${money(adjustment)} would take it below zero`, {
+      ...details,
+      lotValue: money(totals.value),
+      adjustment: money(adjustment),
+    });
+  }
+  const unitCost = money(newValue.div(lotQty));
+  if (unitCost !== money(lot.unitCost)) await repo.setLotUnitCost(tx, lot.id, unitCost);
+  return insertRow(tx, actor, { ...lot, unitCost }, {
+    movementType: 'VALUE_ADJUSTMENT',
+    movementDate: input.date,
+    lotId: lot.id,
+    fromLocationId: null,
+    toLocationId: null,
+    qty: quantity(0),
+    unitCost,
+    value: money(adjustment),
+    refDocType: input.refDocType,
+    refDocId: input.refDocId,
+    reasonCode: input.reason,
+  });
+}
+
+export interface BatchCloseCostInput extends DocumentRef {
+  /** The FG lot made by the batch's output. */
+  lotId: string;
+  /** Actual batch cost (architecture §6): materials net of returns + conversion, 2 decimals. */
+  batchCost: string;
+  date: string;
+}
+
+export interface BatchCloseCost {
+  lot: Lot;
+  /** The adjustment row (null when the output was already booked at exactly the batch cost). */
+  adjustment: PostedMovement | null;
+}
+
+/**
+ * Batch close (owner 2026-11-18, Q8): the FG lot was booked at output at a provisional value; this adds the
+ * difference to the actual batch cost (conversion + true-up) as a value-only adjustment on the stock still held
+ * (samples issued before close keep their provisional value) and marks the batch closed, after which the lot may
+ * be dispatched. The caller posts the conversion journal and this adjustment's journal (postStockJournal) in the
+ * same transaction. Needs the batch-close key.
+ */
+export async function closeBatchCost(tx: Tx, actor: Actor, input: BatchCloseCostInput): Promise<BatchCloseCost> {
+  if (!actor.permissions.has(BATCH_CLOSE_KEY)) {
+    throw new AppError('FORBIDDEN', `Closing a batch needs ${BATCH_CLOSE_KEY}`, { permission: BATCH_CLOSE_KEY });
+  }
+  assertMoney(input.batchCost, 'Batch cost');
+  assertDate(input.date);
+  assertDocument(input);
+  const lot = await lockLotOrFail(tx, actor.companyId, input.lotId);
+  if (lot.source !== 'PRODUCTION_OUTPUT') {
+    throw new AppError('VALIDATION_FAILED', `Lot ${lot.lotNo} was not made by production`, { lotId: lot.id });
+  }
+  if (lot.batchClosedAt) throw new AppError('INVALID_TRANSITION', `Lot ${lot.lotNo}'s batch is already closed`, { lotId: lot.id });
+  const difference = new Decimal(input.batchCost).minus(await repo.outputValue(tx, lot.id));
+  const adjustment = difference.isZero()
+    ? null
+    : await postValueAdjustment(tx, actor, {
+        lotId: lot.id,
+        value: money(difference),
+        reason: 'BATCH_CLOSE',
+        date: input.date,
+        refDocType: input.refDocType,
+        refDocId: input.refDocId,
+      });
+  const closed = await guarded(() => repo.markBatchClosed(tx, lot.id));
+  return { lot: closed, adjustment };
 }
 
 export interface SweepInput extends DocumentRef {
@@ -586,11 +779,20 @@ async function lockLotOrFail(tx: Tx, companyId: string, lotId: string): Promise<
   return lot;
 }
 
+const InboundSource: Partial<Record<StockMovementType, LotSource>> = { RECEIPT: 'GRN', OUTPUT: 'PRODUCTION_OUTPUT', SALES_RETURN: 'SALES_RETURN' };
+
 /** The lot status table (architecture §4) and rule 2, checked before the database checks them again. */
 function assertLotAllows(type: StockMovementType, lot: repo.LotRow): void {
   const details = { lotId: lot.id, lotNo: lot.lotNo, status: lot.status, movementType: type };
   if (lot.status === 'DESTROYED' || lot.status === 'RETURNED') {
     throw new AppError('INVALID_TRANSITION', `Lot ${lot.lotNo} is ${lot.status}; it never moves again`, details);
+  }
+  const source = InboundSource[type];
+  if (source && lot.source !== source) {
+    throw new AppError('VALIDATION_FAILED', `A ${type} goes into a lot made for it (lot ${lot.lotNo} comes from ${lot.source})`, details);
+  }
+  if (type === 'SALES_RETURN' && lot.status !== 'HOLD') {
+    throw new AppError('VALIDATION_FAILED', `A customer return enters its return lot while it is on HOLD (lot ${lot.lotNo} is ${lot.status})`, details);
   }
   if (type === 'DESTROY' || type === 'RETURN_TO_VENDOR') {
     if (lot.status !== 'REJECTED') {
@@ -606,6 +808,9 @@ function assertLotAllows(type: StockMovementType, lot: repo.LotRow): void {
   }
   if (type === 'DISPATCH' && lot.status !== 'RELEASED') {
     throw new AppError('LOT_NOT_RELEASED', `Lot ${lot.lotNo} is ${lot.status}; only RELEASED finished goods are dispatched`, details);
+  }
+  if (type === 'DISPATCH' && lot.source === 'PRODUCTION_OUTPUT' && !lot.batchClosedAt) {
+    throw new AppError('BATCH_NOT_CLOSED', `Lot ${lot.lotNo}'s batch is not closed; it is dispatched after batch close`, details);
   }
   if ((type === 'RECEIPT' || type === 'OUTPUT') && lot.status !== 'QUARANTINE') {
     throw new AppError('VALIDATION_FAILED', `Received and produced stock enters a QUARANTINE lot (lot ${lot.lotNo} is ${lot.status})`, details);
@@ -643,6 +848,20 @@ async function assertCanTakeOut(tx: Tx, lot: repo.LotRow, locationId: string, qt
       reserved: quantity(reserved),
       requested: quantity(qty),
     });
+  }
+}
+
+/** A customer return: into a returns area, never more than was dispatched from the original lot and its return lots. */
+async function assertReturnable(tx: Tx, actor: Actor, lot: repo.LotRow, locationId: string, qty: Decimal): Promise<void> {
+  await assertReturnsArea(tx, actor.companyId, locationId);
+  if (!lot.parentLotId) throw new AppError('VALIDATION_FAILED', `Lot ${lot.lotNo} is not a return lot`);
+  const { dispatched, returned } = await repo.dispatchedAndReturned(tx, lot.parentLotId);
+  if (new Decimal(returned).plus(qty).gt(dispatched)) {
+    throw new AppError(
+      'RETURN_EXCEEDS_DISPATCH',
+      `${quantity(dispatched)} was dispatched from this lot and ${quantity(returned)} already returned; ${quantity(qty)} more cannot be received`,
+      { lotId: lot.id, dispatched: quantity(dispatched), returned: quantity(returned), requested: quantity(qty) },
+    );
   }
 }
 
@@ -689,6 +908,7 @@ async function insertRow(
     customerOwned: lot.ownerType === 'CUSTOMER',
     refDocType: m.refDocType,
     refDocId: m.refDocId,
+    reasonCode: m.reasonCode,
     reversalOf: m.reversalOf,
   };
 }

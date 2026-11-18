@@ -32,6 +32,7 @@ import {
   LotStatus,
   StockOwner,
   StockMovementType,
+  LotSource,
 } from '@albert/shared';
 import { databaseUrl } from '../config/env';
 
@@ -48,7 +49,8 @@ async function checkValues(qualified: string, column: string): Promise<string[]>
     qualified.includes('.') ? qualified.split('.') : ['core', qualified],
   );
   // e.g. CHECK ((status = ANY (ARRAY['OPEN'::text, 'CLOSED'::text])))
-  const own = rows.map((r) => r.def).find((d) => new RegExp(`\\(\\(?${column} = ANY \\(ARRAY\\[`).test(d));
+  // Anchored at the start, so a CHECK that only mentions the column inside a CASE or an OR is not taken for its list.
+  const own = rows.map((r) => r.def).find((d) => new RegExp(`^CHECK \\(\\(?${column} = ANY \\(ARRAY\\[`).test(d));
   if (!own) throw new Error(`No IN-list CHECK on ${qualified}.${column}`);
   return [...own.matchAll(/'([^']+)'::text/g)].map((m) => m[1]!).sort();
 }
@@ -85,6 +87,7 @@ const cases: [string, string, readonly string[]][] = [
   ['fin.journal_entries', 'status', PostingStatus],
   ['inv.lots', 'status', LotStatus],
   ['inv.lots', 'owner_type', StockOwner],
+  ['inv.lots', 'source', LotSource],
   ['inv.stock_movements', 'movement_type', StockMovementType],
 ];
 

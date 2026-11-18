@@ -71,14 +71,14 @@ Done when: an over-limit order waits on ON_CREDIT_HOLD until the Finance Manager
 - [ ] Production order (batch number series), release check (approved formula, approved stock, reservation).
 - [ ] Material requirement with potency adjustment + filler compensation (architecture §6).
 - [ ] Issue by scan (APPROVED lots only, FEFO), returns from floor.
-- [ ] Stages in order with sign-off; IPC notes; output → FG lot in QUARANTINE; yield; resource hours.
-- [ ] Batch close (Production Manager e-signature); conversion absorbed into WIP.
+- [ ] Stages in order with sign-off; IPC notes; output recorded at packing (`prod.stage.sign`) → FG lot in QUARANTINE at the provisional value of the materials issued so far (owner 2026-11-18, Q8); yield; resource hours.
+- [ ] Batch close (Production Manager e-signature): conversion absorbed into WIP, and in the same transaction `closeBatchCost` adds conversion + true-up to the FG lot as a value-only adjustment (Dr FG inventory / Cr WIP) and marks the batch closed; the FG lot cannot be dispatched before that (engines built in M2).
 
 Done when: release blocked if any material is not approved; API quantity computed from assay 98.2% in a test.
 
 ## M7 — QA and Dispatch (est. 2 days)
 - [ ] Deviations (raise, investigate, close); batch release checklist + e-signature; release refused with open deviation or FG not QC-approved.
-- [ ] Delivery order from SO, FEFO pick by scan, gate pass, proof of delivery, returns to QUARANTINE.
+- [ ] Delivery order from SO, FEFO pick by scan, gate pass, proof of delivery, customer returns into a new HOLD return lot `<lot>-R<n>` at a returns area (`createReturnLot` + SALES_RETURN, posting built in M2; owner 2026-11-18, Q9); QA moves return lots on.
 - [ ] Dispatch posts stock out + COGS and creates the sales invoice draft.
 
 Done when: unreleased FG cannot be picked; QA release blocked by an open deviation.

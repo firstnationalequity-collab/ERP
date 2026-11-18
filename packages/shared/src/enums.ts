@@ -32,6 +32,20 @@ export const LotStatus = [
 ] as const;
 export type LotStatus = (typeof LotStatus)[number];
 
+/**
+ * How a lot came to exist (inv.lots.source, 0017). RECEIPT, OUTPUT and SALES_RETURN movements go only into lots of
+ * their own source. A SALES_RETURN lot is created in HOLD, linked to the original lot (owner 2026-11-18, Q9).
+ */
+export const LotSource = ['GRN', 'PRODUCTION_OUTPUT', 'SALES_RETURN'] as const;
+export type LotSource = (typeof LotSource)[number];
+
+/**
+ * Why a lot's value is adjusted (VALUE_ADJUSTMENT rows, reason_code; 0017). BATCH_CLOSE: conversion cost and the
+ * true-up added to the FG lot at batch close (owner 2026-11-18, Q8). M3 adds LANDED_COST.
+ */
+export const ValueAdjustmentReason = ['BATCH_CLOSE'] as const;
+export type ValueAdjustmentReason = (typeof ValueAdjustmentReason)[number];
+
 export const StockOwner = ['OWN', 'CUSTOMER'] as const;
 export type StockOwner = (typeof StockOwner)[number];
 
@@ -54,6 +68,7 @@ export const StockMovementType = [
   'DESTROY', // REJECTED lot destroyed
   'RETURN_TO_VENDOR', // REJECTED lot returned
   'ROUNDING_SWEEP', // value only (qty 0, no location): clears the paisa left on an empty lot; posting engine only (0016)
+  'VALUE_ADJUSTMENT', // value only (qty 0, no location): raises or lowers a lot's value and unit cost (owner Q8, 0017)
 ] as const;
 export type StockMovementType = (typeof StockMovementType)[number];
 
@@ -201,7 +216,9 @@ export const PostingEvent = [
   'MATERIAL_RETURN',
   'CONVERSION_ABSORB',
   'FG_OUTPUT',
+  'FG_COST_ADJUSTMENT', // batch close: conversion + true-up onto the FG lot (owner 2026-11-18, Q8; 0017)
   'DISPATCH',
+  'SALES_RETURN_RECEIPT', // customer return into a HOLD return lot, reverses COGS (owner 2026-11-18, Q9; 0017)
   'SALES_INVOICE',
   'TOLL_INVOICE',
   'CUSTOMER_RECEIPT',
@@ -251,7 +268,9 @@ export const PostingEventRoles: Readonly<Record<PostingEvent, readonly AccountRo
   MATERIAL_RETURN: ['INVENTORY', 'WIP'],
   CONVERSION_ABSORB: ['WIP', 'LABOUR_ABSORBED', 'OVERHEAD_ABSORBED'],
   FG_OUTPUT: ['INVENTORY', 'WIP'],
+  FG_COST_ADJUSTMENT: ['INVENTORY', 'WIP'],
   DISPATCH: ['COGS', 'INVENTORY'],
+  SALES_RETURN_RECEIPT: ['INVENTORY', 'COGS'],
   SALES_INVOICE: ['ACCOUNTS_RECEIVABLE', 'SALES_REVENUE', 'OUTPUT_TAX'],
   TOLL_INVOICE: ['ACCOUNTS_RECEIVABLE', 'CONVERSION_REVENUE', 'OUTPUT_TAX'],
   CUSTOMER_RECEIPT: ['BANK', 'WHT_RECEIVABLE', 'ACCOUNTS_RECEIVABLE'],

@@ -57,18 +57,34 @@ interface LotOptions {
   item?: string;
   unitCost?: string;
   owner?: string;
+  /** Default: PRODUCTION_OUTPUT for the FG item, else GRN. */
+  source?: string;
 }
 /** A new QUARANTINE lot, as the engine creates it. */
 function newLot(opts: LotOptions = {}): Promise<string> {
   seq += 1;
   return tx(async () => {
     const id = await one(
-      `INSERT INTO inv.lots (item_id, lot_no, status, unit_cost, owner_type, owner_customer_id)
-       VALUES ($1, $2, 'QUARANTINE', $3, $4, $5) RETURNING id`,
-      [opts.item ?? ids.rm, `L-${seq}`, opts.unitCost ?? '10', opts.owner ? 'CUSTOMER' : 'OWN', opts.owner ?? null],
+      `INSERT INTO inv.lots (item_id, lot_no, status, unit_cost, owner_type, owner_customer_id, source)
+       VALUES ($1, $2, 'QUARANTINE', $3, $4, $5, $6) RETURNING id`,
+      [
+        opts.item ?? ids.rm,
+        `L-${seq}`,
+        opts.unitCost ?? '10',
+        opts.owner ? 'CUSTOMER' : 'OWN',
+        opts.owner ?? null,
+        opts.source ?? (opts.item === ids.fg ? 'PRODUCTION_OUTPUT' : 'GRN'),
+      ],
     );
     await history('inv.lots', id, null, 'QUARANTINE');
     return id;
+  });
+}
+
+/** The batch close marks a production lot's batch closed (engine: closeBatchCost; owner Q8, 0017). */
+function closeBatch(id: string): Promise<void> {
+  return tx(async () => {
+    await client.query(`UPDATE inv.lots SET batch_closed_at = now() WHERE id = $1`, [id]);
   });
 }
 
@@ -179,12 +195,12 @@ describe('lots', () => {
   it('are created in QUARANTINE, through core/transition, for an ACTIVE item', async () => {
     const insert = (status: string, item = ids.rm) =>
       tx(async () => {
-        const id = await one(`INSERT INTO inv.lots (item_id, lot_no, status) VALUES ($1, $2, $3) RETURNING id`, [item, `N-${++seq}`, status]);
+        const id = await one(`INSERT INTO inv.lots (item_id, lot_no, status, source) VALUES ($1, $2, $3, 'GRN') RETURNING id`, [item, `N-${++seq}`, status]);
         await history('inv.lots', id, null, status);
       });
     await expect(insert('APPROVED')).rejects.toThrow(/created in QUARANTINE/);
     await expect(insert('QUARANTINE', ids.draft)).rejects.toThrow(/ACTIVE item/);
-    await expect(tx(() => client.query(`INSERT INTO inv.lots (item_id, lot_no, status) VALUES ($1, 'NOHIST', 'QUARANTINE')`, [ids.rm]))).rejects.toThrow(
+    await expect(tx(() => client.query(`INSERT INTO inv.lots (item_id, lot_no, status, source) VALUES ($1, 'NOHIST', 'QUARANTINE', 'GRN')`, [ids.rm]))).rejects.toThrow(
       /INVALID_TRANSITION/,
     );
     const lot = await newLot();
@@ -198,7 +214,7 @@ describe('lots', () => {
     await expect(tx(() => client.query(`DELETE FROM inv.lots WHERE id = $1`, [lot]))).rejects.toThrow(/IN_USE/);
     await expect(
       tx(async () => {
-        const id = await one(`INSERT INTO inv.lots (item_id, lot_no, status) VALUES ($1, $2, 'QUARANTINE') RETURNING id`, [ids.rm, `L-${seq}`]);
+        const id = await one(`INSERT INTO inv.lots (item_id, lot_no, status, source) VALUES ($1, $2, 'QUARANTINE', 'GRN') RETURNING id`, [ids.rm, `L-${seq}`]);
         await history('inv.lots', id, null, 'QUARANTINE');
       }),
     ).rejects.toThrow(/duplicate key/);
@@ -252,6 +268,7 @@ describe('stock ledger and balances', () => {
     await setLot(fg, 'UNDER_TEST', 'APPROVED');
     await expect(move('DISPATCH', fg, '-100')).rejects.toThrow(/LOT_NOT_RELEASED/);
     await setLot(fg, 'RELEASED');
+    await closeBatch(fg);
     await move('DISPATCH', fg, '-100');
     expect(await balance(fg)).toBe('900.0000');
   });
@@ -439,9 +456,10 @@ describe('movement valuation (0015)', () => {
 
   it('books finished goods at the exact batch cost; the lot unit cost is that cost ÷ qty', async () => {
     const fg = await newLot({ item: ids.fg, unitCost: '333.33' }); // 1000.00 ÷ 3
-    await expect(move('OUTPUT', fg, '3', { unitCost: '333.33', value: '1000.02' })).rejects.toThrow(/batch cost/);
+    await expect(move('OUTPUT', fg, '3', { unitCost: '333.33', value: '1000.02' })).rejects.toThrow(/output value/);
     await move('OUTPUT', fg, '3', { unitCost: '333.33', value: '1000.00' });
     await setLot(fg, 'UNDER_TEST', 'APPROVED', 'RELEASED');
+    await closeBatch(fg);
     await move('DISPATCH', fg, '-1', { unitCost: '333.33', value: '-333.33' });
     await expect(move('DISPATCH', fg, '-2', { unitCost: '333.33', value: '-666.66' })).rejects.toThrow(/valued -666.67/);
     await move('DISPATCH', fg, '-2', { unitCost: '333.33', value: '-666.67' });

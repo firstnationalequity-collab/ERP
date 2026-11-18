@@ -94,6 +94,7 @@ export const locations = master.table('locations', {
   code: text('code').notNull(),
   name: text('name').notNull(),
   storageZone: text('storage_zone').$type<StorageZone>().notNull().default('AMBIENT'),
+  isReturnsArea: boolean('is_returns_area').notNull().default(false),
   isActive: boolean('is_active').notNull().default(true),
   ...auditColumns(),
 });

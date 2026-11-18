@@ -30,6 +30,15 @@ export async function assertStockLocation(q: Queryable, companyId: string, locat
   }
 }
 
+/** Customer returns are received only into a returns area (owner 2026-11-18, Q9; 0017). */
+export async function assertReturnsArea(q: Queryable, companyId: string, locationId: string): Promise<void> {
+  const row = await repo.findLocation(q, companyId, locationId);
+  if (!row) throw new AppError('NOT_FOUND', `Location ${locationId} not found`);
+  if (!row.isReturnsArea) {
+    throw new AppError('VALIDATION_FAILED', `Location ${row.code} is not a returns area; customer returns are received into one`, { locationId });
+  }
+}
+
 /** Customer-owned (toll) stock belongs to an ACTIVE toll customer (rule 12). */
 export async function assertTollCustomer(q: Queryable, companyId: string, customerId: string): Promise<void> {
   const row = await repo.findCustomer(q, companyId, customerId);

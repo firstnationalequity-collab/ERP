@@ -12,6 +12,7 @@ import type { Actor } from '../../../core/transition/transition';
 import { createTestUser } from '../../../test/factories';
 import {
   allocateFefo,
+  closeBatchCost,
   createLot,
   fefoCandidates,
   fgUnitCost,
@@ -122,6 +123,7 @@ beforeAll(async () => {
   await runSeed({ nodeEnv: 'test' });
   actors.store = await actorFor('e_store', ['STOREKEEPER']);
   actors.pm = await actorFor('e_pm', ['PRODUCTION_MANAGER']);
+  actors.sup = await actorFor('e_sup', ['PRODUCTION_SUPERVISOR']);
   actors.analyst = await actorFor('e_qca', ['QC_ANALYST']);
   const wm = await createTestUser({ username: 'e_wm', roleCodes: ['WAREHOUSE_MANAGER'] });
   const qa = await createTestUser({ username: 'e_qa', roleCodes: ['QA_MANAGER'] });
@@ -200,8 +202,10 @@ describe('createLot', () => {
   it('refuses an actor without the key for the source; nothing is saved', async () => {
     await expect(lot({ lotNo: 'NOKEY' }, 'analyst')).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(lot({ lotNo: 'NOKEY', source: 'PRODUCTION_OUTPUT', itemId: ids.fg }, 'store')).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // Owner Q8: output is recorded (prod.stage.sign), not created by the batch-close key.
+    await expect(lot({ lotNo: 'NOKEY', source: 'PRODUCTION_OUTPUT', itemId: ids.fg }, 'pm')).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(await raw(`SELECT 1 FROM inv.lots WHERE lot_no = 'NOKEY'`)).toEqual([]);
-    const fg = await lot({ source: 'PRODUCTION_OUTPUT', itemId: ids.fg, unitCost: fgUnitCost('1000', '3') }, 'pm');
+    const fg = await lot({ source: 'PRODUCTION_OUTPUT', itemId: ids.fg, unitCost: fgUnitCost('1000', '3') }, 'sup');
     expect(fg.unitCost).toBe('333.33');
   });
 
@@ -249,8 +253,8 @@ describe('postMovement', () => {
     expect(await ledger(id)).toEqual({ qty: '0.0500', value: '0.00' });
   });
 
-  it('books FG output at the exact batch cost; dispatch only RELEASED lots; last dispatch takes the residual', async () => {
-    const fg = await lot({ source: 'PRODUCTION_OUTPUT', itemId: ids.fg, unitCost: fgUnitCost('1000.00', '3') }, 'pm');
+  it('books FG output at the given value; dispatch only RELEASED lots of a closed batch; last dispatch takes the residual', async () => {
+    const fg = await lot({ source: 'PRODUCTION_OUTPUT', itemId: ids.fg, unitCost: fgUnitCost('1000.00', '3') }, 'sup');
     await expect(post({ type: 'OUTPUT', lotId: fg.id, qty: '3' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
     await expect(post({ type: 'OUTPUT', lotId: fg.id, qty: '3', value: '1000.02' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
     const out = await post({ type: 'OUTPUT', lotId: fg.id, qty: '3', value: '1000.00' });
@@ -259,6 +263,10 @@ describe('postMovement', () => {
     // Refused by the engine first (its details name the status), the database refuses it again (0014).
     await expect(post({ type: 'DISPATCH', lotId: fg.id, qty: '1' })).rejects.toMatchObject({ code: 'LOT_NOT_RELEASED', details: { status: 'APPROVED' } });
     await setLot(fg.id, 'RELEASED');
+    // Owner Q8: not before its batch is closed (output already at the batch cost: no adjustment).
+    await expect(post({ type: 'DISPATCH', lotId: fg.id, qty: '1' })).rejects.toMatchObject({ code: 'BATCH_NOT_CLOSED' });
+    const closed = await as('pm', (tx, a) => closeBatchCost(tx, a, { lotId: fg.id, batchCost: '1000.00', date: '2026-11-18', refDocType: 'PROD_ORDER', refDocId: '1' }));
+    expect(closed.adjustment).toBeNull();
     expect((await post({ type: 'DISPATCH', lotId: fg.id, qty: '1' })).value).toBe('-333.33');
     expect((await post({ type: 'DISPATCH', lotId: fg.id, qty: '2' })).value).toBe('-666.67');
     expect(await ledger(fg.id)).toEqual({ qty: '0.0000', value: '0.00' });

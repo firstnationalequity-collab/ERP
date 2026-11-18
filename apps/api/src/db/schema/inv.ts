@@ -1,7 +1,7 @@
-// Drizzle description of the `inv` schema. Source of truth: src/db/migrations/0014_inventory.sql.
+// Drizzle description of the `inv` schema. Source of truth: src/db/migrations/0014_inventory.sql (+ 0015–0017).
 // Only the inventory engine (engines/inventory) writes these tables; balances are kept by the ledger trigger.
 import { date, numeric, pgSchema, text } from 'drizzle-orm/pg-core';
-import type { LotStatus, StockMovementType, StockOwner } from '@albert/shared';
+import type { LotSource, LotStatus, StockMovementType, StockOwner } from '@albert/shared';
 import { auditColumns, bigintString, companyId, identityId, tstz } from './columns';
 
 export const inv = pgSchema('inv');
@@ -23,6 +23,12 @@ export const lots = inv.table('lots', {
   ownerCustomerId: bigintString('owner_customer_id'),
   /** Lot-actual cost per base unit (decision M2 Q2); always 0 for customer-owned stock (rule 12). */
   unitCost: numeric('unit_cost', { precision: 18, scale: 2 }).notNull().default('0'),
+  /** GRN, PRODUCTION_OUTPUT or SALES_RETURN (0017); never changes. */
+  source: text('source').$type<LotSource>().notNull(),
+  /** SALES_RETURN lots only: the original lot (0017). */
+  parentLotId: bigintString('parent_lot_id'),
+  /** PRODUCTION_OUTPUT lots: set by the batch close; dispatch waits for it (owner 2026-11-18, Q8). */
+  batchClosedAt: tstz('batch_closed_at'),
   ...auditColumns(),
 });
 

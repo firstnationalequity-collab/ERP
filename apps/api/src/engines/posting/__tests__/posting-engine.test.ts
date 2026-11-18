@@ -242,7 +242,7 @@ describe('postStockJournal', () => {
     expect(await ledger(lotId)).toEqual({ qty: '5.0000', value: '50.00' });
   });
 
-  it('refuses transfers, reversal rows, sales returns (no §6 rule), mixed events, documents or dates', async () => {
+  it('refuses transfers, reversal rows, a sales return into a released lot, mixed events, documents or dates', async () => {
     const lotId = await receivedLot('10');
     const run = (work: (tx: Tx, a: Actor) => Promise<unknown>) => as('store', work);
     await expect(
@@ -256,7 +256,7 @@ describe('postStockJournal', () => {
         const m = await postMovement(tx, a, mv({ type: 'SALES_RETURN', lotId, qty: '1' }));
         await postStockJournal(tx, a, { movements: [m], narration: 'x' });
       }),
-    ).rejects.toThrow(/No posting rule is defined for SALES_RETURN/);
+    ).rejects.toThrow(/SALES_RETURN goes into a lot made for it/); // owner Q9: only into a new return lot
     await expect(
       run(async (tx, a) => {
         const doc = mv({}).refDocId;

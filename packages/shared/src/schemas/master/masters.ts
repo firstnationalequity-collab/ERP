@@ -193,16 +193,20 @@ export interface WarehouseDto extends Stamped {
 }
 
 export const CreateLocationRequest = z
-  .object({ warehouseId: id, code: code(/^[A-Z0-9][A-Z0-9_./-]*$/, 30), name, storageZone: z.enum(StorageZone).default('AMBIENT') })
+  .object({ warehouseId: id, code: code(/^[A-Z0-9][A-Z0-9_./-]*$/, 30), name, storageZone: z.enum(StorageZone).default('AMBIENT'), isReturnsArea: z.boolean().default(false) })
   .strict();
 export type CreateLocationRequest = z.infer<typeof CreateLocationRequest>;
-export const UpdateLocationRequest = z.object({ name: name.optional(), storageZone: z.enum(StorageZone).optional() }).strict();
+export const UpdateLocationRequest = z
+  .object({ name: name.optional(), storageZone: z.enum(StorageZone).optional(), isReturnsArea: z.boolean().optional() })
+  .strict();
 export type UpdateLocationRequest = z.infer<typeof UpdateLocationRequest>;
 export interface LocationDto extends Stamped {
   warehouseId: string;
   code: string;
   name: string;
   storageZone: StorageZone;
+  /** Customer returns are received only into a returns area (owner 2026-11-18, Q9; 0017). */
+  isReturnsArea: boolean;
   isActive: boolean;
 }
 
