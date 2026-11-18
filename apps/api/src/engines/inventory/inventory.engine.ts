@@ -7,6 +7,8 @@
 //  - reverseMovements():   correction rows that mirror the originals (rule 4).
 //  - reserve() / releaseReservation(): quantity held for a document line; only APPROVED lots (rule 2).
 //  - fefoCandidates() / allocateFefo(): usable lots, earliest expiry first.
+//  - sweepEmptyLot():      value-only ROUNDING_SWEEP row for an empty lot still holding paisa; called only by
+//                          engines/posting, which posts its journal (owner 18-11-2026; 0016).
 //
 // The engine runs inside the caller's transaction and does not post journals: the calling module service posts
 // the journal for the returned movements through engines/posting in the SAME transaction (rule 5); customer-owned
@@ -125,7 +127,8 @@ export interface PostedMovement {
   lotNo: string;
   itemId: string;
   itemCategoryId: string;
-  locationId: string;
+  /** null only for a ROUNDING_SWEEP row (value only, no stock moved). */
+  locationId: string | null;
   /** Signed: + in, − out. */
   qty: string;
   unitCost: string;
@@ -147,7 +150,7 @@ export interface DocumentRef {
 type TransferType = 'TRANSFER_OUT' | 'TRANSFER_IN';
 
 export interface MovementInput extends DocumentRef {
-  type: Exclude<StockMovementType, TransferType>;
+  type: Exclude<StockMovementType, TransferType | 'ROUNDING_SWEEP'>;
   lotId: string;
   locationId: string;
   /** Quantity moved, > 0, up to 4 decimals; the engine signs it by type. */
@@ -164,8 +167,12 @@ export interface MovementInput extends DocumentRef {
 const isInbound = (type: StockMovementType) => InboundMovementTypes.includes(type);
 
 export async function postMovement(tx: Tx, actor: Actor, input: MovementInput): Promise<PostedMovement> {
-  if ((input.type as StockMovementType) === 'TRANSFER_OUT' || (input.type as StockMovementType) === 'TRANSFER_IN') {
+  const requested = input.type as StockMovementType;
+  if (requested === 'TRANSFER_OUT' || requested === 'TRANSFER_IN') {
     throw new AppError('VALIDATION_FAILED', 'Transfers are posted with transfer()');
+  }
+  if (requested === 'ROUNDING_SWEEP') {
+    throw new AppError('VALIDATION_FAILED', 'A rounding sweep is written only by the posting engine (sweepEmptyLot)');
   }
   assertQty(input.qty);
   assertDate(input.date);
@@ -281,6 +288,7 @@ export async function reverseMovements(tx: Tx, actor: Actor, input: ReversalInpu
   }
   for (const m of originals) {
     if (m.reversalOf) throw new AppError('VALIDATION_FAILED', `Movement ${m.id} is itself a reversal; post a new movement instead`);
+    if (m.movementType === 'ROUNDING_SWEEP') throw new AppError('VALIDATION_FAILED', `Movement ${m.id} is a rounding sweep; it is never reversed`);
   }
   const already = await repo.reversalsOf(tx, ids);
   if (already.length > 0) throw new AppError('INVALID_TRANSITION', `Movement ${already.join(', ')} is already reversed`, { movementIds: already });
@@ -323,6 +331,46 @@ export async function reverseMovements(tx: Tx, actor: Actor, input: ReversalInpu
     );
   }
   return posted;
+}
+
+/** The document each movement was posted for (engines/posting checks a reversal against its journal). */
+export async function movementDocuments(q: Queryable, companyId: string, ids: string[]): Promise<Map<string, DocumentRef>> {
+  const rows = await repo.findMovements(q, companyId, [...new Set(ids)]);
+  return new Map(rows.map((m) => [m.id, { refDocType: m.refDocType, refDocId: m.refDocId }]));
+}
+
+export interface SweepInput extends DocumentRef {
+  lotId: string;
+  /** Business date; must fall in an OPEN period (rule 11). */
+  date: string;
+}
+
+/**
+ * A lot with zero quantity holds zero value (owner, 18-11-2026; DB guard 0016). Called by engines/posting in the
+ * same transaction after it posts movements: if the lot is empty but still carries value (a reversal mirrors its
+ * original exactly, so rounding can leave a few paisa, plus or minus), writes a value-only ROUNDING_SWEEP row
+ * that takes it out. Returns null when the lot holds stock or no value (always for customer-owned stock).
+ */
+export async function sweepEmptyLot(tx: Tx, actor: Actor, input: SweepInput): Promise<PostedMovement | null> {
+  assertDate(input.date);
+  assertDocument(input);
+  const lot = await lockLotOrFail(tx, actor.companyId, input.lotId);
+  if (lot.ownerType === 'CUSTOMER') return null;
+  const totals = await repo.lotLedgerTotals(tx, lot.id);
+  if (!new Decimal(totals.qty).isZero() || new Decimal(totals.value).isZero()) return null;
+  return insertRow(tx, actor, lot, {
+    movementType: 'ROUNDING_SWEEP',
+    movementDate: input.date,
+    lotId: lot.id,
+    fromLocationId: null,
+    toLocationId: null,
+    qty: quantity(0),
+    unitCost: lot.unitCost,
+    value: money(new Decimal(totals.value).neg()),
+    refDocType: input.refDocType,
+    refDocId: input.refDocId,
+    reasonCode: 'ROUNDING',
+  });
 }
 
 // ---------------------------------------------------------------- reservations
@@ -634,7 +682,7 @@ async function insertRow(
     lotNo: lot.lotNo,
     itemId: lot.itemId,
     itemCategoryId: item.categoryId,
-    locationId: (m.toLocationId ?? m.fromLocationId)!,
+    locationId: m.toLocationId ?? m.fromLocationId,
     qty: m.qty,
     unitCost: m.unitCost,
     value: m.value,

@@ -74,6 +74,11 @@ export interface TransitionRequest<S extends string> {
   /** The second person's signature, when the move needs a witness. */
   witness?: SignatureRecord;
   reason?: string;
+  /**
+   * Columns set in the same UPDATE as the status, for a row CHECK that ties them to it
+   * (e.g. a journal entry's reversal_id when it becomes REVERSED). Existing records only.
+   */
+  alsoSet?: Readonly<Record<string, string | null>>;
 }
 
 export interface TransitionResult<S extends string> {
@@ -190,7 +195,11 @@ export async function transition<S extends string>(
   }
   const reason = await authorize(tx, map, move, req);
   const historyId = await writeHistory(tx, map, from, req, reason);
-  await tx.execute(sql`UPDATE ${tableSql(map.entityTable)} SET status = ${req.to} WHERE id = ${req.entityId}`);
+  const extra = Object.entries(req.alsoSet ?? {}).map(([column, value]) => {
+    if (!/^[a-z_]+$/.test(column) || column === 'status') throw new Error(`transition: bad column ${column}`);
+    return sql`, ${sql.identifier(column)} = ${value}`;
+  });
+  await tx.execute(sql`UPDATE ${tableSql(map.entityTable)} SET status = ${req.to}${sql.join(extra)} WHERE id = ${req.entityId}`);
   return { from, to: req.to, historyId };
 }
 

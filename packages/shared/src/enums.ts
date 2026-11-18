@@ -53,6 +53,7 @@ export const StockMovementType = [
   'ADJUSTMENT_OUT',
   'DESTROY', // REJECTED lot destroyed
   'RETURN_TO_VENDOR', // REJECTED lot returned
+  'ROUNDING_SWEEP', // value only (qty 0, no location): clears the paisa left on an empty lot; posting engine only (0016)
 ] as const;
 export type StockMovementType = (typeof StockMovementType)[number];
 
@@ -207,6 +208,7 @@ export const PostingEvent = [
   'STOCK_ADJUSTMENT',
   'LOT_DESTROYED',
   'LOT_RETURNED',
+  'ROUNDING_DIFFERENCE', // paisa left on an empty lot, swept by the posting engine (owner 18-11-2026; 0016)
 ] as const;
 export type PostingEvent = (typeof PostingEvent)[number];
 
@@ -232,6 +234,7 @@ export const AccountRole = [
   'INVENTORY_LOSS',
   'INVENTORY_GAIN',
   'REJECTION_WRITE_OFF',
+  'ROUNDING_DIFFERENCE',
 ] as const;
 export type AccountRole = (typeof AccountRole)[number];
 
@@ -255,4 +258,5 @@ export const PostingEventRoles: Readonly<Record<PostingEvent, readonly AccountRo
   STOCK_ADJUSTMENT: ['INVENTORY', 'INVENTORY_LOSS', 'INVENTORY_GAIN'],
   LOT_DESTROYED: ['REJECTION_WRITE_OFF', 'INVENTORY'],
   LOT_RETURNED: ['ACCOUNTS_PAYABLE', 'INVENTORY'],
+  ROUNDING_DIFFERENCE: ['INVENTORY', 'ROUNDING_DIFFERENCE'],
 };

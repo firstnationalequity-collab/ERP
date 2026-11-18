@@ -1,5 +1,6 @@
 // /api/v1/fin/* — mounted behind authenticate + requireCurrentPassword (app.ts).
 // Finance masters (M2 task 4): reads need fin.view or master.view; writes need fin.master.manage.
+// Journals (M2 task 7): read only, fin.view.
 // Activation is an action endpoint (POST /:id/activate | /deactivate), never PATCH.
 import { Router, type Request } from 'express';
 import { z } from 'zod';
@@ -9,6 +10,7 @@ import {
   CreatePostingRuleRequest,
   DeactivateRequest,
   FinListQuery,
+  JournalListQuery,
   MasterActionRequest,
   UpdateAccountRequest,
   UpdateCostCenterRequest,
@@ -18,6 +20,7 @@ import {
 import { requireAnyPermission, requirePermission } from '../../core/rbac/require-permission';
 import { asyncHandler, authOf } from '../../core/auth/middleware';
 import type { ActiveFlagTable } from './finance.repo';
+import * as journals from './journals.service';
 import * as svc from './masters.service';
 
 const IdParam = z.object({ id: z.string().regex(/^\d+$/, 'Invalid id') });
@@ -82,3 +85,11 @@ r.patch('/posting-rules/:id', requirePermission(MANAGE), asyncHandler(async (req
   res.json(await svc.updatePostingRule(authOf(req), idOf(req), UpdatePostingRuleRequest.parse(req.body)));
 }));
 activeFlagRoutes('posting-rules');
+
+// ---------------------------------------------------------------- journals (read only; M2 task 7)
+// Written only by engines/posting inside the business transaction; reads need fin.view.
+const VIEW_JOURNALS = requirePermission('fin.view');
+r.get('/journals', VIEW_JOURNALS, asyncHandler(async (req, res) => {
+  res.json(await journals.listJournals(authOf(req), JournalListQuery.parse(req.query)));
+}));
+r.get('/journals/:id', VIEW_JOURNALS, asyncHandler(async (req, res) => { res.json(await journals.getJournal(authOf(req), idOf(req))); }));

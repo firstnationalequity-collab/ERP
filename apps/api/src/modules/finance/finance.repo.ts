@@ -1,8 +1,8 @@
 // Finance repository: queries only (no business rules). Tables in schema `fin` (0012_finance_masters.sql).
-import { and, asc, count, eq, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, sql, type SQL } from 'drizzle-orm';
 import type { Queryable, Tx } from '../../db/client';
 import type { Paging } from '../../db/list';
-import { accounts, costCenters, postingRules } from '../../db/schema/fin';
+import { accounts, costCenters, journalEntries, journalLines, postingRules } from '../../db/schema/fin';
 
 export type AccountRow = typeof accounts.$inferSelect;
 export type CostCenterRow = typeof costCenters.$inferSelect;
@@ -121,4 +121,43 @@ export async function insertPostingRule(tx: Tx, values: typeof postingRules.$inf
 }
 export async function updatePostingRule(tx: Tx, id: string, values: Partial<typeof postingRules.$inferInsert>): Promise<void> {
   if (Object.keys(values).length) await tx.update(postingRules).set(values).where(eq(postingRules.id, id));
+}
+
+// ---------------------------------------------------------------- journals (read only; engines/posting writes them)
+
+export type JournalEntryRow = typeof journalEntries.$inferSelect & { total: string };
+export type JournalLineRow = typeof journalLines.$inferSelect & { accountCode: string; accountName: string };
+
+// Qualified by hand: inside a subquery Drizzle renders a column unqualified, which would bind to journal_lines.id.
+const totalOf = sql<string>`(SELECT COALESCE(sum(l.debit), 0)::text FROM fin.journal_lines l WHERE l.entry_id = "journal_entries"."id")`;
+
+export async function listJournalEntries(q: Queryable, where: SQL | undefined, p: Paging): Promise<JournalEntryRow[]> {
+  const rows = await q
+    .select({ entry: journalEntries, total: totalOf })
+    .from(journalEntries)
+    .where(where)
+    .orderBy(desc(journalEntries.entryDate), desc(journalEntries.id))
+    .limit(p.limit)
+    .offset(p.offset);
+  return rows.map((r) => ({ ...r.entry, total: r.total }));
+}
+export async function countJournalEntries(q: Queryable, where: SQL | undefined): Promise<number> {
+  const [row] = await q.select({ n: count() }).from(journalEntries).where(where);
+  return row?.n ?? 0;
+}
+export async function findJournalEntry(q: Queryable, companyId: string, id: string): Promise<JournalEntryRow | undefined> {
+  const [row] = await q
+    .select({ entry: journalEntries, total: totalOf })
+    .from(journalEntries)
+    .where(and(eq(journalEntries.companyId, companyId), eq(journalEntries.id, id)));
+  return row ? { ...row.entry, total: row.total } : undefined;
+}
+export async function journalLinesOf(q: Queryable, entryId: string): Promise<JournalLineRow[]> {
+  const rows = await q
+    .select({ line: journalLines, accountCode: accounts.code, accountName: accounts.name })
+    .from(journalLines)
+    .innerJoin(accounts, eq(accounts.id, journalLines.accountId))
+    .where(eq(journalLines.entryId, entryId))
+    .orderBy(asc(journalLines.lineNo));
+  return rows.map((r) => ({ ...r.line, accountCode: r.accountCode, accountName: r.accountName }));
 }

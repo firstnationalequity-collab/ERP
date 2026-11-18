@@ -51,6 +51,8 @@ export const PLACEHOLDER_ACCOUNTS: readonly AccountSeed[] = [
   { code: '5200', name: 'Purchase price variance', type: 'EXPENSE', parent: '5000' },
   { code: '5300', name: 'Labour absorbed', type: 'EXPENSE', parent: '5000' },
   { code: '5310', name: 'Machine overhead absorbed', type: 'EXPENSE', parent: '5000' },
+  // Owner 18-11-2026: paisa left on an empty lot are swept here (0016). Finance to confirm the account and its type.
+  { code: '5400', name: 'Rounding difference - stock values (Finance to confirm)', type: 'EXPENSE', parent: '5000' },
   { code: '6000', name: 'Operating expenses', type: 'EXPENSE', header: true },
   { code: '6100', name: 'Stock loss on adjustment', type: 'EXPENSE', parent: '6000' },
   { code: '6200', name: 'Rejected material write-off', type: 'EXPENSE', parent: '6000' },
@@ -78,6 +80,7 @@ export const PLACEHOLDER_ROLE_ACCOUNTS: Readonly<Record<AccountRole, string>> = 
   INVENTORY_LOSS: '6100',
   INVENTORY_GAIN: '4300',
   REJECTION_WRITE_OFF: '6200',
+  ROUNDING_DIFFERENCE: '5400',
 };
 
 /**

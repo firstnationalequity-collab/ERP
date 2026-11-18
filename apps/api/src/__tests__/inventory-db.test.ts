@@ -466,3 +466,64 @@ describe('movement valuation (0015)', () => {
     expect(await balance(lot, ids.loc2)).toBe('1.0000');
   });
 });
+
+// 0016_rounding_sweep.sql: owner 18-11-2026, "any lot with zero quantity must have zero value".
+describe('empty lots hold no value (0016)', () => {
+  const totals = async (lot: string) =>
+    (await client.query<{ qty: string; value: string }>(
+      `SELECT sum(qty)::text AS qty, sum(value)::text AS value FROM inv.stock_movements WHERE lot_id = $1`,
+      [lot],
+    )).rows[0]!;
+  const insertSweep = (lot: string, value: string, o: { qty?: string; location?: string; reversalOf?: string } = {}) =>
+    one(
+      `INSERT INTO inv.stock_movements
+         (movement_type, movement_date, lot_id, from_location_id, to_location_id, qty, unit_cost, value, ref_doc_type, ref_doc_id, reversal_of)
+       VALUES ('ROUNDING_SWEEP', '2026-11-18', $1, NULL, $2, $3, '3.33', $4, 'TEST', 1, $5) RETURNING id`,
+      [lot, o.location ?? null, o.qty ?? '0', value, o.reversalOf ?? null],
+    );
+
+  /** 1 @ 3.33, issue 0.5, return 0.5, issue 0.5 → 0.5 / 1.66; returns the lot and the return row. */
+  async function paisaLot(): Promise<{ lot: string; ret: string }> {
+    const lot = await newLot({ unitCost: '3.33' });
+    await move('RECEIPT', lot, '1', { unitCost: '3.33', value: '3.33' });
+    await setLot(lot, 'UNDER_TEST', 'APPROVED');
+    await move('ISSUE', lot, '-0.5', { unitCost: '3.33', value: '-1.67' });
+    const ret = await move('ISSUE_RETURN', lot, '0.5', { unitCost: '3.33', value: '1.67' });
+    await move('ISSUE', lot, '-0.5', { unitCost: '3.33', value: '-1.67' });
+    return { lot, ret };
+  }
+  const reverseReturn = (lot: string, ret: string) => insertMove('ISSUE_RETURN', lot, '-0.5', { unitCost: '3.33', value: '-1.67', reversalOf: ret });
+
+  it('refuses, at commit, a lot left with zero quantity and a non-zero value', async () => {
+    const { lot, ret } = await paisaLot();
+    await expect(tx(() => reverseReturn(lot, ret))).rejects.toThrow(/holds no stock but -0.01 of value/);
+    expect(await totals(lot)).toEqual({ qty: '0.5000', value: '1.66' });
+  });
+
+  it('a ROUNDING_SWEEP row in the same transaction takes exactly the value left; no stock moves', async () => {
+    const { lot, ret } = await paisaLot();
+    await expect(tx(async () => { await reverseReturn(lot, ret); await insertSweep(lot, '0.02'); })).rejects.toThrow(/exactly the value left/);
+    await tx(async () => {
+      await reverseReturn(lot, ret);
+      await insertSweep(lot, '0.01');
+    });
+    expect(await totals(lot)).toEqual({ qty: '0.0000', value: '0.00' });
+    expect(await balance(lot)).toBe('0.0000');
+  });
+
+  it('a sweep only clears an empty lot: no stock, no location, never reversed, never a stock move', async () => {
+    const { lot, ret } = await paisaLot();
+    await expect(move('ROUNDING_SWEEP', lot, '0', { unitCost: '3.33', value: '-1.66' })).rejects.toThrow(/only an empty lot|movement_one_location/);
+    await expect(tx(() => insertSweep(lot, '-1.66'))).rejects.toThrow(/only an empty lot is swept/);
+    await expect(tx(() => insertSweep(lot, '-1.66', { qty: '-0.5' }))).rejects.toThrow(/only an empty lot|movement_one_location/);
+    await expect(tx(async () => { await reverseReturn(lot, ret); await insertSweep(lot, '0.01', { location: ids.loc1 }); })).rejects.toThrow(
+      /movement_one_location/,
+    );
+    await tx(async () => {
+      await reverseReturn(lot, ret);
+      ids.sweep = await insertSweep(lot, '0.01');
+    });
+    await expect(tx(() => insertSweep(lot, '-0.01', { reversalOf: ids.sweep }))).rejects.toThrow(/movement_one_location|never reversed/);
+    await expect(tx(() => client.query(`UPDATE inv.stock_movements SET value = 0.02 WHERE id = $1`, [ids.sweep]))).rejects.toThrow(/APPEND_ONLY/);
+  });
+});
