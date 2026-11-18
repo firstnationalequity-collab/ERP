@@ -38,7 +38,7 @@ pnpm monorepo, TypeScript strict everywhere.
 `routes` (validate + permission) → `service` (business rules, one transaction) → `repo` (queries only).
 Modules talk to each other only through exported service functions — never another module's tables.
 All stock changes go through `engines/inventory`. All journals go through `engines/posting`.
-DB schemas per module: `core`, `inv`, `sales`, `purch`, `qc`, `prod`, `qa`, `fin`.
+DB schemas per module: `core`, `master`, `inv`, `sales`, `purch`, `qc`, `prod`, `qa`, `fin`.
 
 ## Conventions
 - REST under `/api/v1/<module>/<resource>`. Actions: `POST /:id/submit | /approve | /reject | /post | /reverse | /release`. Never change status with PATCH.

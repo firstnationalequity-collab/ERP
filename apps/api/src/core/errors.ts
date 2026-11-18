@@ -20,6 +20,8 @@ const statusFor: Partial<Record<ErrorCode, number>> = {
   NOT_FOUND: 404,
   ALREADY_EXISTS: 409,
   INVALID_TRANSITION: 409,
+  RECORD_LOCKED: 409,
+  IN_USE: 409,
   DUPLICATE_REQUEST: 409,
   /** A stored file no longer matches its recorded SHA-256: never serve it. */
   FILE_INTEGRITY_FAILED: 500,
@@ -58,6 +60,19 @@ export function fromDbError(err: unknown): AppError | undefined {
   if (pgCode === '23505') {
     // unique_violation: a code, username or similar already exists.
     return new AppError('ALREADY_EXISTS', 'A record with the same unique value already exists', {
+      constraint: (err as Error & { constraint?: unknown }).constraint,
+    });
+  }
+  if (pgCode === '23514') {
+    // check_violation: the database backstop for a rule the service should have checked first.
+    return new AppError('VALIDATION_FAILED', 'The data breaks a database rule', {
+      constraint: (err as Error & { constraint?: unknown }).constraint,
+    });
+  }
+  if (pgCode === '23503') {
+    // foreign_key_violation: deleting something still used, or pointing at a record that does not exist.
+    const inUse = /still referenced/.test(err.message);
+    return new AppError(inUse ? 'IN_USE' : 'VALIDATION_FAILED', inUse ? 'This record is still in use' : 'A referenced record does not exist', {
       constraint: (err as Error & { constraint?: unknown }).constraint,
     });
   }

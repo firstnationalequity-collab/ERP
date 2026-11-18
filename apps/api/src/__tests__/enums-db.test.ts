@@ -16,24 +16,32 @@ import {
   SessionRevokeReason,
   SignatureMeaning,
   StorageDriver,
+  ItemType,
+  PartyStatus,
+  ApprovedSourceStatus,
+  FormulaStatus,
+  AssayBasis,
+  StorageZone,
+  TaxKind,
+  AddressType,
 } from '@albert/shared';
 import { databaseUrl } from '../config/env';
 
 const client = new pg.Client({ connectionString: databaseUrl });
 
 /** The string literals allowed by the CHECK constraint(s) on `table.column`, from the column's IN (...) list. */
-async function checkValues(table: string, column: string): Promise<string[]> {
+async function checkValues(qualified: string, column: string): Promise<string[]> {
   const { rows } = await client.query<{ def: string }>(
     `SELECT pg_get_constraintdef(c.oid) AS def
        FROM pg_constraint c
        JOIN pg_class t ON t.oid = c.conrelid
        JOIN pg_namespace n ON n.oid = t.relnamespace
-      WHERE c.contype = 'c' AND n.nspname = 'core' AND t.relname = $1`,
-    [table],
+      WHERE c.contype = 'c' AND n.nspname = $1 AND t.relname = $2`,
+    qualified.includes('.') ? qualified.split('.') : ['core', qualified],
   );
   // e.g. CHECK ((status = ANY (ARRAY['OPEN'::text, 'CLOSED'::text])))
   const own = rows.map((r) => r.def).find((d) => new RegExp(`\\(\\(?${column} = ANY \\(ARRAY\\[`).test(d));
-  if (!own) throw new Error(`No IN-list CHECK on core.${table}.${column}`);
+  if (!own) throw new Error(`No IN-list CHECK on ${qualified}.${column}`);
   return [...own.matchAll(/'([^']+)'::text/g)].map((m) => m[1]!).sort();
 }
 
@@ -51,6 +59,16 @@ const cases: [string, string, readonly string[]][] = [
   ['sessions', 'revoke_reason', SessionRevokeReason],
   ['e_signatures', 'meaning', SignatureMeaning],
   ['attachments', 'storage_driver', StorageDriver],
+  ['master.items', 'type', ItemType],
+  ['master.items', 'storage_zone', StorageZone],
+  ['master.locations', 'storage_zone', StorageZone],
+  ['master.tax_codes', 'kind', TaxKind],
+  ['master.customers', 'status', PartyStatus],
+  ['master.vendors', 'status', PartyStatus],
+  ['master.customer_addresses', 'type', AddressType],
+  ['master.approved_sources', 'status', ApprovedSourceStatus],
+  ['master.master_formulas', 'status', FormulaStatus],
+  ['master.master_formula_lines', 'assay_basis', AssayBasis],
 ];
 
 beforeAll(async () => {
@@ -62,7 +80,7 @@ afterAll(async () => {
 });
 
 describe('shared enums match the database CHECK constraints', () => {
-  it.each(cases)('core.%s.%s', async (table, column, values) => {
+  it.each(cases)('%s.%s', async (table, column, values) => {
     expect(await checkValues(table, column)).toEqual([...values].sort());
   });
 });

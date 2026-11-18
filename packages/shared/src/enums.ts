@@ -121,3 +121,31 @@ export type AuthEventType = (typeof AuthEventType)[number];
 /** Why a core.sessions row was revoked. */
 export const SessionRevokeReason = ['LOGOUT', 'TOKEN_REUSE', 'PASSWORD_CHANGE', 'LOCKOUT', 'ADMIN'] as const;
 export type SessionRevokeReason = (typeof SessionRevokeReason)[number];
+
+// ---------------------------------------------------------------- masters (M2, migration 0008)
+
+/** Customers and vendors: created DRAFT, activated by the approve key (creator ≠ activator); via core/transition. */
+export const PartyStatus = ['DRAFT', 'ACTIVE', 'INACTIVE'] as const;
+export type PartyStatus = (typeof PartyStatus)[number];
+
+/** AVL row: PENDING while its AVL approval runs; APPROVED by QA Manager; BLOCKED by QA Manager; REJECTED if the approval is rejected. */
+export const ApprovedSourceStatus = ['PENDING', 'APPROVED', 'REJECTED', 'BLOCKED'] as const;
+export type ApprovedSourceStatus = (typeof ApprovedSourceStatus)[number];
+
+/** Master formula version: editable only in DRAFT; one APPROVED per product; the previous APPROVED becomes OBSOLETE. */
+export const FormulaStatus = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'OBSOLETE'] as const;
+export type FormulaStatus = (typeof FormulaStatus)[number];
+
+/** API formula line: potency on the as-is assay or on the dried basis (assay × (100 − water) ÷ 100). */
+export const AssayBasis = ['AS_IS', 'DRIED'] as const;
+export type AssayBasis = (typeof AssayBasis)[number];
+
+/** Storage condition of an item and of a location (transfers must match; enforced from M3). */
+export const StorageZone = ['AMBIENT', 'BELOW_25C', 'COLD_2_8C', 'FROZEN'] as const;
+export type StorageZone = (typeof StorageZone)[number];
+
+export const TaxKind = ['SALES_TAX', 'WITHHOLDING'] as const;
+export type TaxKind = (typeof TaxKind)[number];
+
+export const AddressType = ['BILLING', 'SHIPPING'] as const;
+export type AddressType = (typeof AddressType)[number];

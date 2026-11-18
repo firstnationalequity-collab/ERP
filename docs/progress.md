@@ -5,7 +5,7 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 | Milestone | Status | Started | Finished | Notes |
 | --- | --- | --- | --- | --- |
 | M1 Foundation | Done | 17-11-2026 | 18-11-2026 | All 12 tasks, rules-review fixes A–F, first-QA-Manager bootstrap; CI run #13 green on `04ef009`; tag `m1` |
-| M2 Masters & engines | In progress | 18-11-2026 | | Task 1 done; see Handoff |
+| M2 Masters & engines | In progress | 18-11-2026 | | Tasks 1–2 done; see Handoff |
 | M3 Procurement | Not started | | | |
 | M4 QC | Not started | | | |
 | M5 Sales | Not started | | | |
@@ -25,8 +25,8 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 | # | Task | Status |
 | --- | --- | --- |
 | 1 | Shared definitions: keys `master.product.manage`, `master.price.manage` (Sales Mgr), `fin.master.manage` (Finance Mgr), `qa.product.countersign` (QA Mgr); docs for lot-actual costing, tax per item, AVL with attachments | ✅ |
-| 2 | `0008_masters.sql` + `schema/masters.ts` (uoms, conversions, categories, items+tax_code_id, warehouses, locations, customers, addresses, vendors, approved_sources, products, master_formulas+lines, price_lists+lines, tax_codes) with DB rules | ⏳ next |
-| 3 | Masters service/tests/routes `/api/v1/master/*`: CRUD, customer/vendor DRAFT→ACTIVE (creator ≠ activator), AVL via approvals (attachments shown at signing) + block, formula versions via approvals (old APPROVED → OBSOLETE), product regulatory fields need `qa.product.countersign` | |
+| 2 | `0008_masters.sql` + `schema/masters.ts` (uoms, conversions, categories, items+tax_code_id, warehouses, locations, customers, addresses, vendors, approved_sources, products, master_formulas+lines, price_lists+lines, tax_codes) with DB rules | ✅ |
+| 3 | Masters service/tests/routes `/api/v1/master/*`: CRUD, customer/vendor DRAFT→ACTIVE (creator ≠ activator), AVL via approvals (attachments shown at signing) + block, formula versions via approvals (old APPROVED → OBSOLETE), product regulatory fields need `qa.product.countersign` | ⏳ next |
 | 4 | `0009_finance_masters.sql`: accounts, cost_centers, posting_rules, journal_entries/lines (balance, period, immutability); seed PLACEHOLDER chart + rules, FY2026-27 periods, JV series | |
 | 5 | `0010_inventory.sql`: lots, stock_movements (append-only), stock_balances (≥0), stock_reservations; DB guard: ISSUE/RESERVE only APPROVED, DISPATCH only RELEASED; toll lots zero value. **No item_costs** (lot-actual costing) | |
 | 6 | `engines/inventory`: postMovement, reserve/release, fefoCandidates; every movement valued at lot cost | |
@@ -69,3 +69,4 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 - 18-11-2026 · M1 · Ran the app locally (Docker DB, `pnpm dev`). The countersign rule had no starting point, so added the one-time first-QA-Manager bootstrap command (SYSTEM, audited; refused once a QA Manager exists, for inactive users and for admin-role holders); 7 tests, mutation-checked. 272 tests green. · Next: owner confirms CI → close M1, tag m1; then M2.
 - 18-11-2026 · M1 · Roles: `master.item.manage` → Planner, `master.formula.manage` → QA Officer. CI #13 green; M1 marked done and tagged `m1`. · Next: M2 — Masters and engines (`/milestone M2`).
 - 18-11-2026 · M2 · Plan approved (owner answers Q1–Q6: lot-actual costing, product QA countersign, placeholder chart, AVL with attachments, creator ≠ activator, tax per item). Task 1 done: 4 new keys in permissions/seed/roles.md, docs updated (architecture §6, decisions). 272 tests green. · Next: task 2 (0008_masters.sql).
+- 18-11-2026 · M2 · Task 2 done: `0008_masters.sql` (new `master` schema, 16 tables, DB guards: no delete, NTN/CNIC, FG product, product QA countersign, formula lock + filler rule + one APPROVED/open version, AVL identity lock), Drizzle `schema/masters.ts`, 14 DB tests (mutation-checked), enum↔CHECK test now covers `master`; DB check/FK violations mapped to VALIDATION_FAILED / IN_USE. 296 tests green. · Next: task 3 (masters service + routes).

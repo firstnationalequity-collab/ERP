@@ -3,7 +3,7 @@ import pg from 'pg';
 import { databaseUrl, env } from '../config/env';
 import { migrate } from '../db/migrate';
 
-const MODULE_SCHEMAS = ['core', 'inv', 'sales', 'purch', 'qc', 'prod', 'qa', 'fin'] as const;
+const MODULE_SCHEMAS = ['core', 'inv', 'sales', 'purch', 'qc', 'prod', 'qa', 'fin', 'master'] as const;
 
 /** Throws unless the target is clearly a test database. Exported so the guard itself is tested. */
 export function assertTestDatabase(url: string, nodeEnv: string): void {
