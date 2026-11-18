@@ -18,12 +18,14 @@ import { seedFinance, type FinanceSeedReport } from './finance';
 
 /**
  * Decision Q16 defaults: PO-2627-00042 (resets each fiscal year), AP26-0001 (resets each calendar year).
- * JV (M2 task 4): every journal entry, manual or posted by a module, takes the Q16 document pattern.
+ * Journals (owner, 18-11-2026): JV-2627-00001 for manual journal vouchers only, SJ-2627-00001 for system
+ * journals posted by modules (each names its source document).
  */
 export const DEFAULT_SERIES = [
   { docType: 'PO', name: 'Purchase order', prefix: 'PO', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
   { docType: 'BATCH', name: 'Batch number', prefix: 'AP', pattern: '{PREFIX}{YY}-{SEQ:4}', reset: 'CALENDAR_YEAR' },
-  { docType: 'JV', name: 'Journal entry', prefix: 'JV', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
+  { docType: 'JV', name: 'Manual journal voucher', prefix: 'JV', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
+  { docType: 'SJ', name: 'System journal', prefix: 'SJ', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
 ] as const;
 
 /**
@@ -221,7 +223,7 @@ async function syncRoles(tx: Tx, report: SeedReport): Promise<void> {
 }
 
 /**
- * The default series (decision Q16, plus JV from M2 task 4). Other document types add their series in their own
+ * The default series (decision Q16, plus JV and SJ for journals). Other document types add their series in their own
  * milestone. Existing series are never changed (the admin may have edited them).
  */
 async function createMissingSeries(tx: Tx, report: SeedReport): Promise<void> {

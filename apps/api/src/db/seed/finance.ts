@@ -80,11 +80,15 @@ export const PLACEHOLDER_ROLE_ACCOUNTS: Readonly<Record<AccountRole, string>> = 
   REJECTION_WRITE_OFF: '6200',
 };
 
-/** PLACEHOLDER tax codes (M2 Q6). The WHT rates are unverified defaults: Finance must confirm against the current law. */
+/**
+ * PLACEHOLDER tax codes (M2 Q6). The WHT rates are unverified: rates differ for filers / non-filers and companies,
+ * and Finance will supply them (owner, 18-11-2026). Until Finance clears is_placeholder, posting any WHT is refused
+ * (TAX_RATE_NOT_CONFIRMED, migration 0013).
+ */
 export const PLACEHOLDER_TAX_CODES: readonly { code: string; name: string; kind: TaxKind; rate: string }[] = [
   { code: 'ST-18', name: 'Sales tax - standard rate', kind: 'SALES_TAX', rate: '18' },
-  { code: 'WHT-153-1A', name: 'WHT s.153(1)(a) - supply of goods', kind: 'WITHHOLDING', rate: '4' },
-  { code: 'WHT-153-1B', name: 'WHT s.153(1)(b) - services', kind: 'WITHHOLDING', rate: '8' },
+  { code: 'WHT-153-1A', name: 'WHT s.153(1)(a) - supply of goods - RATE NOT CONFIRMED', kind: 'WITHHOLDING', rate: '4' },
+  { code: 'WHT-153-1B', name: 'WHT s.153(1)(b) - services - RATE NOT CONFIRMED', kind: 'WITHHOLDING', rate: '8' },
 ];
 
 export interface FinanceSeedReport {

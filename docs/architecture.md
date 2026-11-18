@@ -191,7 +191,7 @@ About 80 tables in 9 groups, all in one PostgreSQL schema per module (`core`, `i
 | QC | `qc_specs`, `qc_spec_tests`, `qc_samples`, `qc_results`, `coas` | Spec per item, versioned, approved by QC Manager. Test: name, method, min, max, text\_limit, unit, is\_assay, is\_water. Result: value, pass (computed), entered\_by, reviewed\_by. Original results are never updated; a re-test is a new row |
 | Production | `production_orders`, `production_order_materials`, `batch_stages`, `stage_signoffs`, `production_outputs`, `resource_logs` | Order: batch\_no, product, formula version, batch\_size, customer\_id (toll), sales\_order\_line\_id. Materials: theoretical\_qty, adjusted\_qty, issued\_qty per lot. Output: FG lot, qty, yield\_pct. `resource_logs`: line, machine\_hours, labour\_hours |
 | QA | `deviations`, `batch_releases` | Deviation: batch, class MINOR/MAJOR/CRITICAL, status OPEN/CLOSED, root cause, closed\_by. Release: production order, checklist JSONB, decision, e-signature id |
-| Finance | `accounts`, `cost_centers`, `posting_rules`, `journal_entries`, `journal_lines`, `bank_accounts`, `bank_statement_lines`, `batch_costs`, `cost_rates` | Journal entry: date, period, source\_type/id, status, reversal\_of. Lines: account, debit, credit, cost\_center, customer\_id, vendor\_id, production\_order\_id; CHECK one of debit/credit is zero; trigger ensures entry balances. `cost_rates`: per line machine-hour rate, labour rate, overhead % |
+| Finance | `accounts`, `cost_centers`, `posting_rules`, `journal_entries`, `journal_lines`, `bank_accounts`, `bank_statement_lines`, `batch_costs`, `cost_rates` | Journal entry: date, period, source\_type/id, status, reversal\_of; manual journal vouchers (source MANUAL, no event) number from the `JV` series, system journals posted by modules from `SJ` and always name their source document and event. Lines: account, debit, credit, cost\_center, customer\_id, vendor\_id, production\_order\_id, tax\_code\_id; a line booking a WITHHOLDING code whose rate Finance has not confirmed (`is_placeholder`) cannot be posted (`TAX_RATE_NOT_CONFIRMED`); CHECK one of debit/credit is zero; trigger ensures entry balances. `cost_rates`: per line machine-hour rate, labour rate, overhead % |
 
 **Database-enforced rules** (not only in code): balances never negative; journal entries balance; no insert into a closed period; no UPDATE/DELETE on posted rows, audit log, auth events, status history or stock movements (trigger raises an error).
 
@@ -388,6 +388,6 @@ The build is split into 11 milestones in the order of the chain, so each one end
 
 - [ ] Apply for FBR Digital Invoicing access through PRAL or a licensed integrator (sandbox credentials needed by week 4).
 - [ ] Contact a serialization line vendor; 2D codes have been mandatory since 9 October 2026 and need line hardware.
-- [ ] Finance confirms approval limits, chart of accounts and WHT sections.
+- [ ] Finance confirms approval limits, chart of accounts and WHT sections and rates (filer / non-filer, company); no WHT posts until each rate is confirmed.
 - [ ] Departments send master data in Excel templates: items, customers, vendors, AVL, formulas, opening stock by lot with status.
 - [ ] Choose cloud provider and region.

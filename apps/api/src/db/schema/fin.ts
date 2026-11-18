@@ -73,6 +73,8 @@ export const journalLines = fin.table('journal_lines', {
   customerId: bigintString('customer_id'),
   vendorId: bigintString('vendor_id'),
   productionOrderId: bigintString('production_order_id'),
+  /** The tax this line books (0013); a WITHHOLDING code must be confirmed before the entry posts. */
+  taxCodeId: bigintString('tax_code_id'),
   narration: text('narration'),
   ...auditColumns(),
 });

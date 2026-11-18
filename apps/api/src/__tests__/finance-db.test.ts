@@ -109,7 +109,7 @@ describe('posting events and placeholder seed', () => {
     }
   });
 
-  it('seeds the PLACEHOLDER chart, a default rule for every event/role, placeholder tax codes and the JV series', async () => {
+  it('seeds the PLACEHOLDER chart, a default rule for every event/role, placeholder tax codes and the JV and SJ series', async () => {
     const accounts = await client.query(`SELECT count(*)::int AS n FROM fin.accounts WHERE is_placeholder`);
     expect(accounts.rows[0].n).toBe(PLACEHOLDER_ACCOUNTS.length);
     const expectedRules = Object.values(PostingEventRoles).reduce((n, r) => n + r.length, 0);
@@ -120,8 +120,14 @@ describe('posting events and placeholder seed', () => {
     expect(rules.rows[0].n).toBe(expectedRules);
     const tax = await client.query(`SELECT code FROM master.tax_codes WHERE is_placeholder ORDER BY code`);
     expect(tax.rows.map((r) => r.code)).toEqual(PLACEHOLDER_TAX_CODES.map((t) => t.code).sort());
-    const jv = await client.query(`SELECT pattern, reset FROM core.number_series WHERE doc_type = 'JV'`);
-    expect(jv.rows).toEqual([{ pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' }]);
+    const wht = await client.query(`SELECT name FROM master.tax_codes WHERE kind = 'WITHHOLDING' AND is_placeholder`);
+    expect(wht.rows.length).toBeGreaterThan(0);
+    for (const r of wht.rows) expect(r.name).toMatch(/RATE NOT CONFIRMED$/);
+    const series = await client.query(`SELECT doc_type, prefix, pattern, reset FROM core.number_series WHERE doc_type IN ('JV', 'SJ') ORDER BY doc_type`);
+    expect(series.rows).toEqual([
+      { doc_type: 'JV', prefix: 'JV', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
+      { doc_type: 'SJ', prefix: 'SJ', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
+    ]);
   });
 });
 
@@ -292,5 +298,65 @@ describe('journal entries', () => {
     const d = await draft([['1310', '3', '0'], ['2120', '0', '3']]);
     const r = await draft([['2120', '3', '0'], ['1310', '0', '3']], '2026-11-18', { reversalOf: d });
     await expect(post(r)).rejects.toThrow(/only a POSTED entry/);
+  });
+});
+
+describe('manual and system journals (0013)', () => {
+  const insert = (sourceType: string, sourceId: string | null, event: string | null) =>
+    tx(fm, () =>
+      client.query(
+        `INSERT INTO fin.journal_entries (doc_no, entry_date, source_type, source_id, event, narration, status)
+         VALUES ($1, '2026-11-18', $2, $3, $4, 'x', 'DRAFT')`,
+        [`SRC-${++seq}`, sourceType, sourceId, event],
+      ),
+    );
+
+  it('a manual journal has no posting event and no source document', async () => {
+    await expect(insert('MANUAL', null, 'GRN_RECEIPT')).rejects.toThrow(/journal_manual_has_no_event/);
+    await expect(insert('MANUAL', '5', null)).rejects.toThrow(/journal_system_names_source/);
+  });
+
+  it('a system journal names its posting event and source document', async () => {
+    await expect(insert('GRN', null, 'GRN_RECEIPT')).rejects.toThrow(/journal_system_names_source/);
+    await expect(insert('GRN', '5', null)).rejects.toThrow(/journal_manual_has_no_event/);
+  });
+});
+
+describe('withholding tax needs a confirmed rate (0013)', () => {
+  async function whtEntry(taxCodeId: string): Promise<string> {
+    const id = await draft([['5300', '100', '0'], ['2120', '0', '96']]);
+    await tx(fm, () =>
+      client.query(`INSERT INTO fin.journal_lines (entry_id, line_no, account_id, credit, tax_code_id) VALUES ($1, 3, $2, 4, $3)`, [
+        id, acct['2220'], taxCodeId,
+      ]),
+    );
+    return id;
+  }
+  const taxId = (code: string) => one(`SELECT id FROM master.tax_codes WHERE code = $1`, [code]);
+
+  it('refuses to post a line with a placeholder WHT rate until Finance confirms it', async () => {
+    const wht = await taxId('WHT-153-1A');
+    const id = await whtEntry(wht);
+    await expect(post(id)).rejects.toThrow(/TAX_RATE_NOT_CONFIRMED/);
+    expect((await entry(id)).status).toBe('DRAFT');
+
+    await tx(fm, () => client.query(`UPDATE master.tax_codes SET is_placeholder = false WHERE id = $1`, [wht]));
+    await post(id);
+    expect((await entry(id)).status).toBe('POSTED');
+  });
+
+  it('a placeholder sales-tax code does not block posting (the owner rule covers WHT)', async () => {
+    const st = await taxId('ST-18');
+    const id = await draft([['1210', '118', '0'], ['4100', '0', '100']]);
+    await tx(fm, () =>
+      client.query(`INSERT INTO fin.journal_lines (entry_id, line_no, account_id, credit, tax_code_id) VALUES ($1, 3, $2, 18, $3)`, [id, acct['2210'], st]),
+    );
+    await post(id);
+  });
+
+  it('a confirmed tax code is never marked placeholder again, and its kind never changes', async () => {
+    const wht = await taxId('WHT-153-1A');
+    await expect(tx(fm, () => client.query(`UPDATE master.tax_codes SET is_placeholder = true WHERE id = $1`, [wht]))).rejects.toThrow(/placeholder again/);
+    await expect(tx(fm, () => client.query(`UPDATE master.tax_codes SET kind = 'SALES_TAX' WHERE id = $1`, [wht]))).rejects.toThrow(/kind never changes/);
   });
 });

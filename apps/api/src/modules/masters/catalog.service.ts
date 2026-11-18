@@ -29,7 +29,7 @@ import type {
   UpdateWarehouseRequest,
   WarehouseDto,
 } from '@albert/shared';
-import { db, withTransaction } from '../../db/client';
+import { db, withTransaction, type Tx } from '../../db/client';
 import {
   itemCategories,
   locations,
@@ -88,10 +88,33 @@ export async function createTaxCode(auth: AuthContext, input: CreateTaxCodeReque
 }
 export async function updateTaxCode(auth: AuthContext, id: string, input: UpdateTaxCodeRequest): Promise<TaxCodeDto> {
   await withTransaction(txContext(auth), async (tx) => {
-    found(await repo.findTaxCode(tx, auth.companyId, id), 'Tax code');
-    await repo.updateTaxCode(tx, id, sent(input));
+    const tc = found(await repo.findTaxCode(tx, auth.companyId, id), 'Tax code');
+    if (input.isPlaceholder === true && !tc.isPlaceholder) {
+      throw new AppError('VALIDATION_FAILED', 'A confirmed tax code cannot be marked placeholder again', { field: 'isPlaceholder' });
+    }
+    const changes = sent(input);
+    // Confirming a seeded rate drops the "RATE NOT CONFIRMED" label unless Finance gives a new name.
+    if (input.isPlaceholder === false && tc.isPlaceholder && input.name === undefined && tc.name.endsWith(RATE_NOT_CONFIRMED)) {
+      changes.name = tc.name.slice(0, -RATE_NOT_CONFIRMED.length);
+    }
+    await repo.updateTaxCode(tx, id, changes);
   });
   return getTaxCode(auth, id);
+}
+
+const RATE_NOT_CONFIRMED = ' - RATE NOT CONFIRMED';
+
+/**
+ * For modules that book tax (vendor invoices/payments, M3/M8): a WITHHOLDING code must be confirmed by Finance
+ * before anything using it is posted (owner, 18-11-2026). The journal guard (0013) refuses it again at posting.
+ */
+export async function assertTaxRateConfirmed(tx: Tx, companyId: string, taxCodeId: string): Promise<void> {
+  const tc = found(await repo.findTaxCode(tx, companyId, taxCodeId), 'Tax code');
+  if (tc.kind === 'WITHHOLDING' && tc.isPlaceholder) {
+    throw new AppError('TAX_RATE_NOT_CONFIRMED', `Withholding tax ${tc.code} has a placeholder rate; Finance must confirm it before it is posted`, {
+      taxCode: tc.code,
+    });
+  }
 }
 
 // ---------------------------------------------------------------- UoM and categories

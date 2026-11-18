@@ -6,6 +6,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../../../app';
 import { databaseUrl } from '../../../config/env';
 import { runSeed } from '../../../db/seed/run';
+import { systemContext, withTransaction } from '../../../db/client';
+import { assertTaxRateConfirmed } from '../catalog.service';
 import { PLACEHOLDER_TAX_CODES } from '../../../db/seed/finance';
 import { createTestUser, TEST_PASSWORD } from '../../../test/factories';
 
@@ -108,6 +110,23 @@ describe('catalog masters: tax codes, UoM, categories, items, conversions', () =
     // The two created here plus the seeded PLACEHOLDER tax codes (M2 task 4).
     expect((await get('ceo', '/master/tax-codes')).body.total).toBe(2 + PLACEHOLDER_TAX_CODES.length);
     expectError(await get('admin', '/master/tax-codes'), 403, 'FORBIDDEN');
+  });
+
+  it('WHT placeholder rates block posting until Finance confirms them; confirmed stays confirmed (owner 18-11-2026)', async () => {
+    const { rows } = await client.query<{ id: string; name: string }>(`SELECT id::text, name FROM master.tax_codes WHERE code = 'WHT-153-1B'`);
+    const wht = rows[0]!;
+    expect(wht.name).toBe('WHT s.153(1)(b) - services - RATE NOT CONFIRMED');
+    const check = () => withTransaction(systemContext(), (tx) => assertTaxRateConfirmed(tx, '1', wht.id));
+    await expect(check()).rejects.toMatchObject({ code: 'TAX_RATE_NOT_CONFIRMED' });
+    // A sales-tax placeholder is not blocked by this rule.
+    const st = await client.query<{ id: string }>(`SELECT id::text FROM master.tax_codes WHERE code = 'ST-18'`);
+    await withTransaction(systemContext(), (tx) => assertTaxRateConfirmed(tx, '1', st.rows[0]!.id));
+
+    expectError(await patch('planner', `/master/tax-codes/${wht.id}`, { isPlaceholder: false }), 403, 'FORBIDDEN');
+    const confirmed = await patch('fm', `/master/tax-codes/${wht.id}`, { rate: '10', isPlaceholder: false });
+    expect(confirmed.body).toMatchObject({ name: 'WHT s.153(1)(b) - services', rate: '10.0000', isPlaceholder: false });
+    await check();
+    expectError(await patch('fm', `/master/tax-codes/${wht.id}`, { isPlaceholder: true }), 400, 'VALIDATION_FAILED');
   });
 
   it('lets the Warehouse Manager keep UoM and categories (Planner no longer can); codes are unique', async () => {
