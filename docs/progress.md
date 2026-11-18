@@ -35,6 +35,14 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 | 9 | Web: DataTable (search, filters, paging, Excel export) / DocForm; all master screens incl. formula and AVL approval with attachments; journals list | |
 | 10 | Done-when evidence, `/check-rules`, docs, CI | |
 
+**Notes for task 3 (read first in a fresh chat):**
+- Patterns to copy: `core/access/access.service.ts` (service + countersign via `verifyWitness`), `core/transition` (allowed-moves map with a key per move), `core/approvals` (`startApproval`, module handlers called on approve/reject in the same tx), `core/attachments` (register a target table with its read/write keys).
+- Customers/vendors: insert DRAFT through core/transition; moves DRAFT→ACTIVE, ACTIVE→INACTIVE, INACTIVE→ACTIVE with `master.customer.approve` / `master.vendor.approve`; refuse `SEGREGATION_OF_DUTIES` when the actor created the record.
+- AVL: Purchase Officer creates PENDING row (`master.vendor.manage`) + `startApproval('AVL')`; handler moves PENDING→APPROVED / REJECTED; block APPROVED→BLOCKED needs `master.avl.approve` + e-signature + reason. Register attachments target `master.approved_sources` (read `master.view`, write `master.vendor.manage`); the approval detail must list them (shown on the e-sign screen in task 9).
+- Formulas: new version copies the latest version's lines; submit DRAFT→PENDING_APPROVAL + `startApproval('MASTER_FORMULA')`; approve handler: old APPROVED→OBSOLETE **first** (unique index), then PENDING→APPROVED; reject handler: PENDING→DRAFT. Creator ≠ approver comes from the approvals engine.
+- Products: changing registration_no / artwork_version / quality_agreement_signed_on needs a countersign body (username, password, meaning APPROVED, reason) from a holder of `qa.product.countersign`, not the editor; write the e-signature on `master.products`/id in the same tx (the DB trigger checks it).
+- Tax codes and (task 4) finance masters use `fin.master.manage`; price lists `master.price.manage`; warehouses/locations `master.location.manage`; items/categories/UoM/conversions `master.item.manage`; all reads `master.view`.
+
 **Existing local dev DB after task 1:** add the new keys on the Roles page (Sales Manager: `master.product.manage`, `master.price.manage`; Finance Manager: `fin.master.manage`; QA Manager: `qa.product.countersign` — needs QA countersign). Fresh databases get them from the seed.
 
 **Waiting for the owner (not blocking M2):**
