@@ -32,7 +32,13 @@ import type { Queryable, Tx } from '../../db/client';
 import type { stockMovements } from '../../db/schema/inv';
 import { AppError, fromDbError } from '../../core/errors';
 import { defineTransitions, recordInitialStatus, type Actor, type TransitionMap } from '../../core/transition/transition';
-import { assertReturnsArea, assertStockLocation, assertTollCustomer, stockItem } from '../../modules/masters/stock-refs.service';
+import {
+  assertCustomerExists,
+  assertReturnsArea,
+  assertStockLocation,
+  assertTollCustomer,
+  stockItem,
+} from '../../modules/masters/stock-refs.service';
 import * as repo from './inventory.repo';
 import { money, movementValue, quantity } from './valuation';
 
@@ -230,7 +236,11 @@ export interface MovementInput extends DocumentRef {
   value?: string;
   /** Outbound only: consume this document's reservation on the lot (up to qty). */
   consumeReservation?: DocumentRef;
+  /** DISPATCH and SALES_RETURN only, required there: the customer the goods go to / come back from (0018). */
+  customerId?: string;
 }
+
+const CustomerMovementTypes: readonly StockMovementType[] = ['DISPATCH', 'SALES_RETURN'];
 
 const isInbound = (type: StockMovementType) => InboundMovementTypes.includes(type);
 
@@ -252,11 +262,21 @@ export async function postMovement(tx: Tx, actor: Actor, input: MovementInput): 
   if (input.consumeReservation && inbound) {
     throw new AppError('VALIDATION_FAILED', 'Only an outbound movement consumes a reservation');
   }
+  const needsCustomer = CustomerMovementTypes.includes(input.type);
+  if (needsCustomer !== (input.customerId !== undefined)) {
+    throw new AppError(
+      'VALIDATION_FAILED',
+      needsCustomer ? `A ${input.type} names the customer` : `Only a dispatch or a customer return names a customer`,
+    );
+  }
   const lot = await lockLotOrFail(tx, actor.companyId, input.lotId);
   assertLotAllows(input.type, lot);
   await assertStockLocation(tx, actor.companyId, input.locationId, inbound);
+  if (input.customerId !== undefined) await assertCustomerExists(tx, actor.companyId, input.customerId);
   const qty = inbound ? new Decimal(input.qty) : new Decimal(input.qty).neg();
-  if (input.type === 'SALES_RETURN') await assertReturnable(tx, actor, lot, input.locationId, qty);
+  if (input.type === 'SALES_RETURN' && input.customerId !== undefined) {
+    await assertReturnable(tx, actor, lot, input.locationId, qty, input.customerId);
+  }
 
   if (!inbound) await assertCanTakeOut(tx, lot, input.locationId, qty.neg(), input.consumeReservation);
   const totals = await repo.lotLedgerTotals(tx, lot.id);
@@ -282,6 +302,7 @@ export async function postMovement(tx: Tx, actor: Actor, input: MovementInput): 
     refDocType: input.refDocType,
     refDocId: input.refDocId,
     reasonCode: input.reasonCode ?? null,
+    customerId: input.customerId ?? null,
   });
 }
 
@@ -405,6 +426,7 @@ export async function reverseMovements(tx: Tx, actor: Actor, input: ReversalInpu
         refDocId: input.refDocId,
         reasonCode: input.reasonCode ?? null,
         reversalOf: m.id,
+        customerId: m.customerId,
       }),
     );
   }
@@ -851,16 +873,28 @@ async function assertCanTakeOut(tx: Tx, lot: repo.LotRow, locationId: string, qt
   }
 }
 
-/** A customer return: into a returns area, never more than was dispatched from the original lot and its return lots. */
-async function assertReturnable(tx: Tx, actor: Actor, lot: repo.LotRow, locationId: string, qty: Decimal): Promise<void> {
+/**
+ * A customer return: into a returns area, never more than was dispatched to THAT customer from the original lot
+ * (and its re-released return lots), minus that customer's earlier returns (owner 2026-11-18; 0018). The original
+ * lot is locked so concurrent returns and dispatches of the family are checked one after the other.
+ */
+async function assertReturnable(
+  tx: Tx,
+  actor: Actor,
+  lot: repo.LotRow,
+  locationId: string,
+  qty: Decimal,
+  customerId: string,
+): Promise<void> {
   await assertReturnsArea(tx, actor.companyId, locationId);
   if (!lot.parentLotId) throw new AppError('VALIDATION_FAILED', `Lot ${lot.lotNo} is not a return lot`);
-  const { dispatched, returned } = await repo.dispatchedAndReturned(tx, lot.parentLotId);
+  await lockLotOrFail(tx, actor.companyId, lot.parentLotId);
+  const { dispatched, returned } = await repo.dispatchedAndReturned(tx, lot.parentLotId, customerId);
   if (new Decimal(returned).plus(qty).gt(dispatched)) {
     throw new AppError(
       'RETURN_EXCEEDS_DISPATCH',
-      `${quantity(dispatched)} was dispatched from this lot and ${quantity(returned)} already returned; ${quantity(qty)} more cannot be received`,
-      { lotId: lot.id, dispatched: quantity(dispatched), returned: quantity(returned), requested: quantity(qty) },
+      `${quantity(dispatched)} was dispatched to this customer from this lot and ${quantity(returned)} already returned; ${quantity(qty)} more cannot be received`,
+      { lotId: lot.id, customerId, dispatched: quantity(dispatched), returned: quantity(returned), requested: quantity(qty) },
     );
   }
 }

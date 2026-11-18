@@ -25,7 +25,7 @@ Later, as independent modules: HR & Payroll, Engineering, full QMS, R&D, MRP and
 
 **Non-negotiable rules.** `CLAUDE.md` in the repository root is the authority; this list is the same 12 rules in the same order.
 
-1. Only QC approves or rejects material lots. Only QA may place or lift HOLD and release batches/FG lots. Warehouse Manager may only move a REJECTED lot to DESTROYED or RETURNED, with a QA witness e-signature. No other role, including CEO and admin, can change a lot or batch status.
+1. Only QC approves or rejects material lots. Only QA may place or lift HOLD and release batches/FG lots. QC approves or rejects material lots (RM, PM, API, EXCIPIENT). QA decides finished-goods and return lots: release, re-release or reject. QC results on FG are input to QA's decision (owner 2026-11-18). Warehouse Manager may only move a REJECTED lot to DESTROYED or RETURNED, with a QA witness e-signature. No other role, including CEO and admin, can change a lot or batch status.
 2. Issue/reserve only APPROVED lots; dispatch only RELEASED FG lots. Checked in the service AND in the database.
 3. No negative stock (CHECK constraint on `inv.stock_balances`).
 4. Posted documents are immutable. Corrections are reversal documents. Posted rows are never updated or deleted.
@@ -91,9 +91,9 @@ Access is permission-based: each action is a permission key (`purch.po.approve`,
 | Production Supervisor | Production | Execute and sign stages; submit batch close (`prod.batch.close`) | Approve batch close, release batch |
 | Production Manager | Production | Approve batch close with e-signature (`prod.batch.approve_close`), raise deviations | Release batch |
 | QC Analyst | QC | Enter results, take samples | Approve own results |
-| QC Manager | QC | Review results, approve/reject lots, issue CoA, approve specs | Release batch, place or lift HOLD |
+| QC Manager | QC | Review results, approve/reject material lots (RM, PM, API, EXCIPIENT), issue CoA, approve specs | Release batch, place or lift HOLD, reject FG or return lots |
 | QA Officer | QA | Raise and investigate deviations | Release batch, close deviations, enter QC results, create POs |
-| QA Manager | QA | AVL approval, master formula approval, close deviations, place/lift lot HOLD, batch release; QA witness for lot disposal; countersign role changes that touch QA-controlled keys | Enter QC results, create POs |
+| QA Manager | QA | AVL approval, master formula approval, close deviations, place/lift lot HOLD, batch release, re-release or reject FG and return lots (`qa.lot.reject_fg`); QA witness for lot disposal; countersign role changes that touch QA-controlled keys | Enter QC results, create POs |
 | System Admin | IT | Users, roles, settings, number series | Any business transaction or approval |
 
 A seeded **SYSTEM** user (no roles, cannot log in) is the actor for seeds and background jobs.
@@ -130,20 +130,22 @@ A seeded **SYSTEM** user (no roles, cannot log in) is the actor for seeds and ba
 
 ## 4. Status machines
 
-Three status chains hold the system together: lot status (QC approves and rejects; QA holds and releases), batch status (owned by QA) and order status (owned by Sales and Finance). Each lives in one service function `transition(entity, from, to, actor)`. It works from the entity's allowed-moves map, where **every individual move carries its own permission key** (and whether it needs an e-signature). It checks that the move is allowed and that the actor holds that key, writes a row to `core.status_history` (entity\_table, entity\_id, from\_status, to\_status, actor, esign\_id, reason, at), and refuses everything else. The database also has a CHECK constraint on allowed values. Each module's map lists its keys when that module is built.
+Three status chains hold the system together: lot status (QC approves and rejects material lots; QA holds, releases, re-releases and rejects FG and return lots), batch status (owned by QA) and order status (owned by Sales and Finance). Each lives in one service function `transition(entity, from, to, actor)`. It works from the entity's allowed-moves map, where **every individual move carries its own permission key** (and whether it needs an e-signature). It checks that the move is allowed and that the actor holds that key, writes a row to `core.status_history` (entity\_table, entity\_id, from\_status, to\_status, actor, esign\_id, reason, at), and refuses everything else. The database also has a CHECK constraint on allowed values. Each module's map lists its keys when that module is built.
 
 **Lot status** (`lots.status`): applies to every material and finished-goods lot.
 
 | From | To | Who / trigger | Permission key | Condition |
 | --- | --- | --- | --- | --- |
-| (new) | QUARANTINE | GRN posted (Storekeeper), or FG output recorded at packing (Production Supervisor / Operator) | `purch.grn.post` / `prod.stage.sign` | Automatic; QC sample request created. An FG lot starts at the provisional value of the materials issued to the batch so far (owner 2026-11-18, Q8) |
-| (new) | HOLD | Customer return received (Storekeeper / Warehouse Manager) | `fg.delivery.manage` | A new return lot linked to the original lot, numbered original + "-R" + sequence (e.g. `AP26-0001-R1`), at a returns area; never back into the released lot. Only QA moves it on (re-release or reject; keys set when M7 builds returns) (owner 2026-11-18, Q9) |
+| (new) | QUARANTINE | GRN posted (Storekeeper), or FG output recorded at packing (Production Supervisor / Operator) | `purch.grn.post` / `prod.stage.sign` | Automatic; QC sample request created. An FG lot starts at the provisional value of the materials issued to the batch so far (owner 2026-11-18, Q8). **Owner 2026-11-18:** the FG lot and its journal are created only when the output/yield entry is signed by the doer AND verified by a different user (checker) holding a supervisor-level key; an operator signature alone creates nothing. How the checker step works is PENDING OWNER (Handoff); today the engine creates the lot on one `prod.stage.sign` signature |
+| (new) | HOLD | Customer return received (Storekeeper / Warehouse Manager) | `fg.delivery.manage` | A new return lot linked to the original lot, numbered original + "-R" + sequence (e.g. `AP26-0001-R1`), at a returns area; never back into the released lot. Only QA moves it on: re-release or reject (rows below) (owner 2026-11-18, Q9) |
 | QUARANTINE | UNDER\_TEST | QC Analyst takes sample | `qc.result.enter` | — |
-| UNDER\_TEST | APPROVED | QC Manager, e-signature | `qc.lot.change_status` | All spec tests passed and reviewed |
-| UNDER\_TEST | REJECTED | QC Manager, e-signature | `qc.lot.change_status` | Any test failed; reason required |
+| UNDER\_TEST | APPROVED | QC Manager, e-signature | `qc.lot.change_status` | All spec tests passed and reviewed. For an FG lot this records the QC result, which is input to QA's release decision (owner 2026-11-18) |
+| UNDER\_TEST | REJECTED | QC Manager, e-signature | `qc.lot.change_status` | **Material lots** (RM, PM, API, EXCIPIENT). Any test failed; reason required. Who rejects an FG lot whose QC test fails is PENDING OWNER (Handoff open questions) |
 | APPROVED | HOLD | QA Manager | `qa.lot.hold` | Reason required |
 | HOLD | APPROVED | QA Manager lifts hold, e-signature | `qa.lot.hold` | Reason required |
-| HOLD | REJECTED | QC Manager, e-signature | `qc.lot.change_status` | Reason required (only QC rejects) |
+| HOLD | REJECTED | QC Manager, e-signature | `qc.lot.change_status` | **Material lots** only. Reason required |
+| HOLD | REJECTED | QA Manager, e-signature | `qa.lot.reject_fg` | **FG and return lots** only. Reason required (owner 2026-11-18) |
+| HOLD | RELEASED | QA Manager re-releases a **return lot**, e-signature | `qa.batch.release` | Return lots only; mandatory assessment reason (owner 2026-11-18) |
 | APPROVED | RETEST\_DUE / EXPIRED | Nightly job (SYSTEM user) | (system job) | Retest or expiry date reached |
 | RETEST\_DUE | UNDER\_TEST | QC Analyst | `qc.result.enter` | Re-sample; new assay updates the lot |
 | REJECTED | DESTROYED / RETURNED | Warehouse Manager, plus QA Manager witness e-signature | `inv.lot.dispose` + witness `qa.lot.witness` | Stock moved out, value written off or debit note |
@@ -290,7 +292,7 @@ Each module below lists its screens and the rules its services must enforce; end
 ### 7.9 Finished Goods and Dispatch
 
 - Screens: delivery orders from sales orders, FEFO pick list, pick by scan, gate pass, proof of delivery, returns receipt.
-- Rules: only RELEASED FG lots; dispatch posting creates the stock move, the COGS entry and the sales invoice draft; returns go into a new HOLD return lot linked to the original lot, at a returns area, valued at the original unit cost (§4, §6; owner 2026-11-18, Q9); the credit note (revenue, tax, receivable) is the sales module's.
+- Rules: only RELEASED FG lots; dispatch posting creates the stock move, the COGS entry and the sales invoice draft; returns go into a new HOLD return lot linked to the original lot, at a returns area, valued at the original unit cost (§4, §6; owner 2026-11-18, Q9); a return never exceeds what was dispatched to that customer from the original lot (incl. its re-released return lots) less that customer's earlier returns, so every dispatch and return movement names the customer (0018); QA then re-releases the return lot (`qa.batch.release`, e-signature, mandatory assessment reason) or rejects it (`qa.lot.reject_fg`, e-signature, QA Manager only); the credit note (revenue, tax, receivable) is the sales module's.
 
 ### 7.10 Finance
 

@@ -47,3 +47,9 @@ export async function assertTollCustomer(q: Queryable, companyId: string, custom
     throw new AppError('VALIDATION_FAILED', `Customer ${row.code} is not an ACTIVE toll customer; it cannot own stock`, { customerId });
   }
 }
+
+/** The customer named on a dispatch or a customer return must exist in the company (0018). */
+export async function assertCustomerExists(q: Queryable, companyId: string, customerId: string): Promise<void> {
+  const row = await repo.findCustomer(q, companyId, customerId);
+  if (!row) throw new AppError('NOT_FOUND', `Customer ${customerId} not found`);
+}

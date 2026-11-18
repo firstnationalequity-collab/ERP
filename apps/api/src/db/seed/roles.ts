@@ -123,7 +123,7 @@ const roles: RoleSeed[] = [
     name: 'QA Manager',
     keys: [
       'qa.view', 'qc.view', 'prod.view', 'inv.stock.view', 'master.view', 'core.audit.view',
-      'qa.deviation.manage', 'qa.deviation.close', 'qa.batch.release', 'qa.lot.hold', 'qa.lot.witness',
+      'qa.deviation.manage', 'qa.deviation.close', 'qa.batch.release', 'qa.lot.hold', 'qa.lot.witness', 'qa.lot.reject_fg',
       'qa.access.countersign', 'master.avl.approve', 'master.formula.approve', 'inv.adjustment.approve',
       'qa.product.countersign', 'master.item.approve',
     ],

@@ -61,7 +61,7 @@ Design context: `docs/architecture.md` §3 and §4.
 | `qc.spec.approve` | action | Approve specifications | existing |
 | `qc.result.enter` | action | Take samples, enter results | existing |
 | `qc.result.review` | action | Review results | existing |
-| `qc.lot.change_status` | action | Approve / reject lots | existing (description narrowed: HOLD moved to `qa.lot.hold`) |
+| `qc.lot.change_status` | action | Approve / reject material lots (RM, PM, API, EXCIPIENT) | existing (narrowed: HOLD moved to `qa.lot.hold`; FG and return lots decided by QA, owner 2026-11-18) |
 | `qc.coa.issue` | action | Issue certificates of analysis | existing |
 | `prod.view` | view | View production orders, stages, outputs | new |
 | `prod.order.manage` | action | Create, release, cancel production orders | existing |
@@ -71,9 +71,10 @@ Design context: `docs/architecture.md` §3 and §4.
 | `qa.view` | view | View deviations and batch releases | new |
 | `qa.deviation.manage` | action | Raise and investigate deviations | existing |
 | `qa.deviation.close` | action | Close deviations | existing |
-| `qa.batch.release` | action | Release or reject batches (and their FG lots) | existing |
+| `qa.batch.release` | action | Release or reject batches; release FG lots; re-release return lots (e-signature + assessment reason) | existing (owner 2026-11-18: also return-lot re-release) |
 | `qa.lot.hold` | action | Place or lift HOLD on a lot | new |
 | `qa.lot.witness` | action | Witness e-signature for lot destruction / return | **proposed** |
+| `qa.lot.reject_fg` | action | Reject finished-goods and return lots (HOLD → REJECTED), e-signature required; QA-controlled | new (owner 2026-11-18) |
 | `qa.access.countersign` | action | E-signature countersign for role changes touching QA-controlled keys | **proposed** |
 | `qa.product.countersign` | action | Countersign product registration no., artwork version and quality-agreement changes | new (M2) |
 | `fg.view` | view | View delivery orders, gate passes, returns | new |
@@ -117,7 +118,7 @@ Every role except SYSTEM also holds `core.approval.inbox` (not repeated below). 
 | 16 | QC Analyst | `qc.view`, `inv.stock.view`, `master.view` | `qc.result.enter`, `qc.spec.manage` |
 | 17 | QC Manager | `qc.view`, `inv.stock.view`, `master.view` | `qc.result.review`, `qc.lot.change_status`, `qc.coa.issue`, `qc.spec.approve` |
 | 18 | QA Officer | `qa.view`, `qc.view`, `prod.view`, `master.view` | `qa.deviation.manage` |
-| 19 | QA Manager | `qa.view`, `qc.view`, `prod.view`, `inv.stock.view`, `master.view`, `core.audit.view` | `qa.deviation.manage`, `qa.deviation.close`, `qa.batch.release`, `qa.lot.hold`, `qa.lot.witness`, `qa.access.countersign`, `master.avl.approve`, `master.formula.approve`, `inv.adjustment.approve` (second approver for adjustments), `qa.product.countersign`, `master.item.approve` |
+| 19 | QA Manager | `qa.view`, `qc.view`, `prod.view`, `inv.stock.view`, `master.view`, `core.audit.view` | `qa.deviation.manage`, `qa.deviation.close`, `qa.batch.release`, `qa.lot.hold`, `qa.lot.witness`, `qa.lot.reject_fg`, `qa.access.countersign`, `master.avl.approve`, `master.formula.approve`, `inv.adjustment.approve` (second approver for adjustments), `qa.product.countersign`, `master.item.approve` |
 | 20 | System Admin | `core.audit.view` | `core.user.manage`, `core.role.manage`, `core.settings.manage` (admin keys only) |
 | — | SYSTEM (user, not a role) | — | none; cannot log in; actor for seeds and jobs |
 
@@ -133,3 +134,7 @@ Approved by the owner on 2026-11-17 (decisions log):
 Decided by the owner (corrected 18-11-2026; commit 04ef009 had recorded an agent default instead):
 
 2. `master.item.manage` (items, categories, UoM) → **Warehouse Manager** and **Purchase Manager**. `master.formula.manage` (drafting master formulas) → **Production Manager**; the QA Manager approves (`master.formula.approve`). Segregation: no role holds both `master.formula.manage` and `master.formula.approve`, and no QA role holds `master.formula.manage` (QA does not draft what it approves). A test enforces both.
+
+Decided by the owner 2026-11-18 (rule 1 clarification):
+
+6. QC approves or rejects **material** lots (RM, PM, API, EXCIPIENT) with `qc.lot.change_status`. QA decides **finished-goods and return lots**: release (`qa.batch.release`), re-release of a return lot (`qa.batch.release`, e-signature + mandatory assessment reason) and reject (`qa.lot.reject_fg`, e-signature, QA Manager only). QC results on FG are input to QA's decision. Segregation: only the QA Manager holds `qa.lot.reject_fg`; no role holds both `qc.lot.change_status` and `qa.lot.reject_fg`. A test enforces both.

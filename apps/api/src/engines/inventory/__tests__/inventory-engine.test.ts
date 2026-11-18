@@ -94,9 +94,10 @@ const base = (o: Partial<MovementInput>): MovementInput => ({
   date: '2026-11-18',
   refDocType: 'TEST',
   refDocId: '1',
+  ...(o.type === 'DISPATCH' || o.type === 'SALES_RETURN' ? { customerId: ids.PLAIN! } : {}), // 0018
   ...o,
 });
-const post = (o: Partial<MovementInput>) => as('store', (tx, a) => postMovement(tx, a, base(o)));
+const post =(o: Partial<MovementInput>) => as('store', (tx, a) => postMovement(tx, a, base(o)));
 
 /** Lot with `qty` received and APPROVED. */
 async function approvedLot(qty: string, o: Partial<NewLot> = {}): Promise<string> {

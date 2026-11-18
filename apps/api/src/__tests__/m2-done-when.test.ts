@@ -77,8 +77,11 @@ async function setLot(lotId: string, ...path: string[]): Promise<void> {
 }
 
 const doc = () => String(++docSeq);
+/** DISPATCH and SALES_RETURN name a customer (0018): the toll customer for its own stock, else CUST1. */
 const mv = (o: Partial<MovementInput>): MovementInput => ({
-  type: 'RECEIPT', lotId: '0', locationId: ids.loc1!, qty: '1', date: DATE, refDocType: 'TEST', refDocId: doc(), ...o,
+  type: 'RECEIPT', lotId: '0', locationId: ids.loc1!, qty: '1', date: DATE, refDocType: 'TEST', refDocId: doc(),
+  ...(o.type === 'DISPATCH' || o.type === 'SALES_RETURN' ? { customerId: ids.cust! } : {}),
+  ...o,
 });
 /** Several movements of ONE document + their journal in one transaction (rule 5). */
 const postDoc = (who: string, inputs: Partial<MovementInput>[], refDocType = 'TEST') =>
@@ -162,6 +165,8 @@ beforeAll(async () => {
     ids.ret = await one(`INSERT INTO master.locations (warehouse_id, code, name, is_returns_area) VALUES ($1, 'RET', 'Returns bay', true) RETURNING id`, [wh]);
     ids.toll = await one(`INSERT INTO master.customers (code, name, ntn, is_toll_customer, status) VALUES ('TOLL1', 'Toll', '1234567', true, 'ACTIVE') RETURNING id`);
     await history('master.customers', ids.toll, null, 'ACTIVE');
+    ids.cust = await one(`INSERT INTO master.customers (code, name, ntn, status) VALUES ('CUST1', 'Customer', '7654321', 'ACTIVE') RETURNING id`);
+    await history('master.customers', ids.cust, null, 'ACTIVE');
   });
   for (const [key, code, type, category] of [
     ['rm', 'RM-1', 'RM', ids.rmCategory],
@@ -293,9 +298,9 @@ describe('M2 Done when', () => {
     const out = await postDoc('sup', [{ type: 'OUTPUT', lotId: fg.id, qty: '200', value: '0.00' }], 'PROD_ORDER');
     const close = await as('pm', (tx, a) => closeBatchCost(tx, a, { lotId: fg.id, batchCost: '0.00', date: DATE, refDocType: 'PROD_ORDER', refDocId: doc() }));
     await setLot(fg.id, 'UNDER_TEST', 'APPROVED', 'RELEASED');
-    const dsp = await postDoc('store', [{ type: 'DISPATCH', lotId: fg.id, qty: '150' }], 'DELIVERY');
+    const dsp = await postDoc('store', [{ type: 'DISPATCH', lotId: fg.id, qty: '150', customerId: ids.toll }], 'DELIVERY');
     const ret = await as('store', (tx, a) => createReturnLot(tx, a, { originalLotId: fg.id }));
-    const back = await postDoc('store', [{ type: 'SALES_RETURN', lotId: ret.id, qty: '10', locationId: ids.ret }], 'SALES_RETURN');
+    const back = await postDoc('store', [{ type: 'SALES_RETURN', lotId: ret.id, qty: '10', locationId: ids.ret, customerId: ids.toll }], 'SALES_RETURN');
     for (const p of [rec, iss, out, dsp, back]) {
       expect(p.movements.every((m) => m.value === '0.00' && m.customerOwned)).toBe(true);
       expect([p.entry, p.rounding]).toEqual([null, null]);

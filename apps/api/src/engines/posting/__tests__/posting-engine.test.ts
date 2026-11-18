@@ -62,6 +62,7 @@ const newLot = (o: Partial<NewLot> = {}) =>
   as('store', (tx, a) => createLot(tx, a, { source: 'GRN', itemId: ids.rm!, lotNo: `P-${++seq}`, unitCost: '10.00', ...o }));
 
 const mv = (o: Partial<MovementInput>): MovementInput => ({
+  ...(o.type === 'DISPATCH' || o.type === 'SALES_RETURN' ? { customerId: ids.toll! } : {}), // 0018: these name a customer
   type: 'RECEIPT',
   lotId: '0',
   locationId: ids.loc1!,

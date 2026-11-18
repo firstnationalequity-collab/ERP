@@ -27,7 +27,7 @@ import {
   type MovementInput,
   type NewLot,
 } from '../../inventory';
-import { postStockJournal, type JournalEntry } from '..';
+import { postStockJournal, reverseStockJournal, type JournalEntry } from '..';
 
 const client = new pg.Client({ connectionString: databaseUrl });
 const ids: Record<string, string> = {};
@@ -75,8 +75,11 @@ async function setLot(lotId: string, ...path: string[]): Promise<void> {
 }
 
 const doc = () => String(++docSeq);
+/** DISPATCH and SALES_RETURN name a customer (0018); the default is customer CUST1. */
 const mv = (o: Partial<MovementInput>): MovementInput => ({
-  type: 'RECEIPT', lotId: '0', locationId: ids.loc!, qty: '1', date: DATE, refDocType: 'TEST', refDocId: doc(), ...o,
+  type: 'RECEIPT', lotId: '0', locationId: ids.loc!, qty: '1', date: DATE, refDocType: 'TEST', refDocId: doc(),
+  ...(o.type === 'DISPATCH' || o.type === 'SALES_RETURN' ? { customerId: ids.cust! } : {}),
+  ...o,
 });
 /** Movement + its journal in one transaction (rule 5). */
 const postWithJournal = (who: string, o: Partial<MovementInput>) =>
@@ -178,6 +181,10 @@ beforeAll(async () => {
       `INSERT INTO master.customers (code, name, ntn, is_toll_customer, status) VALUES ('TOLLQ', 'Toll', '1234567', true, 'ACTIVE') RETURNING id`,
     );
     await history('master.customers', ids.toll, null, 'ACTIVE');
+    for (const [key, code] of [['cust', 'CUST1'], ['cust2', 'CUST2']] as const) {
+      ids[key] = await one(`INSERT INTO master.customers (code, name, ntn, status) VALUES ($1, $1, '7654321', 'ACTIVE') RETURNING id`, [code]);
+      await history('master.customers', ids[key]!, null, 'ACTIVE');
+    }
   });
   for (const [key, code, type, category] of [['rm', 'RM-Q', 'RM', ids.rmCategory], ['fg', 'FG-Q', 'FG', ids.fgCategory]] as const) {
     await inTx(wm, async () => {
@@ -268,9 +275,9 @@ describe('FG lot valuation (owner Q8, Option A)', () => {
     await expect(
       inTx(actors.store!.userId, async () => {
         await client.query(
-          `INSERT INTO inv.stock_movements (movement_type, movement_date, lot_id, from_location_id, qty, unit_cost, value, ref_doc_type, ref_doc_id)
-           VALUES ('DISPATCH', $1, $2, $3, -1, 10, -10, 'TEST', 1)`,
-          [DATE, fg, ids.loc],
+          `INSERT INTO inv.stock_movements (movement_type, movement_date, lot_id, from_location_id, qty, unit_cost, value, ref_doc_type, ref_doc_id, customer_id)
+           VALUES ('DISPATCH', $1, $2, $3, -1, 10, -10, 'TEST', 1, $4)`,
+          [DATE, fg, ids.loc, ids.cust],
         );
       }),
     ).rejects.toThrow(/BATCH_NOT_CLOSED/);
@@ -415,7 +422,7 @@ async function dispatchedLot(dispatched: string, o: { owner?: string; lotNo?: st
   const p = await producedLot(o.owner ? { fgQty: '10', owner: o.owner, lotNo: o.lotNo } : { fgQty: '3', rmQty: '10', rmCost: '10', lotNo: o.lotNo });
   await closeBatch(p.fg, p.order, o.owner ? '0.00' : '100.00'); // own: 3 units, 33.33 each
   await setLot(p.fg, 'UNDER_TEST', 'APPROVED', 'RELEASED');
-  await postWithJournal('store', { type: 'DISPATCH', lotId: p.fg, qty: dispatched });
+  await postWithJournal('store', { type: 'DISPATCH', lotId: p.fg, qty: dispatched, customerId: o.owner ?? ids.cust! });
   return p.fg;
 }
 const returnLot = (originalLotId: string, who = 'store') => as(who, (tx, a) => createReturnLot(tx, a, { originalLotId }));
@@ -493,9 +500,9 @@ describe('customer sales returns (owner Q9)', () => {
     await expect(
       inTx(actors.store!.userId, async () => {
         await client.query(
-          `INSERT INTO inv.stock_movements (movement_type, movement_date, lot_id, to_location_id, qty, unit_cost, value, ref_doc_type, ref_doc_id)
-           VALUES ('SALES_RETURN', $1, $2, $3, 2, 33.33, 66.66, 'TEST', 1)`,
-          [DATE, r.id, ids.ret],
+          `INSERT INTO inv.stock_movements (movement_type, movement_date, lot_id, to_location_id, qty, unit_cost, value, ref_doc_type, ref_doc_id, customer_id)
+           VALUES ('SALES_RETURN', $1, $2, $3, 2, 33.33, 66.66, 'TEST', 1, $4)`,
+          [DATE, r.id, ids.ret, ids.cust],
         );
       }),
     ).rejects.toThrow(/RETURN_EXCEEDS_DISPATCH/);
@@ -505,8 +512,98 @@ describe('customer sales returns (owner Q9)', () => {
     const original = await dispatchedLot('4', { owner: ids.toll });
     const r = await returnLot(original);
     expect([r.ownerType, r.ownerCustomerId, r.unitCost]).toEqual(['CUSTOMER', ids.toll, '0.00']);
-    const { m, entry } = await receiveReturn(r.id, '4');
+    const { m, entry } = await receiveReturn(r.id, '4', { customerId: ids.toll });
     expect([m.value, m.customerOwned, entry]).toEqual(['0.00', true, null]);
     await expectGlEqualsLedger();
+  });
+
+  it('a return never exceeds what was dispatched to THAT customer from the lot, less that customer\'s earlier returns (owner 2026-11-18)', async () => {
+    // 3 units: 2 to CUST1, 1 to CUST2.
+    const p = await producedLot({ fgQty: '3', rmQty: '10', rmCost: '10' });
+    await closeBatch(p.fg, p.order, '100.00');
+    await setLot(p.fg, 'UNDER_TEST', 'APPROVED', 'RELEASED');
+    await postWithJournal('store', { type: 'DISPATCH', lotId: p.fg, qty: '2', customerId: ids.cust });
+    await postWithJournal('store', { type: 'DISPATCH', lotId: p.fg, qty: '1', customerId: ids.cust2 });
+    const r = await returnLot(p.fg);
+
+    // CUST2 got 1: it cannot return 2, even though 3 left the lot in total.
+    await expect(receiveReturn(r.id, '2', { customerId: ids.cust2 })).rejects.toMatchObject({
+      code: 'RETURN_EXCEEDS_DISPATCH',
+      details: { customerId: ids.cust2, dispatched: '1.0000', returned: '0.0000' },
+    });
+    await receiveReturn(r.id, '1', { customerId: ids.cust2 });
+    // Its earlier return counts, in a later return lot too.
+    const r2 = await returnLot(p.fg);
+    await expect(receiveReturn(r2.id, '0.0001', { customerId: ids.cust2 })).rejects.toMatchObject({ code: 'RETURN_EXCEEDS_DISPATCH' });
+    // CUST1's limit is its own 2 units.
+    await receiveReturn(r2.id, '2', { customerId: ids.cust });
+    await expect(receiveReturn(r2.id, '0.0001', { customerId: ids.cust })).rejects.toMatchObject({ code: 'RETURN_EXCEEDS_DISPATCH' });
+
+    // A reversed dispatch no longer counts (the reversal row carries the same customer).
+    const p2 = await producedLot({ fgQty: '3', rmQty: '10', rmCost: '10' });
+    await closeBatch(p2.fg, p2.order, '100.00');
+    await setLot(p2.fg, 'UNDER_TEST', 'APPROVED', 'RELEASED');
+    const wrong = await postWithJournal('store', { type: 'DISPATCH', lotId: p2.fg, qty: '1', customerId: ids.cust2 });
+    const reversal = await as('store', async (tx, a) => {
+      const rows = await reverseMovements(tx, a, { movementIds: [wrong.m.id], date: DATE, refDocType: 'TEST', refDocId: doc() });
+      await reverseStockJournal(tx, a, { entryId: wrong.entry!.id, movements: rows, reason: 'dispatched to the wrong customer' });
+      return rows;
+    });
+    const { rows: rev } = await client.query(`SELECT customer_id FROM inv.stock_movements WHERE id = $1`, [reversal[0]!.id]);
+    expect(rev[0]!.customer_id).toBe(ids.cust2);
+    const r3 = await returnLot(p2.fg);
+    await expect(receiveReturn(r3.id, '1', { customerId: ids.cust2 })).rejects.toMatchObject({ code: 'RETURN_EXCEEDS_DISPATCH' });
+    await expectGlEqualsLedger();
+  });
+
+  it('a dispatch and a customer return name an existing customer; no other movement names one', async () => {
+    const original = await dispatchedLot('1');
+    const r = await returnLot(original);
+    await expect(receiveReturn(r.id, '1', { customerId: undefined })).rejects.toThrow(/SALES_RETURN names the customer/);
+    await expect(receiveReturn(r.id, '1', { customerId: '987654' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(postWithJournal('store', { type: 'DISPATCH', lotId: original, qty: '1', customerId: undefined })).rejects.toThrow(
+      /DISPATCH names the customer/,
+    );
+    const rm = await approvedRm('2', '5');
+    await expect(postWithJournal('store', { type: 'ISSUE', lotId: rm, qty: '1', customerId: ids.cust })).rejects.toThrow(
+      /Only a dispatch or a customer return names a customer/,
+    );
+    expect(await ledger(r.id)).toEqual({ qty: '0', value: '0' });
+  });
+
+  it('database: customer on DISPATCH / SALES_RETURN only, required there, per-customer return limit, reversal keeps the customer', async () => {
+    const original = await dispatchedLot('2'); // 2 units to CUST1
+    const r = await returnLot(original);
+    const insert = (type: string, lotId: string, qty: string, customer: string | null, extra: { loc?: string; reversalOf?: string } = {}) =>
+      inTx(actors.store!.userId, async () => {
+        const inbound = Number(qty) > 0;
+        await client.query(
+          `INSERT INTO inv.stock_movements (movement_type, movement_date, lot_id, from_location_id, to_location_id, qty, unit_cost, value,
+                                            ref_doc_type, ref_doc_id, customer_id, reversal_of)
+           VALUES ($1, $2, $3, $4, $5, $6, 33.33, round($6::numeric * 33.33, 2), 'TEST', 1, $7, $8)`,
+          [type, DATE, lotId, inbound ? null : (extra.loc ?? ids.loc), inbound ? (extra.loc ?? ids.ret) : null, qty, customer, extra.reversalOf ?? null],
+        );
+      });
+    await expect(insert('SALES_RETURN', r.id, '1', null)).rejects.toThrow(/SALES_RETURN names the customer/);
+    await expect(insert('SALES_RETURN', r.id, '1', ids.cust2!)).rejects.toThrow(/RETURN_EXCEEDS_DISPATCH: 0 was dispatched to this customer/);
+    await expect(insert('DISPATCH', original, '-1', null)).rejects.toThrow(/DISPATCH names the customer/);
+    const rm = await approvedRm('2', '5');
+    await expect(
+      inTx(actors.store!.userId, async () => {
+        await client.query(
+          `INSERT INTO inv.stock_movements (movement_type, movement_date, lot_id, from_location_id, qty, unit_cost, value, ref_doc_type, ref_doc_id, customer_id)
+           VALUES ('ISSUE', $1, $2, $3, -1, 5, -5, 'TEST', 1, $4)`,
+          [DATE, rm, ids.loc, ids.cust],
+        );
+      }),
+    ).rejects.toThrow(/movement_customer_only_dispatch_return/);
+    // A reversal of CUST1's dispatch must carry CUST1.
+    const { rows } = await client.query<{ id: string }>(
+      `SELECT id FROM inv.stock_movements WHERE lot_id = $1 AND movement_type = 'DISPATCH'`,
+      [original],
+    );
+    await expect(insert('DISPATCH', original, '2', ids.cust2!, { loc: ids.loc, reversalOf: rows[0]!.id })).rejects.toThrow(
+      /reversal carries the customer/,
+    );
   });
 });

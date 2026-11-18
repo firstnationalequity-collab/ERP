@@ -71,14 +71,16 @@ Done when: an over-limit order waits on ON_CREDIT_HOLD until the Finance Manager
 - [ ] Production order (batch number series), release check (approved formula, approved stock, reservation).
 - [ ] Material requirement with potency adjustment + filler compensation (architecture §6).
 - [ ] Issue by scan (APPROVED lots only, FEFO), returns from floor.
-- [ ] Stages in order with sign-off; IPC notes; output recorded at packing (`prod.stage.sign`) → FG lot in QUARANTINE at the provisional value of the materials issued so far (owner 2026-11-18, Q8); yield; resource hours.
+- [ ] Stages in order with sign-off; IPC notes; output recorded at packing (`prod.stage.sign`) → FG lot in QUARANTINE at the provisional value of the materials issued so far (owner 2026-11-18, Q8); yield; resource hours. **Owner 2026-11-18:** the FG lot and its journal are created only when the output/yield entry is signed by the doer AND verified by a different user (checker) with a supervisor-level key; the checker model is PENDING OWNER (options in the Handoff) and must be settled before this task.
+- [ ] Conversion cost when the whole FG lot left before batch close (`closeBatchCost` refuses with `LOT_EMPTY`): PENDING OWNER; likely answer (not confirmed) — post it to a production-variance expense account (placeholder; Finance to confirm).
 - [ ] Batch close (Production Manager e-signature): conversion absorbed into WIP, and in the same transaction `closeBatchCost` adds conversion + true-up to the FG lot as a value-only adjustment (Dr FG inventory / Cr WIP) and marks the batch closed; the FG lot cannot be dispatched before that (engines built in M2).
 
 Done when: release blocked if any material is not approved; API quantity computed from assay 98.2% in a test.
 
 ## M7 — QA and Dispatch (est. 2 days)
 - [ ] Deviations (raise, investigate, close); batch release checklist + e-signature; release refused with open deviation or FG not QC-approved.
-- [ ] Delivery order from SO, FEFO pick by scan, gate pass, proof of delivery, customer returns into a new HOLD return lot `<lot>-R<n>` at a returns area (`createReturnLot` + SALES_RETURN, posting built in M2; owner 2026-11-18, Q9); QA moves return lots on.
+- [ ] Delivery order from SO, FEFO pick by scan, gate pass, proof of delivery, customer returns into a new HOLD return lot `<lot>-R<n>` at a returns area (`createReturnLot` + SALES_RETURN, posting built in M2; owner 2026-11-18, Q9); every dispatch and return names the customer, and a return never exceeds what went to that customer (built in M2, 0018); QA moves return lots on.
+- [ ] Lot decisions by QA (owner 2026-11-18, rule 1 clarification; keys and role segregation tests built in M2): return lot HOLD → RELEASED (`qa.batch.release`, e-signature, mandatory assessment reason); FG / return lot HOLD → REJECTED (`qa.lot.reject_fg`, QA Manager, e-signature); material lot HOLD → REJECTED stays `qc.lot.change_status`. The lot transition map refuses each key on the other kind of lot; HTTP tests for each move and each refusal (QC Manager rejecting an FG lot, QA rejecting a material lot, re-release without reason).
 - [ ] Dispatch posts stock out + COGS and creates the sales invoice draft.
 
 Done when: unreleased FG cannot be picked; QA release blocked by an open deviation.

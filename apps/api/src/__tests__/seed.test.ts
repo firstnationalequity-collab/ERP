@@ -329,6 +329,54 @@ describe('formula segregation (owner decision 18-11-2026: QA cannot draft what i
   });
 });
 
+/**
+ * Lot-decision segregation breaches (owner 2026-11-18, rule 1 clarification): QC decides material lots, QA decides
+ * FG and return lots. Only the QA Manager rejects FG / return lots, and no role decides both kinds of lot.
+ */
+function lotDecisionBreaches(bundles: Map<string, string[]>): string[] {
+  const breaches: string[] = [];
+  for (const [code, keys] of bundles) {
+    const rejectsFg = keys.includes('qa.lot.reject_fg');
+    if (rejectsFg && code !== 'QA_MANAGER') breaches.push(`${code} holds qa.lot.reject_fg (QA Manager only)`);
+    if (rejectsFg && keys.includes('qc.lot.change_status')) breaches.push(`${code} holds qc.lot.change_status and qa.lot.reject_fg`);
+  }
+  return breaches;
+}
+
+describe('lot-decision segregation (owner 2026-11-18: QC decides material lots, QA decides FG and return lots)', () => {
+  const bundles = new Map(ROLE_SEEDS.map((r) => [r.code, [...r.keys] as string[]]));
+
+  it('holds for the bundles in seed/roles.ts (= docs/roles.md): QA Manager rejects FG lots, QC Manager material lots', () => {
+    expect(lotDecisionBreaches(bundles)).toEqual([]);
+    const holders = (key: string) => [...bundles].filter(([, keys]) => keys.includes(key)).map(([code]) => code);
+    expect(holders('qa.lot.reject_fg')).toEqual(['QA_MANAGER']);
+    expect(holders('qc.lot.change_status')).toEqual(['QC_MANAGER']);
+    // Return-lot re-release uses the QA release key, held only by the QA Manager.
+    expect(holders('qa.batch.release')).toEqual(['QA_MANAGER']);
+  });
+
+  it('qa.lot.reject_fg is a QA-controlled action key (role changes touching it need a QA Manager countersign)', () => {
+    expect(Permissions['qa.lot.reject_fg']).toMatchObject({ class: 'ACTION', qaControlled: true });
+  });
+
+  it('catches another role holding qa.lot.reject_fg, and a role holding both lot-decision keys (the check itself works)', () => {
+    expect(
+      lotDecisionBreaches(
+        new Map([
+          ['QC_MANAGER', ['qc.lot.change_status', 'qa.lot.reject_fg']],
+          ['QA_MANAGER', ['qa.lot.reject_fg', 'qc.lot.change_status']],
+          ['WAREHOUSE_MANAGER', ['inv.lot.dispose', 'qa.lot.reject_fg']],
+        ]),
+      ),
+    ).toEqual([
+      'QC_MANAGER holds qa.lot.reject_fg (QA Manager only)',
+      'QC_MANAGER holds qc.lot.change_status and qa.lot.reject_fg',
+      'QA_MANAGER holds qc.lot.change_status and qa.lot.reject_fg',
+      'WAREHOUSE_MANAGER holds qa.lot.reject_fg (QA Manager only)',
+    ]);
+  });
+});
+
 describe('docs/roles.md and seed/roles.ts agree', () => {
   it('has the same keys per role in the document as in the seed', async () => {
     const here = path.dirname(fileURLToPath(import.meta.url));

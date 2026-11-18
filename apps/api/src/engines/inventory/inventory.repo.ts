@@ -55,8 +55,15 @@ export async function returnLotsOf(q: Queryable, parentLotId: string): Promise<L
   return q.select().from(lots).where(eq(lots.parentLotId, parentLotId)).orderBy(asc(lots.id));
 }
 
-/** Net quantity dispatched from an original lot and its return lots, and net quantity returned into its return lots. */
-export async function dispatchedAndReturned(q: Queryable, parentLotId: string): Promise<{ dispatched: string; returned: string }> {
+/**
+ * Net quantity dispatched to one customer from an original lot and its return lots, and net quantity that customer
+ * returned into its return lots (owner 2026-11-18: a return never exceeds what went to THAT customer; 0018).
+ */
+export async function dispatchedAndReturned(
+  q: Queryable,
+  parentLotId: string,
+  customerId: string,
+): Promise<{ dispatched: string; returned: string }> {
   const [row] = await q
     .select({
       dispatched: sql<string>`COALESCE(-sum(${stockMovements.qty}) FILTER (WHERE ${stockMovements.movementType} = 'DISPATCH'), 0)::text`,
@@ -64,7 +71,7 @@ export async function dispatchedAndReturned(q: Queryable, parentLotId: string): 
     })
     .from(stockMovements)
     .innerJoin(lots, eq(lots.id, stockMovements.lotId))
-    .where(sql`(${lots.id} = ${parentLotId} OR ${lots.parentLotId} = ${parentLotId})`);
+    .where(and(sql`(${lots.id} = ${parentLotId} OR ${lots.parentLotId} = ${parentLotId})`, eq(stockMovements.customerId, customerId)));
   return row ?? { dispatched: '0', returned: '0' };
 }
 

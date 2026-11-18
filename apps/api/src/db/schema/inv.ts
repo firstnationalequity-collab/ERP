@@ -1,4 +1,4 @@
-// Drizzle description of the `inv` schema. Source of truth: src/db/migrations/0014_inventory.sql (+ 0015–0017).
+// Drizzle description of the `inv` schema. Source of truth: src/db/migrations/0014_inventory.sql (+ 0015–0018).
 // Only the inventory engine (engines/inventory) writes these tables; balances are kept by the ledger trigger.
 import { date, numeric, pgSchema, text } from 'drizzle-orm/pg-core';
 import type { LotSource, LotStatus, StockMovementType, StockOwner } from '@albert/shared';
@@ -48,6 +48,8 @@ export const stockMovements = inv.table('stock_movements', {
   refDocId: bigintString('ref_doc_id').notNull(),
   reasonCode: text('reason_code'),
   reversalOf: bigintString('reversal_of'),
+  /** DISPATCH / SALES_RETURN only (required there): the customer the goods went to or came back from (0018). */
+  customerId: bigintString('customer_id'),
   postedAt: tstz('posted_at').notNull().defaultNow(),
   ...auditColumns(),
 });

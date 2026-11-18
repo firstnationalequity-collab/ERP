@@ -80,7 +80,7 @@ export const Permissions = {
   'qc.spec.approve': qaAction('Approve specifications'),
   'qc.result.enter': qaAction('Take samples, enter results'),
   'qc.result.review': qaAction('Review results'),
-  'qc.lot.change_status': qaAction('Approve / reject lots'),
+  'qc.lot.change_status': qaAction('Approve / reject material lots (RM, PM, API, EXCIPIENT)'),
   'qc.coa.issue': qaAction('Issue certificates of analysis'),
 
   // production
@@ -94,9 +94,10 @@ export const Permissions = {
   'qa.view': view('View deviations and batch releases'),
   'qa.deviation.manage': qaAction('Raise and investigate deviations'),
   'qa.deviation.close': qaAction('Close deviations'),
-  'qa.batch.release': qaAction('Release or reject batches (and their FG lots)'),
+  'qa.batch.release': qaAction('Release or reject batches; release FG lots; re-release return lots'),
   'qa.lot.hold': qaAction('Place or lift HOLD on a lot'),
   'qa.lot.witness': qaAction('Witness e-signature for lot destruction / return'),
+  'qa.lot.reject_fg': qaAction('Reject finished-goods and return lots (HOLD → REJECTED), with e-signature'),
   'qa.access.countersign': qaAction('Countersign role changes touching QA-controlled keys'),
   'qa.product.countersign': qaAction('Countersign product registration no., artwork version and quality agreement changes'),
 

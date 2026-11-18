@@ -21,7 +21,7 @@ pnpm monorepo, TypeScript strict everywhere.
 - `packages/shared`: Zod schemas, enums, permission keys — the single source used by API and web.
 
 ## Non-negotiable rules
-1. Only QC approves or rejects material lots. Only QA may place or lift HOLD and release batches/FG lots. Warehouse Manager may only move a REJECTED lot to DESTROYED or RETURNED, with a QA witness e-signature. No other role, including CEO and admin, can change a lot or batch status.
+1. Only QC approves or rejects material lots. Only QA may place or lift HOLD and release batches/FG lots. QC approves or rejects material lots (RM, PM, API, EXCIPIENT). QA decides finished-goods and return lots: release, re-release or reject. QC results on FG are input to QA's decision. Warehouse Manager may only move a REJECTED lot to DESTROYED or RETURNED, with a QA witness e-signature. No other role, including CEO and admin, can change a lot or batch status.
 2. Issue/reserve only APPROVED lots; dispatch only RELEASED FG lots. Check in the service AND in the DB.
 3. No negative stock (CHECK constraint on `inv.stock_balances`).
 4. Posted documents are immutable. Corrections are reversal documents. Never UPDATE/DELETE posted rows.

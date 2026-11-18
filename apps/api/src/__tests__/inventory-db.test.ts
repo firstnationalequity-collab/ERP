@@ -108,15 +108,19 @@ interface MoveOptions {
   location?: string;
   reversalOf?: string;
 }
-/** Insert a ledger row; qty > 0 goes into the location, qty < 0 comes out of it. Value defaults to qty × 10. */
+/**
+ * Insert a ledger row; qty > 0 goes into the location, qty < 0 comes out of it. Value defaults to qty × 10.
+ * DISPATCH / SALES_RETURN name customer PLAIN (0018).
+ */
 function insertMove(type: string, lot: string, qty: string, o: MoveOptions = {}): Promise<string> {
   const inbound = !qty.startsWith('-');
   const loc = o.location ?? ids.loc1;
+  const customer = type === 'DISPATCH' || type === 'SALES_RETURN' ? ids.PLAIN : null;
   return one(
     `INSERT INTO inv.stock_movements
-       (movement_type, movement_date, lot_id, from_location_id, to_location_id, qty, unit_cost, value, ref_doc_type, ref_doc_id, reversal_of)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'TEST', 1, $9) RETURNING id`,
-    [type, o.date ?? '2026-11-18', lot, inbound ? null : loc, inbound ? loc : null, qty, o.unitCost ?? '10', o.value ?? String(Number(qty) * 10), o.reversalOf ?? null],
+       (movement_type, movement_date, lot_id, from_location_id, to_location_id, qty, unit_cost, value, ref_doc_type, ref_doc_id, reversal_of, customer_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'TEST', 1, $9, $10) RETURNING id`,
+    [type, o.date ?? '2026-11-18', lot, inbound ? null : loc, inbound ? loc : null, qty, o.unitCost ?? '10', o.value ?? String(Number(qty) * 10), o.reversalOf ?? null, customer],
   );
 }
 const move = (type: string, lot: string, qty: string, o: MoveOptions = {}) => tx(() => insertMove(type, lot, qty, o));
