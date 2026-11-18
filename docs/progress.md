@@ -41,7 +41,7 @@ Current milestone: **M1 — Foundation**
 3. Must periods be closed in order (no August close while July is open)?
 4. Block one user from holding both an admin role and a business-action role?
 5. Attachments: allow "void with reason" for a wrong upload, or keep insert-only?
-6. Item and master-formula ownership (`master.item.manage`, `master.formula.manage` unassigned) — needed before M2 masters.
+6. ~~Item and master-formula ownership~~ — decided 18-11-2026: Planner / QA Officer (decisions.md).
 
 **Local dev database notes:**
 - No QA Manager yet: create the user in the app, then run `pnpm --filter @albert/api bootstrap:qa-manager -- --user <code> --reason "..."` once.

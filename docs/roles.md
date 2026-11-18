@@ -105,13 +105,13 @@ Every role except SYSTEM also holds `core.approval.inbox` (not repeated below). 
 | 9 | Purchase Manager | `purch.view`, `master.view`, `inv.stock.view` | `purch.po.approve`, `master.vendor.approve` |
 | 10 | Storekeeper | `inv.stock.view`, `purch.view`, `prod.view`, `fg.view`, `master.view` | `purch.grn.post`, `inv.movement.post`, `inv.label.print`, `fg.delivery.manage`, `fg.dispatch.post` |
 | 11 | Warehouse Manager | `inv.stock.view`, `purch.view`, `prod.view`, `fg.view`, `master.view` | `inv.adjustment.request`, `fg.gatepass.approve`, `fg.delivery.manage` (returns), `inv.lot.dispose`, `master.location.manage` |
-| 12 | Planner | `prod.view`, `sales.view`, `inv.stock.view`, `master.view` | `prod.order.manage` |
+| 12 | Planner | `prod.view`, `sales.view`, `inv.stock.view`, `master.view` | `prod.order.manage`, `master.item.manage` |
 | 13 | Production Operator | `prod.view` | `prod.stage.sign` |
 | 14 | Production Supervisor | `prod.view`, `inv.stock.view` | `prod.stage.sign`, `prod.batch.close` |
 | 15 | Production Manager | `prod.view`, `qa.view`, `inv.stock.view`, `master.view` | `prod.batch.approve_close`, `qa.deviation.manage` |
 | 16 | QC Analyst | `qc.view`, `inv.stock.view`, `master.view` | `qc.result.enter`, `qc.spec.manage` |
 | 17 | QC Manager | `qc.view`, `inv.stock.view`, `master.view` | `qc.result.review`, `qc.lot.change_status`, `qc.coa.issue`, `qc.spec.approve` |
-| 18 | QA Officer | `qa.view`, `qc.view`, `prod.view`, `master.view` | `qa.deviation.manage` |
+| 18 | QA Officer | `qa.view`, `qc.view`, `prod.view`, `master.view` | `qa.deviation.manage`, `master.formula.manage` |
 | 19 | QA Manager | `qa.view`, `qc.view`, `prod.view`, `inv.stock.view`, `master.view`, `core.audit.view` | `qa.deviation.manage`, `qa.deviation.close`, `qa.batch.release`, `qa.lot.hold`, `qa.lot.witness`, `qa.access.countersign`, `master.avl.approve`, `master.formula.approve`, `inv.adjustment.approve` (second approver for adjustments) |
 | 20 | System Admin | `core.audit.view` | `core.user.manage`, `core.role.manage`, `core.settings.manage` (admin keys only) |
 | — | SYSTEM (user, not a role) | — | none; cannot log in; actor for seeds and jobs |
@@ -125,6 +125,6 @@ Approved by the owner on 2026-11-17 (decisions log):
 4. Sales Executive delivery requests come under `sales.order.manage`; there is no separate key.
 5. The countersigner must be a different person from the admin who made the change. Nobody countersigns a change to their own roles.
 
-Still open (blocks seeding roles):
+Decided by the owner on 2026-11-18 (may be revised later):
 
-2. **No owner yet:** `master.item.manage` (items, categories, UoM) and `master.formula.manage` (drafting master formulas) are unassigned. Who should own them?
+2. `master.item.manage` (items, categories, UoM) → **Planner**. `master.formula.manage` (drafting master formulas) → **QA Officer**; the QA Manager approves (`master.formula.approve`), so drafter ≠ approver, and Production cannot edit formulas.

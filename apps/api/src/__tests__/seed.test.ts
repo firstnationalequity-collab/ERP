@@ -86,13 +86,16 @@ describe('first seed', () => {
     for (const key of adminKeys) expect(Permissions[key as keyof typeof Permissions].class).not.toBe('ACTION');
   });
 
-  it('leaves the keys with an undecided owner unassigned (docs/roles.md point 2)', async () => {
-    expect(
-      await count(
-        `SELECT count(*) FROM core.role_permissions rp JOIN core.permissions p ON p.id = rp.permission_id
-          WHERE p.key IN ('master.item.manage', 'master.formula.manage')`,
-      ),
-    ).toBe(0);
+  it('gives item master to the Planner and formula drafting to the QA Officer only (docs/roles.md point 2)', async () => {
+    const { rows } = await client.query<{ key: string; code: string }>(
+      `SELECT p.key, r.code FROM core.role_permissions rp
+         JOIN core.permissions p ON p.id = rp.permission_id JOIN core.roles r ON r.id = rp.role_id
+        WHERE p.key IN ('master.item.manage', 'master.formula.manage') ORDER BY p.key, r.code`,
+    );
+    expect(rows).toEqual([
+      { key: 'master.formula.manage', code: 'QA_OFFICER' },
+      { key: 'master.item.manage', code: 'PLANNER' },
+    ]);
   });
 
   it('creates the first admin: forced password change, one credential, System Admin role only', async () => {

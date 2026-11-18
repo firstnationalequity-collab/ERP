@@ -1,7 +1,7 @@
 // Phase 1 roles and their permission bundles — a transcription of docs/roles.md ("Role → keys").
 // Change docs/roles.md first, then this file. The seed only CREATES missing roles; it never edits an
 // existing role (after go-live, role changes go through the role admin so they are audited and countersigned).
-// Still open (docs/roles.md point 2): owners of master.item.manage and master.formula.manage — unassigned.
+// master.item.manage → Planner; master.formula.manage → QA Officer (owner decision 18-11-2026).
 import { ViewPermissionKeys, type PermissionKey } from '@albert/shared';
 
 export interface RoleSeed {
@@ -82,7 +82,7 @@ const roles: RoleSeed[] = [
   {
     code: 'PLANNER',
     name: 'Planner',
-    keys: ['prod.view', 'sales.view', 'inv.stock.view', 'master.view', 'prod.order.manage'],
+    keys: ['prod.view', 'sales.view', 'inv.stock.view', 'master.view', 'prod.order.manage', 'master.item.manage'],
   },
   {
     code: 'PRODUCTION_OPERATOR',
@@ -112,7 +112,7 @@ const roles: RoleSeed[] = [
   {
     code: 'QA_OFFICER',
     name: 'QA Officer',
-    keys: ['qa.view', 'qc.view', 'prod.view', 'master.view', 'qa.deviation.manage'],
+    keys: ['qa.view', 'qc.view', 'prod.view', 'master.view', 'qa.deviation.manage', 'master.formula.manage'],
   },
   {
     code: 'QA_MANAGER',
