@@ -49,7 +49,7 @@ DB schemas per module: `core`, `master`, `inv`, `sales`, `purch`, `qc`, `prod`, 
 - Every table: `id BIGINT GENERATED ALWAYS AS IDENTITY`, `company_id` (FK `core.companies`), `created_at/by`, `updated_at/by` (FK `core.users`). Documents get `doc_no` from `core.number_series`. Seeds and jobs act as the SYSTEM user.
 - `Idempotency-Key` is stored in `core.idempotency_keys` (24 h). The same key with a different request returns `DUPLICATE_REQUEST`.
 - Password hashes live only in `core.user_credentials`, which has no audit trigger. A hash must never reach `audit_log`, logs or API responses.
-- Role administration: nobody changes their own role assignments; a role holding an admin key never holds an action key; changes to roles with `qc.*` / `qa.*` action keys need a QA Manager e-signature.
+- Role administration: nobody changes their own role assignments; a role holding an admin key never holds an action key; changes to roles holding a QA-controlled key (`qaControlled: true` in `permissions.ts`: every `qc.*` / `qa.*` action key and every key that approves a GMP record) need a QA Manager e-signature. The rule reads the flag, never the key prefix.
 - Timestamps UTC in DB (`TIMESTAMPTZ`); display Asia/Karachi; dates DD-MM-YYYY; currency PKR.
 - Permission keys only from `packages/shared/src/permissions.ts`.
 - Status values only from `packages/shared/src/enums.ts`, mirrored by DB CHECK constraints.
@@ -68,3 +68,4 @@ DB schemas per module: `core`, `master`, `inv`, `sales`, `purch`, `qc`, `prod`, 
 - Never commit secrets. Config comes from env vars validated in `apps/api/src/config/env.ts`.
 - Never use `any`, `@ts-ignore`, or disable lint rules to get past an error.
 - Never run destructive DB commands (drop, truncate, reset) against anything except the local/test database.
+- Never record a decision as the owner's unless the owner stated it in this chat. If you must pick a default to keep moving, write it in decisions.md with 'Decided by: agent default — PENDING OWNER', list it under 'Open questions for the owner' in the Handoff, and tell me in your reply. Never cite a requirement, document or ID that does not exist in the repo.

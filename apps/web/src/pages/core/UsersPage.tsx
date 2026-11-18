@@ -1,5 +1,5 @@
 // User administration (core.user.manage). Rules enforced by the API (decisions Q1, Q5–Q7):
-// no self role change / deactivation / reset; QA countersign when roles with QC/QA action keys change.
+// no self role change / deactivation / reset; QA countersign when roles with QA-controlled keys change.
 import { useState } from 'react';
 import { App, Button, Form, Input, Modal, Select, Space, Table, Tag, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -53,7 +53,7 @@ export function UsersPage() {
     modal.confirm({ title: 'Please confirm', content: text, onOk: () => act.mutateAsync({ u, action }) });
   };
 
-  /** Roles chosen in the dialog → does the change touch QC/QA action keys? → reason (+ countersign). */
+  /** Roles chosen in the dialog → does the change touch QA-controlled keys? → reason (+ countersign). */
   const chooseRoles = (u: UserDto, roleIds: string[]) => {
     const current = u.roles.map((r) => r.id);
     const changed = [...roleIds.filter((id) => !current.includes(id)), ...current.filter((id) => !roleIds.includes(id))];

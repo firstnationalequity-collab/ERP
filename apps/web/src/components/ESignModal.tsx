@@ -98,7 +98,7 @@ export function ESignModal(props: Props) {
               {countersignBy} countersign
             </Divider>
             <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-              {countersignNote ?? 'This change touches QC/QA action keys. A QA Manager must countersign here with their own password.'}
+              {countersignNote ?? 'This change touches QA-controlled keys. A QA Manager must countersign here with their own password.'}
             </Typography.Paragraph>
             <Form.Item name="csUsername" label={`${countersignBy} employee code`} rules={[{ required: true }]}>
               <Input autoComplete="off" />

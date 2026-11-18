@@ -11,7 +11,7 @@ Design context: `docs/architecture.md` §3 and §4.
 | --- | --- | --- |
 | admin | Manage users, roles, settings | A role holding any admin key may hold only admin and view keys (never an action key) |
 | view | Read-only access to a module | CEO holds every view key and nothing else |
-| action | Creates, changes, approves or posts business data | Never on an admin role. Changes to a role holding a `qc.*` / `qa.*` action key need a QA Manager e-signature |
+| action | Creates, changes, approves or posts business data | Never on an admin role. Changes to a role holding a QA-controlled key (`qaControlled` in `permissions.ts`: every `qc.*` / `qa.*` action key, `master.avl.approve`, `master.formula.approve`, `master.item.approve` and any future key that approves a GMP record) need a QA Manager e-signature |
 
 ## Key catalogue
 
@@ -74,7 +74,7 @@ Design context: `docs/architecture.md` §3 and §4.
 | `qa.batch.release` | action | Release or reject batches (and their FG lots) | existing |
 | `qa.lot.hold` | action | Place or lift HOLD on a lot | new |
 | `qa.lot.witness` | action | Witness e-signature for lot destruction / return | **proposed** |
-| `qa.access.countersign` | action | E-signature countersign for role changes touching `qc.*` / `qa.*` action keys | **proposed** |
+| `qa.access.countersign` | action | E-signature countersign for role changes touching QA-controlled keys | **proposed** |
 | `qa.product.countersign` | action | Countersign product registration no., artwork version and quality-agreement changes | new (M2) |
 | `fg.view` | view | View delivery orders, gate passes, returns | new |
 | `fg.delivery.manage` | action | Delivery orders, picking, returns receipt | existing |
@@ -126,7 +126,7 @@ Every role except SYSTEM also holds `core.approval.inbox` (not repeated below). 
 Approved by the owner on 2026-11-17 (decisions log):
 
 1. The proposed keys `inv.lot.dispose`, `qa.lot.witness` and `qa.access.countersign` are accepted. The witness and countersign are checked by key, not by role name.
-3. Assigning a user to, or removing a user from, a role that holds `qc.*` / `qa.*` action keys also needs a QA Manager countersign e-signature.
+3. Assigning a user to, or removing a user from, a role that holds a QA-controlled key also needs a QA Manager countersign e-signature.
 4. Sales Executive delivery requests come under `sales.order.manage`; there is no separate key.
 5. The countersigner must be a different person from the admin who made the change. Nobody countersigns a change to their own roles.
 

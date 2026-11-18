@@ -465,3 +465,54 @@ describe('refusal paths (rules review E)', () => {
     expect(await rolesOf(id)).toEqual([]);
   });
 });
+
+describe('QA-controlled keys by classification, not prefix (decisions "QA-controlled keys")', () => {
+  for (const key of ['master.avl.approve', 'master.formula.approve', 'master.item.approve'] as const) {
+    it(`needs a QA countersign to grant ${key} to a role`, async () => {
+      const code = `GMP_${key.split('.')[1]!.toUpperCase()}_TEST`;
+      const body = { code, name: `${key} test`, keys: ['master.view', key], reason: 'GMP approver role' };
+      const refused = await as('admin').post('/roles', body);
+      expect(refused.status).toBe(403);
+      expect(refused.body.error.code).toBe('COUNTERSIGN_REQUIRED');
+      const ok = await as('admin').post('/roles', { ...body, countersign: countersignBy('a_qam') });
+      expect(ok.status).toBe(201);
+      expect(ok.body.needsCountersign).toBe(true);
+    });
+  }
+
+  it('needs a QA countersign to add master.item.approve to an existing role without qc/qa keys', async () => {
+    const created = await as('admin').post('/roles', {
+      code: 'ITEM_CLERK_TEST', name: 'Item clerk', keys: ['master.view', 'master.item.manage'], reason: 'Clerk role',
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.needsCountersign).toBe(false);
+    const next = { keys: ['master.view', 'master.item.manage', 'master.item.approve'], reason: 'Wants to activate items' };
+    const refused = await as('admin').put(`/roles/${created.body.id}/permissions`, next);
+    expect(refused.body.error.code).toBe('COUNTERSIGN_REQUIRED');
+  });
+
+  it('needs a QA countersign to assign a user to a role holding master.avl.approve', async () => {
+    const role = await as('admin').post('/roles', {
+      code: 'AVL_APPROVER_TEST', name: 'AVL approver', keys: ['master.view', 'master.avl.approve'], reason: 'AVL role',
+      countersign: countersignBy('a_qam'),
+    });
+    const id = await createTestUser({ username: 'a_avl_user' });
+    const refused = await as('admin').put(`/users/${id}/roles`, { roleIds: [role.body.id], reason: 'Approves AVL' });
+    expect(refused.status).toBe(403);
+    expect(refused.body.error.code).toBe('COUNTERSIGN_REQUIRED');
+    expect(await rolesOf(id)).toEqual([]);
+    const ok = await as('admin').put(`/users/${id}/roles`, {
+      roleIds: [role.body.id], reason: 'Approves AVL', countersign: countersignBy('a_qam'),
+    });
+    expect(ok.status).toBe(200);
+    expect(await rolesOf(id)).toEqual(['AVL_APPROVER_TEST']);
+  });
+
+  it('does not need a QA countersign for master.customer.approve (qaControlled: false)', async () => {
+    const res = await as('admin').post('/roles', {
+      code: 'CUST_APPROVER_TEST', name: 'Customer approver', keys: ['master.view', 'master.customer.approve'], reason: 'Credit desk',
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.needsCountersign).toBe(false);
+  });
+});

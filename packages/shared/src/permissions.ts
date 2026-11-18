@@ -2,16 +2,29 @@
 // Add keys here first; the seed syncs them into core.permissions; roles bundle them (docs/roles.md).
 // Class (docs/roles.md): ADMIN = manage users/roles/settings; VIEW = read-only; ACTION = changes business data.
 // A role holding an ADMIN key never holds an ACTION key (enforced in the service and in the database).
+//
+// qaControlled (decisions 18-11-2026 "QA-controlled keys"): an ACTION key that approves or changes
+// something QA controls: every qa.* / qc.* action key and every key that approves a GMP record.
+// Granting such a key to a role, or assigning a user to a role holding one, needs a QA Manager
+// countersign. The rule reads this flag, never the key's prefix. Every `.approve` key under master.* /
+// qc.* must state the flag deliberately (true or false); permissions.test.ts enforces it.
 import type { PermissionClass } from './enums';
 
 interface PermissionDef {
   readonly class: PermissionClass;
   readonly description: string;
+  readonly qaControlled?: boolean;
 }
 
 const admin = (description: string): PermissionDef => ({ class: 'ADMIN', description });
 const view = (description: string): PermissionDef => ({ class: 'VIEW', description });
-const action = (description: string): PermissionDef => ({ class: 'ACTION', description });
+const action = (description: string, opts?: { qaControlled: false }): PermissionDef => ({
+  class: 'ACTION',
+  description,
+  ...(opts ?? {}),
+});
+/** An ACTION key QA controls: role changes touching it need a QA Manager countersign. */
+const qaAction = (description: string): PermissionDef => ({ class: 'ACTION', description, qaControlled: true });
 
 export const Permissions = {
   // core
@@ -26,14 +39,14 @@ export const Permissions = {
   // masters
   'master.view': view('View all masters'),
   'master.item.manage': action('Items, categories, UoM (draft items; activates non-GMP items)'),
-  'master.item.approve': action('Activate, deactivate and countersign GMP items (QA)'),
+  'master.item.approve': qaAction('Activate, deactivate and countersign GMP items (QA)'),
   'master.customer.manage': action('Create/edit customers (draft)'),
-  'master.customer.approve': action('Activate customers'),
+  'master.customer.approve': action('Activate customers', { qaControlled: false }),
   'master.vendor.manage': action('Create/edit vendors (draft)'),
-  'master.vendor.approve': action('Activate vendors'),
-  'master.avl.approve': action('Add/block approved sources (QA)'),
+  'master.vendor.approve': action('Activate vendors', { qaControlled: false }),
+  'master.avl.approve': qaAction('Add/block approved sources (QA)'),
   'master.formula.manage': action('Draft master formulas'),
-  'master.formula.approve': action('Approve master formula versions (QA)'),
+  'master.formula.approve': qaAction('Approve master formula versions (QA)'),
   'master.location.manage': action('Warehouses and locations'),
   'master.product.manage': action('Products (registration, artwork and quality agreement changes need a QA countersign)'),
   'master.price.manage': action('Price lists'),
@@ -63,12 +76,12 @@ export const Permissions = {
 
   // qc
   'qc.view': view('View specs, samples, results, CoAs'),
-  'qc.spec.manage': action('Draft specifications'),
-  'qc.spec.approve': action('Approve specifications'),
-  'qc.result.enter': action('Take samples, enter results'),
-  'qc.result.review': action('Review results'),
-  'qc.lot.change_status': action('Approve / reject lots'),
-  'qc.coa.issue': action('Issue certificates of analysis'),
+  'qc.spec.manage': qaAction('Draft specifications'),
+  'qc.spec.approve': qaAction('Approve specifications'),
+  'qc.result.enter': qaAction('Take samples, enter results'),
+  'qc.result.review': qaAction('Review results'),
+  'qc.lot.change_status': qaAction('Approve / reject lots'),
+  'qc.coa.issue': qaAction('Issue certificates of analysis'),
 
   // production
   'prod.view': view('View production orders, stages, outputs'),
@@ -79,13 +92,13 @@ export const Permissions = {
 
   // qa
   'qa.view': view('View deviations and batch releases'),
-  'qa.deviation.manage': action('Raise and investigate deviations'),
-  'qa.deviation.close': action('Close deviations'),
-  'qa.batch.release': action('Release or reject batches (and their FG lots)'),
-  'qa.lot.hold': action('Place or lift HOLD on a lot'),
-  'qa.lot.witness': action('Witness e-signature for lot destruction / return'),
-  'qa.access.countersign': action('Countersign role changes touching qc.* / qa.* action keys'),
-  'qa.product.countersign': action('Countersign product registration no., artwork version and quality agreement changes'),
+  'qa.deviation.manage': qaAction('Raise and investigate deviations'),
+  'qa.deviation.close': qaAction('Close deviations'),
+  'qa.batch.release': qaAction('Release or reject batches (and their FG lots)'),
+  'qa.lot.hold': qaAction('Place or lift HOLD on a lot'),
+  'qa.lot.witness': qaAction('Witness e-signature for lot destruction / return'),
+  'qa.access.countersign': qaAction('Countersign role changes touching QA-controlled keys'),
+  'qa.product.countersign': qaAction('Countersign product registration no., artwork version and quality agreement changes'),
 
   // finished goods and dispatch
   'fg.view': view('View delivery orders, gate passes, returns'),
@@ -119,7 +132,10 @@ export function permissionClass(key: PermissionKey): PermissionClass {
 
 export const ViewPermissionKeys = PermissionKeys.filter((k) => Permissions[k].class === 'VIEW');
 
-/** Keys whose role changes need a QA Manager countersign (Q1): qc.* / qa.* ACTION keys. */
-export function isQualityActionKey(key: PermissionKey): boolean {
-  return Permissions[key].class === 'ACTION' && (key.startsWith('qc.') || key.startsWith('qa.'));
+/** Keys whose role changes need a QA Manager countersign (Q1; decisions "QA-controlled keys"). Reads the flag, never the prefix. */
+export function isQaControlledKey(key: PermissionKey): boolean {
+  const def: PermissionDef = Permissions[key];
+  return def.class === 'ACTION' && def.qaControlled === true;
 }
+
+export const QaControlledKeys: readonly PermissionKey[] = PermissionKeys.filter(isQaControlledKey);

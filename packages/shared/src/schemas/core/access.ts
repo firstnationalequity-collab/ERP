@@ -49,7 +49,7 @@ export const ResetPasswordRequest = z.object({ temporaryPassword: z.string().min
 export type ResetPasswordRequest = z.infer<typeof ResetPasswordRequest>;
 
 /**
- * Replace a user's roles. Adding or removing a role that holds qc.* / qa.* action keys needs a
+ * Replace a user's roles. Adding or removing a role that holds a QA-controlled key (`qaControlled`) needs a
  * QA Manager countersign (`countersign`, signed at the same terminal).
  */
 export const SetUserRolesRequest = z
@@ -123,7 +123,7 @@ export interface RoleDto {
   isActive: boolean;
   keys: PermissionKey[];
   userCount: number;
-  /** True when the role holds qc.* / qa.* action keys: changes need a QA Manager countersign. */
+  /** True when the role holds a QA-controlled key (`qaControlled`): changes need a QA Manager countersign. */
   needsCountersign: boolean;
 }
 

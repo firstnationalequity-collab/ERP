@@ -1,10 +1,10 @@
 // Roles and permission bundles (core.role.manage; read also with core.user.manage).
-// Shows the same rules the API enforces: admin keys never with action keys; QC/QA action key changes need
+// Shows the same rules the API enforces: admin keys never with action keys; changes to QA-controlled keys need
 // a QA Manager countersign (docs/roles.md, decision Q1).
 import { useMemo, useState } from 'react';
 import { Alert, App, Button, Checkbox, Collapse, Form, Input, Modal, Space, Table, Tag, Typography } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Permissions, isQualityActionKey, type PermissionDto, type PermissionKey, type RoleDto } from '@albert/shared';
+import { Permissions, isQaControlledKey, type PermissionDto, type PermissionKey, type RoleDto } from '@albert/shared';
 import { api, errorText } from '../../api/client';
 import { useAuth } from '../../auth/AuthContext';
 import { ESignModal, type ESignResult } from '../../components/ESignModal';
@@ -18,7 +18,7 @@ const MODULE_NAMES: Record<string, string> = {
 };
 
 function needsCountersign(keys: Iterable<PermissionKey>): boolean {
-  for (const k of keys) if (isQualityActionKey(k)) return true;
+  for (const k of keys) if (isQaControlledKey(k)) return true;
   return false;
 }
 
@@ -168,7 +168,7 @@ function RoleEditor({ role, catalogue, onClose, onNext }: { role: RoleDto | null
       )}
       {conflict && <Alert type="error" showIcon style={{ marginBottom: 12 }} message="A role with an admin key (purple) cannot also hold action keys (blue)." />}
       {(role?.needsCountersign || needsCountersign(keys)) && (
-        <Alert type="warning" showIcon style={{ marginBottom: 12 }} message="This role holds QC/QA action keys: saving needs a QA Manager countersign." />
+        <Alert type="warning" showIcon style={{ marginBottom: 12 }} message="This role holds QA-controlled keys: saving needs a QA Manager countersign." />
       )}
       <Collapse
         size="small"

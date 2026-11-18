@@ -1,14 +1,14 @@
 // User and role administration. Rules (docs/architecture.md §3; decisions Q1, Q5–Q7, Q14, roles review):
 //  - nobody changes their own role assignments (also enforced in the DB);
 //  - a role holding an admin key never holds an action key (also enforced in the DB);
-//  - any change to a role holding qc.* / qa.* action keys — its bundle, its activation, or who holds it —
+//  - any change to a role holding a QA-controlled key (`qaControlled` in permissions.ts) — its bundle, its activation, or who holds it —
 //    needs a QA Manager countersign (qa.access.countersign). The countersigner is a different person from
 //    the admin, is not the user whose roles change, and does not hold the role being changed;
 //  - the last active user who can manage users cannot be removed, deactivated or stripped of that key.
 // The permission to call each function (core.user.manage / core.role.manage) is checked by the routes.
 import {
   Permissions,
-  isQualityActionKey,
+  isQaControlledKey,
   type CreateRoleRequest,
   type CreateUserRequest,
   type ListQuery,
@@ -55,7 +55,7 @@ function toUserDto(row: UserSummaryRow, roleList: { id: string; code: string; na
 }
 
 function hasQualityKey(keys: Iterable<PermissionKey>): boolean {
-  for (const k of keys) if (isQualityActionKey(k)) return true;
+  for (const k of keys) if (isQaControlledKey(k)) return true;
   return false;
 }
 
@@ -102,7 +102,7 @@ async function applyCountersign(
 ): Promise<string | undefined> {
   if (!needed && !proof) return undefined;
   if (needed && !proof) {
-    throw new AppError('COUNTERSIGN_REQUIRED', 'This change touches QC/QA action keys and needs a QA Manager countersign', {
+    throw new AppError('COUNTERSIGN_REQUIRED', 'This change touches QA-controlled keys and needs a QA Manager countersign', {
       permission: COUNTERSIGN_KEY,
     });
   }

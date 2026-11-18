@@ -93,7 +93,7 @@ Access is permission-based: each action is a permission key (`purch.po.approve`,
 | QC Analyst | QC | Enter results, take samples | Approve own results |
 | QC Manager | QC | Review results, approve/reject lots, issue CoA, approve specs | Release batch, place or lift HOLD |
 | QA Officer | QA | Raise and investigate deviations | Release batch, close deviations, enter QC results, create POs |
-| QA Manager | QA | AVL approval, master formula approval, close deviations, place/lift lot HOLD, batch release; QA witness for lot disposal; countersign role changes that touch qc.* / qa.* action keys | Enter QC results, create POs |
+| QA Manager | QA | AVL approval, master formula approval, close deviations, place/lift lot HOLD, batch release; QA witness for lot disposal; countersign role changes that touch QA-controlled keys | Enter QC results, create POs |
 | System Admin | IT | Users, roles, settings, number series | Any business transaction or approval |
 
 A seeded **SYSTEM** user (no roles, cannot log in) is the actor for seeds and background jobs.
@@ -102,7 +102,7 @@ A seeded **SYSTEM** user (no roles, cannot log in) is the actor for seeds and ba
 
 - Nobody can change their own role assignments, and that includes System Admin.
 - A role that holds an admin key (`core.user.manage`, `core.role.manage`, `core.settings.manage`) can never also hold an action key. Saving such a bundle is refused.
-- Any change to a role that holds, or would hold, a `qc.*` or `qa.*` action key needs a QA Manager e-signature.
+- Any change to a role that holds, or would hold, a QA-controlled key (`qaControlled: true` in `packages/shared/src/permissions.ts`: every `qc.*` / `qa.*` action key plus `master.avl.approve`, `master.formula.approve`, `master.item.approve` and any future key that approves a GMP record) needs a QA Manager e-signature; so does assigning a user to, or removing a user from, such a role. The rule reads the flag, not the key prefix.
 
 **Approval matrix** (configurable table `approval_rules`; values are placeholders until Finance confirms; CEO can be added to any band later without code changes):
 
