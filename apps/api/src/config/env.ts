@@ -11,6 +11,8 @@ const EnvSchema = z.object({
   COMPANY_TIMEZONE: z.string().default('Asia/Karachi'),
   /** Password for the first admin created by the seed. Required in production (seed refuses without it). */
   INITIAL_ADMIN_PASSWORD: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(10).optional()),
+  /** Development only: password of the demo users created by `pnpm db:seed:dev` (refused outside development). */
+  DEV_DEMO_PASSWORD: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(10).optional()),
   /** Root folder for the local-disk attachment storage driver. */
   STORAGE_DIR: z.string().min(1).default('./storage'),
   FBR_MODE: z.enum(['sandbox', 'production']).default('sandbox'),

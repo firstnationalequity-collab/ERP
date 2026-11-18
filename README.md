@@ -19,6 +19,20 @@ pnpm dev                      # API on :4000, web on :5173
 ```
 Open http://localhost:5173 — it should say "API status: ok".
 
+## Seeding
+- `pnpm db:seed` — the real seed, safe everywhere (idempotent; acts as SYSTEM): permissions, roles from
+  `docs/roles.md`, number series, placeholder approval matrix, PLACEHOLDER chart / posting rules / tax codes, and the
+  first admin from `INITIAL_ADMIN_PASSWORD` (forced change at first login).
+- `pnpm db:seed:dev` — **local development only.** Refuses unless `NODE_ENV=development` and the database name in
+  `DATABASE_URL` does not contain "prod". Runs `db:seed`, then:
+  - creates one demo user per role, named `demo.<role code in lower case>` (e.g. `demo.finance_manager`,
+    `demo.qa_manager`, `demo.storekeeper`), all with the password in `DEV_DEMO_PASSWORD` (`.env`) and no forced
+    password change;
+  - signs in as `demo.finance_manager` and creates the FY 2026-27 periods through the normal periods service, so
+    each period's first status is recorded under that person (rule 7), then signs out.
+
+  Running it again changes nothing. Never set `DEV_DEMO_PASSWORD` on staging or production.
+
 ## Building with the agent
 1. Open this folder in VS Code and start a Claude Code chat.
 2. Run `/milestone M1`. The agent reads the docs, proposes a plan, and waits for your OK.

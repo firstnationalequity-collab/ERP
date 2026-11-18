@@ -12,6 +12,7 @@
     "test": "pnpm -r test",
     "db:up": "docker compose up -d db",
     "db:migrate": "pnpm --filter @albert/api db:migrate",
-    "db:seed": "pnpm --filter @albert/api db:seed"
+    "db:seed": "pnpm --filter @albert/api db:seed",
+    "db:seed:dev": "pnpm --filter @albert/api db:seed:dev"
   }
 }
