@@ -228,6 +228,12 @@ Every business event calls the inventory engine and the posting engine inside on
 
 **Value-only adjustment** (owner decision 2026-11-18, Q8; DB guard 0017): a ledger row `VALUE_ADJUSTMENT` with quantity 0 and no location changes a lot's value (never its stock) and resets the lot's unit cost to its new value ÷ quantity, rounded half-up. It is refused on a lot with zero quantity (`LOT_EMPTY`), when it would take the lot's value below zero (`LOT_VALUE_NEGATIVE`) and on customer-owned stock. Its reason decides its GL event: `BATCH_CLOSE` → FG cost adjustment; M3 landed cost reuses it with its own reason. A lot's unit cost changes only through such a row (checked at commit). Batch close is final: neither the adjustment nor the batch's output is reversed afterwards.
 
+**Landed cost** (owner decision 2026-11-19, Q21; built in M3). Each landed-cost charge type carries a **capitalise yes/no** flag and its own account.
+- **Capitalised** (into lot cost): customs duty, additional customs duty, regulatory duty, freight, insurance, clearing/handling. **Not capitalised**: import-stage sales tax (to the input tax account) and income tax collected at import (to the advance tax account).
+- **Allocation** per charge type: duties by GRN line from the GD amounts when entered, else by value; freight and other charges by value (default) or by weight.
+- **Charges known at receipt** are entered with the GRN, so the lot is received at its full cost. **Later bills** use the value-only adjustment above, with reason `LANDED_COST`: the lot's value rises by the share for the quantity it still holds. The share already consumed goes to a price-variance account (placeholder, Finance to confirm). If the lot is fully consumed, the whole charge goes there and the lot gets no row.
+- The posting date is the charge's date, which must fall in an open period (rule 11).
+
 **FG lot valuation** (owner decision 2026-11-18, Q8, Option A): the FG lot is created in QUARANTINE when output is recorded at packing, valued at the actual cost of the materials issued to the batch so far. At batch close the difference between the actual batch cost and the value booked at output (conversion + true-up) is added to the lot as a value-only adjustment, in the same transaction as the close journal; stock that left the lot before close (e.g. samples) keeps its provisional value, and the adjustment applies to the stock still held.
 
 Accounts are not hard-coded: `posting_rules` maps (event, account role, item category) to an account, so Finance can change the chart without code. Each event uses the account roles listed in `PostingEventRoles` (`packages/shared/src/enums.ts`); a rule with no item category is the default for every category. Journal entries are created DRAFT and posted only when balanced (≥ 2 lines, debits = credits); posted lines never change (decisions 18-11-2026, M2 task 4).
@@ -235,7 +241,8 @@ Accounts are not hard-coded: `posting_rules` maps (event, account role, item cat
 | Event | Stock effect | Debit | Credit |
 | --- | --- | --- | --- |
 | GRN posted (own stock) | + lot in QUARANTINE at PO price | Inventory (RM/PM/API by category) | GRNI — goods received not invoiced |
-| Landed cost added | Lot unit cost raised by allocated share | Inventory (or Price Variance if already consumed) | Landed-cost clearing / customs & freight payable |
+| Landed cost added (capitalised charge types, Q21) | With the GRN: part of the lot's receipt cost. Later bill: value-only row (reason LANDED_COST) on the lot for the share still held | Inventory (share still held); Price variance (share consumed, or all of it if the lot is fully consumed) | Landed-cost clearing / customs & freight payable |
+| Import taxes (not capitalised, Q21) | — | Input sales tax (import stage); Advance income tax (collected at import) | Customs / clearing payable |
 | Vendor invoice posted | — | GRNI; Input sales tax; Price variance if invoice ≠ PO | Accounts payable (vendor) |
 | Vendor payment | — | Accounts payable | Bank; WHT payable |
 | Material issued to batch | − lot, + batch WIP | WIP (production order) | Inventory |

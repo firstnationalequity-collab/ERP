@@ -43,9 +43,10 @@ Tasks:
 Done when: a test receipt posts a stock movement AND a balanced journal in one transaction; a forced error rolls back both; negative stock is refused by the DB. (Test: `apps/api/src/__tests__/m2-done-when.test.ts`, also toll = no journal and GL inventory = Σ ledger values after every movement type.)
 
 ## M3 — Procurement (est. 3 days)
+- [ ] Owner decisions 2026-11-19 carried in from M2 (small changes to M1 core): period reopen needs a Finance Manager e-signature + reason, and periods close/reopen in order (Q2, Q3); one user may not hold both an admin role and an action role (Q4); attachments "void with reason", file kept (Q5).
 - [ ] PR → PO (local/import, currency, exchange rate) with approval matrix; AVL block for GMP items.
 - [ ] GRN by scan from PO → lots in QUARANTINE, labels (bwip-js), QC sample request auto-created.
-- [ ] Landed cost entry + allocation (value/qty basis) into lot cost.
+- [ ] Landed cost (owner Q21, architecture §6 "Landed cost"): charge types with a capitalise flag and their own account (duties, freight, insurance, clearing capitalised; import sales tax → input tax, income tax at import → advance tax); allocation per charge type (duties by GRN line from GD amounts, else by value; freight/other by value or weight); known charges entered with the GRN (lot received at full cost); later bills → VALUE_ADJUSTMENT reason LANDED_COST for the share still held, consumed share (or all, if fully consumed) → price variance (placeholder); posting date = charge date, open period. Tests for each, incl. a partly and a fully consumed lot.
 - [ ] Vendor invoice with 3-way match (tolerance settings); payment with WHT; vendor ledger and ageing.
 - [ ] Segregation: PO creator ≠ approver ≠ GRN receiver; payment creator ≠ approver.
 
@@ -73,9 +74,9 @@ Done when: an over-limit order waits on ON_CREDIT_HOLD until the Finance Manager
 - [ ] Material requirement with potency adjustment + filler compensation (architecture §6).
 - [ ] Issue by scan (APPROVED lots only, FEFO), returns from floor.
 - [ ] Stages in order with sign-off; IPC notes; yield; resource hours. Output/yield has a doer and a checker (owner 2026-11-18, Option A; architecture §4): the doer records output/yield and signs (`prod.stage.sign`, e-signature) — record status SIGNED, nothing created; a different user holding `prod.output.verify` (Production Supervisor; two Supervisors may be doer and checker) verifies with e-signature — same user → 403 `SEGREGATION_OF_DUTIES` — and that transaction creates the FG lot in QUARANTINE at the provisional value of the materials issued so far (Q8) and posts FG_OUTPUT. Key, role grant, engine keys and the "Operator never holds `prod.output.verify`" test built in M2. Tests: doer = checker refused; Operator cannot verify; signing alone creates no lot.
-- [ ] Decide with the owner which other stage steps need a checker (at least dispensing/weighing of API) (owner 2026-11-18).
-- [ ] Conversion cost when the whole FG lot left before batch close (`closeBatchCost` refuses with `LOT_EMPTY`): PENDING OWNER; likely answer (not confirmed) — post it to a production-variance expense account (placeholder; Finance to confirm).
-- [ ] Batch close (Production Manager e-signature): conversion absorbed into WIP, and in the same transaction `closeBatchCost` adds conversion + true-up to the FG lot as a value-only adjustment (Dr FG inventory / Cr WIP) and marks the batch closed; the FG lot cannot be dispatched before that (engines built in M2).
+- [ ] Checker steps (owner Q18, 2026-11-19), starting list: weighing/dispensing of every material, line clearance, yield. Confirm with the Production Manager and QA at M6 start (line clearance may be IPQA, not a supervisor).
+- [ ] Conversion cost when the whole FG lot left before batch close (`closeBatchCost` refuses with `LOT_EMPTY`): post it to a production-variance expense account (owner Q11, 2026-11-19; placeholder, Finance to confirm).
+- [ ] Batch close (Production Manager e-signature): conversion absorbed into WIP (CONVERSION_ABSORB journal under `prod.batch.approve_close`, owner Q13), and in the same transaction `closeBatchCost` adds conversion + true-up to the FG lot as a value-only adjustment (Dr FG inventory / Cr WIP) and marks the batch closed; the FG lot cannot be dispatched before that (engines built in M2).
 
 Done when: release blocked if any material is not approved; API quantity computed from assay 98.2% in a test.
 
@@ -98,6 +99,7 @@ Done when: an invoice receives an FBR sandbox number; trial balance balances.
 
 ## M9 — CEO dashboard and traceability (est. 2 days)
 - [ ] View-only dashboard (architecture §7.12); traceability screen forward/backward.
+- [ ] Dashboard shows reopened fiscal periods (who, when, why) (owner Q2, 2026-11-19).
 
 Done when: dashboard figures reconcile with the ledgers; trace returns in under 5 s.
 

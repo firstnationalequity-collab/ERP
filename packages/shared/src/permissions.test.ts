@@ -25,6 +25,10 @@ describe('qaControlled classification', () => {
     }
   });
 
+  it('the FG output checker key is QA-controlled (owner Q17, 2026-11-19): it verifies a GMP batch record', () => {
+    expect(isQaControlledKey('prod.output.verify')).toBe(true);
+  });
+
   it('commercial approve keys are deliberately not QA-controlled', () => {
     for (const k of ['master.customer.approve', 'master.vendor.approve'] as const) {
       expect(statesFlag(k)).toBe(true);

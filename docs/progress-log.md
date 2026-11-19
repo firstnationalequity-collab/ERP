@@ -144,3 +144,25 @@ Resolved earlier 18-11-2026: decisions.md audit (old item 8) — all listed rows
 19-11-2026 · M2 · Task 10 /check-rules since m1: fixed A (disposal QA witness, 0020: engine + DB, one signature covers movement and lot status) and B (owner: rule 7 = status values; deactivation guards 0021 + item activation needs active refs); 550 tests green · docs check, CI, open-question list
 19-11-2026 · M2 · Task 10 docs check: roles.md status/accepted keys corrected (75 keys = permissions.ts), architecture §4 master statuses + §5 is_active line, decisions identifier fixed; every cited path/identifier exists · CI, open-question list
 19-11-2026 · M2 · Task 10 close-out: Done-when evidence and 12 open questions (with recommendations, M3 blocker = Q21 landed cost) in the Handoff; CI checked on the final commit · owner answers, then tag m2
+
+### M2 close-out archive (19-11-2026, moved from the Handoff)
+
+| # | M2 task (scope: build-plan.md M2) | Status |
+| --- | --- | --- |
+| 1–3c | Shared keys; masters schema `0008`, service and routes; party guards `0009`; roles correction `0010`; item activation `0011`; `qaControlled` flag | ✅ |
+| 4–4a | Finance masters `0012`; JV/SJ journal series and WHT block `0013`; `pnpm db:seed:dev` | ✅ |
+| 5–6 | Inventory schema `0014`; `engines/inventory` with valuation `0015` (owner Option A rounding) | ✅ |
+| 7–7a | `engines/posting` and rounding sweep `0016`; owner Q8/Q9: value adjustment, batch cost close, sales returns `0017` | ✅ |
+| 8–8b | Done-when test `m2-done-when.test.ts`; return limit per customer `0018`; FG doer + checker (`prod.output.verify`); dispatch only to an ACTIVE customer `0019` | ✅ |
+| 9 | Web: DataTable/DocForm, all master, finance and journal screens | ✅ |
+| 10 | Owner Q19 Excel numbers; `/check-rules` since `m1` with fixes A (disposal QA witness `0020`) and B (deactivation guards `0021`); docs match code; Done-when evidence and open questions below; CI green on the final commit | ✅ (tag `m2` waits for the owner) |
+
+**M2 Done-when evidence** (build-plan M2; all in CI). Main file: `apps/api/src/__tests__/m2-done-when.test.ts` (DW):
+- Receipt posts a movement AND a balanced journal in one transaction: DW 1; `posting-engine.test.ts` "posts a receipt and its journal in one transaction".
+- A forced error rolls back both: DW 2 (error after both; journal failure after the movement); `posting-engine.test.ts` "a failure in the journal rolls back the movement", "an actor without the event key posts nothing", "refuses a journal that does not match the movements".
+- Negative stock refused by the DB: DW 3 (engine, ledger trigger, CHECK `stock_balance_not_negative`); `inventory-db.test.ts` "never lets stock go negative (rule 3)".
+- Also in the same file: toll = zero value, no journal (DW 4); GL inventory = Σ ledger values after every movement type, now including witnessed disposals (DW 5).
+- Tasks: masters `masters.test.ts`, `masters-db.test.ts`, `items-db.test.ts`; finance masters `finance-masters.test.ts`, `finance-db.test.ts`; inv tables `inventory-db.test.ts`; engines `inventory-engine.test.ts`, `valuation.test.ts`, `posting-engine.test.ts`, `fg-cost-returns.test.ts`, `journals.test.ts`; web `masters-ui.test.ts` (helpers only: screens never clicked through in a browser, owner to try them).
+
+Open questions 1–6, 11, 13, 17, 18, 20, 21 answered by the owner on 19-11-2026; see decisions.md rows dated 2026-11-19 ("Owner — confirmed 2026-11-19").
+19-11-2026 · M2 · Owner answers recorded (Q1–6, 11, 13, 17, 18, 20, 21): prod.output.verify QA-controlled (+test), landed cost in architecture §6 and build-plan M3, Q2–Q5 carried into M3, reopened periods on M9 list; M2 done, tag m2 · M3 Procurement in a new chat

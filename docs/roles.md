@@ -66,7 +66,7 @@ Design context: `docs/architecture.md` §3 and §4.
 | `prod.view` | view | View production orders, stages, outputs | new |
 | `prod.order.manage` | action | Create, release, cancel production orders | existing |
 | `prod.stage.sign` | action | Execute and sign batch stages, record yield and resource hours | existing |
-| `prod.output.verify` | action | Verify a signed output/yield entry with e-signature (checker ≠ doer); creates the FG lot in QUARANTINE and posts FG_OUTPUT | new (owner 2026-11-18) |
+| `prod.output.verify` | action | Verify a signed output/yield entry with e-signature (checker ≠ doer); creates the FG lot in QUARANTINE and posts FG_OUTPUT. QA-controlled (owner Q17, 2026-11-19) | new (owner 2026-11-18) |
 | `prod.batch.close` | action | Submit batch close (Supervisor) | existing |
 | `prod.batch.approve_close` | action | Approve batch close with e-signature (Production Manager) | new |
 | `qa.view` | view | View deviations and batch releases | new |
