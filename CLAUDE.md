@@ -4,11 +4,13 @@ Production ERP for Albert Pharmaceuticals, a DRAP-regulated GMP plant (tablets, 
 Real users, real money, real audits. Correctness beats speed. Never fake data, never stub a business rule.
 
 ## Read first, every session
-1. `docs/progress.md` — which milestone we are on and what is already done.
-2. `docs/build-plan.md` — the current milestone's tasks and "Done when" checks.
-3. `docs/architecture.md` — the full design (rules, statuses, schema, posting rules, module specs).
-4. `docs/decisions.md` — choices made during the build.
-5. `docs/roles.md` — roles and their permission keys (when touching permissions or roles).
+1. `docs/progress.md`: the milestone table and the Handoff only. A new chat reads only this to learn where we are. History is in `docs/progress-log.md`; never read it whole, grep it when you need a past detail.
+2. `docs/build-plan.md`: only the current milestone's section (tasks and "Done when" checks).
+3. `docs/architecture.md`: the full design (rules, statuses, schema, posting rules, module specs). Read only the sections the task needs.
+4. `docs/decisions.md`: choices made during the build. Grep for the topic.
+5. `docs/roles.md`: roles and their permission keys (when touching permissions or roles).
+
+Never `cat` or read a whole doc. Find the section with grep (e.g. `grep -n "^## " docs/architecture.md`), then read only those lines.
 
 Work only on the current milestone. If something needed is missing from the docs, ask before inventing it.
 
@@ -60,7 +62,7 @@ DB schemas per module: `core`, `master`, `inv`, `sales`, `purch`, `qc`, `prod`, 
 3. Service with tests for every rule: the happy path AND each refusal.
 4. Routes, then web pages.
 5. `pnpm typecheck` and `pnpm test` must pass before you say "done".
-6. Tick the finished tasks in `docs/progress.md`; record any design choice in `docs/decisions.md`.
+6. Tick the finished task in the `docs/progress.md` Handoff and keep that file under 80 lines (move notes that are no longer open to `docs/progress-log.md`). Append one line per task to the end of `docs/progress-log.md` (`DD-MM-YYYY · milestone · what was finished · what is next`). Record any design choice in `docs/decisions.md`.
 
 ## Never
 - Never add features outside the current milestone without asking.
