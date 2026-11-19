@@ -229,7 +229,7 @@ export function JournalsPage() {
           { key: 'event', title: 'Event', render: (r) => (r.event ? label(r.event) : 'Manual'), exportValue: (r) => r.event ?? 'MANUAL' },
           { key: 'sourceType', title: 'Source', render: (r) => (r.sourceId ? `${r.sourceType} #${r.sourceId}` : r.sourceType), exportValue: (r) => (r.sourceId ? `${r.sourceType} #${r.sourceId}` : r.sourceType) },
           { key: 'narration', title: 'Narration' },
-          { key: 'total', title: 'Amount (PKR)', render: (r) => formatDecimal(r.total, 2) },
+          { key: 'total', title: 'Amount (PKR)', render: (r) => formatDecimal(r.total, 2), exportFormat: 'money' },
           { key: 'status', title: 'Status', render: (r) => <StatusTag status={r.status} /> },
         ]}
       />

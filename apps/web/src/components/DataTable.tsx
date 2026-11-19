@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { Page } from '@albert/shared';
 import { api, errorText } from '../api/client';
 import { buildQuery, pageCount, type QueryValue } from '../lib/query';
-import { downloadExcel, exportFileName, type ExportColumn } from '../lib/excel';
+import { downloadExcel, EXPORT_MAX_ROWS, exportFileName, type ExportColumn, type ExportFormat } from '../lib/excel';
 import { companyToday } from '../lib/format';
 
 export interface DataColumn<T> {
@@ -16,6 +16,8 @@ export interface DataColumn<T> {
   render?: (row: T) => ReactNode;
   /** Cell text for the Excel export; default = the field named by `key`, as text. */
   exportValue?: (row: T) => string;
+  /** `money` / `quantity` columns are exported as numeric cells (owner Q19); give the raw decimal string. */
+  exportFormat?: ExportFormat;
   width?: number;
 }
 
@@ -26,9 +28,6 @@ export interface FilterDef {
   defaultValue?: string;
   width?: number;
 }
-
-/** Upper bound for one export, so a mistaken click cannot pull a whole ledger into the browser. */
-export const EXPORT_MAX_ROWS = 20_000;
 
 interface Props<T> {
   /** Used for the export file and sheet name. */
@@ -90,7 +89,7 @@ export function DataTable<T extends object>(props: Props<T>) {
       for (let p = 2; p <= pageCount(first.total, exportPageSize); p += 1) {
         rows.push(...(await api<Page<T>>(`${path}${buildQuery({ ...listParams, page: p, pageSize: exportPageSize })}`)).items);
       }
-      const exportColumns: ExportColumn<T>[] = columns.map((c) => ({ title: c.title, value: c.exportValue ?? ((r) => cellText(r, c.key)) }));
+      const exportColumns: ExportColumn<T>[] = columns.map((c) => ({ title: c.title, value: c.exportValue ?? ((r) => cellText(r, c.key)), format: c.exportFormat ?? 'text' }));
       await downloadExcel(exportFileName(title, companyToday()), title, exportColumns, rows);
     } catch (err) {
       void message.error(errorText(err));

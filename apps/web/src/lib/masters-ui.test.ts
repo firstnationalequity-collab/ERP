@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { CreateCustomerRequest, UpdateCustomerRequest } from '@albert/shared';
 import { buildQuery, pageCount } from './query';
-import { exportFileName, toSheetRows } from './excel';
+import { EXPORT_MAX_ROWS, EXPORT_NUM_FMT, exportFileName, toCell, toSheetRows } from './excel';
 import { apiFieldErrors, changedKeys, prepareValues } from './formValues';
 import { refLabel } from './labels';
 
@@ -19,15 +19,34 @@ describe('list query strings', () => {
 });
 
 describe('Excel export', () => {
-  it('writes a header row and every value as the text shown (decimal strings stay exact, rule 10)', () => {
-    const rows = [{ code: 'RM-1', price: '12345678901234.56' }, { code: 'RM-2', price: '0.10' }];
-    expect(
-      toSheetRows([{ title: 'Code', value: (r: (typeof rows)[number]) => r.code }, { title: 'Price', value: (r: (typeof rows)[number]) => r.price }], rows),
-    ).toEqual([
-      ['Code', 'Price'],
-      ['RM-1', '12345678901234.56'],
-      ['RM-2', '0.10'],
+  type Row = { code: string; price: string; qty: string };
+  const cols = [
+    { title: 'Code', value: (r: Row) => r.code },
+    { title: 'Price', value: (r: Row) => r.price, format: 'money' as const },
+    { title: 'Qty', value: (r: Row) => r.qty, format: 'quantity' as const },
+  ];
+
+  it('owner Q19: money and quantity columns become numeric cells; other columns stay text', () => {
+    const rows: Row[] = [
+      { code: '00123', price: '1500000.50', qty: '12.3456' },
+      { code: 'RM-2', price: '-0.10', qty: '0' },
+      { code: 'RM-3', price: '', qty: 'n/a' },
+    ];
+    expect(toSheetRows(cols, rows)).toEqual([
+      ['Code', 'Price', 'Qty'],
+      ['00123', 1500000.5, 12.3456], // a code with leading zeros stays text
+      ['RM-2', -0.1, 0],
+      ['RM-3', null, 'n/a'], // empty → empty cell; a non-decimal is never turned into 0 or NaN
     ]);
+  });
+
+  it('formats money 0.00, quantity 0.0000 and text @', () => {
+    expect(EXPORT_NUM_FMT).toEqual({ money: '0.00', quantity: '0.0000', text: '@' });
+    expect([toCell('7', 'text'), toCell(' 7.25 ', 'money'), toCell(null, 'quantity'), toCell(undefined)]).toEqual(['7', 7.25, null, '']);
+  });
+
+  it('keeps the 20,000-row export cap', () => {
+    expect(EXPORT_MAX_ROWS).toBe(20_000);
   });
 
   it('names the file with the Karachi date in DD-MM-YYYY and no characters Windows refuses', () => {

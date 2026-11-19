@@ -44,7 +44,7 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 - M3 landed cost: the value-only adjustment is not designed. Ask the owner when M3 starts, and do not reuse `ROUNDING_SWEEP` for it.
 - Roles: `pnpm db:seed` adds keys from `docs/roles.md` that roles are missing. If it stops with `RoleBundleDriftError`, ask the owner per key and never remove keys yourself.
 
-**Open questions for the owner (not blocking M2; resolved 7–10, 12, 14–16 are archived in progress-log.md):**
+**Open questions for the owner (not blocking M2; resolved 7–10, 12, 14–16, 19 are archived in progress-log.md):**
 1. BATCH_CLOSE lock is "roles holding `prod.batch.approve_close`" (Production Manager). Confirm or change.
 2. Reopening a fiscal period: also require a Finance Manager e-signature?
 3. Must periods be closed in order?
@@ -55,6 +55,5 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 13. M6 note: the conversion journal (CONVERSION_ABSORB) has no posting key yet; M6 adds it with batch close.
 17. `prod.output.verify` is not QA-controlled (granting it needs no QA Manager countersign). Agent default, PENDING OWNER (decisions.md).
 18. M6: which other stage steps need a checker (at least API dispensing/weighing)? Owner to decide when M6 starts.
-19. Excel export writes cells as text (exact decimals) with a 20,000-row cap per export. Agent default, PENDING OWNER (decisions.md). Numbers would let Excel sum, but need floating point in the browser.
 
 **Local dev DB:** migrated to 0019 and seeded. It has the `demo.<role>` users (password = `DEV_DEMO_PASSWORD` in `.env`) and FY 2026-27 periods OPEN. `demo.qa_manager` holds the QA countersign.

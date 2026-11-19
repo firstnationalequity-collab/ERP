@@ -58,7 +58,7 @@ export function CustomersPage() {
             { key: 'ntn', title: 'NTN' },
             { key: 'cnic', title: 'CNIC' },
             { key: 'strn', title: 'STRN' },
-            { key: 'creditLimit', title: 'Credit limit', render: (r) => formatPKR(r.creditLimit), exportValue: (r) => r.creditLimit },
+            { key: 'creditLimit', title: 'Credit limit', render: (r) => formatPKR(r.creditLimit), exportValue: (r) => r.creditLimit, exportFormat: 'money' },
             { key: 'paymentTermsDays', title: 'Terms (d)' },
             { key: 'isTollCustomer', title: 'Toll', render: (r) => (r.isTollCustomer ? <Tag color="purple">TOLL</Tag> : ''), exportValue: (r) => yesNo(r.isTollCustomer) },
             { key: 'status', title: 'Status', render: (r) => <StatusTag status={r.status} /> },

@@ -49,7 +49,7 @@ export function FormulasPage() {
         columns={[
           { key: 'productItemCode', title: 'Product', render: (r) => `${r.productItemCode} — ${r.productItemName}`, exportValue: (r) => `${r.productItemCode} — ${r.productItemName}` },
           { key: 'version', title: 'Version' },
-          { key: 'batchSize', title: 'Batch size', render: (r) => <>{formatDecimal(r.batchSize, 4)} <RefLabel path="/master/uoms" id={r.batchUomId} /></>, exportValue: (r) => r.batchSize },
+          { key: 'batchSize', title: 'Batch size', render: (r) => <>{formatDecimal(r.batchSize, 4)} <RefLabel path="/master/uoms" id={r.batchUomId} /></>, exportValue: (r) => r.batchSize, exportFormat: 'quantity' },
           { key: 'status', title: 'Status', render: (r) => <StatusTag status={r.status} /> },
           { key: 'updatedAt', title: 'Updated', render: (r) => formatDateTime(r.updatedAt), exportValue: (r) => formatDateTime(r.updatedAt) },
         ]}
