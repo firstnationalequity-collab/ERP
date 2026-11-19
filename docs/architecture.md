@@ -164,6 +164,17 @@ A lot held at several locations is moved to one location first; each disposal mo
 
 Only **APPROVED** material lots can be issued or reserved; only **RELEASED** FG lots can be picked for dispatch, and an FG lot made by production is dispatched only after its batch is closed (`BATCH_NOT_CLOSED`, enforced in the service and the database; owner 2026-11-18, Q8).
 
+**Master statuses** (M2; through core/transition like every status, rule 7; decisions 2026-11-18):
+
+| Record | Moves | Permission key | Condition |
+| --- | --- | --- | --- |
+| Item (`items.status`) | (new) → DRAFT → ACTIVE ⇄ INACTIVE | create: `master.item.manage`; moves: `master.item.approve` (QA) for GMP types RM, PM, API, EXCIPIENT, BULK, FG, else `master.item.manage` | The activator is neither the creator nor the last editor; a non-GMP item is not reactivated by the person who deactivated it; deactivation and reactivation need a reason. ACTIVE only while its UoM, category and tax code are active (0021). `is_active` is generated from the status |
+| Customer, vendor (`status`) | (new) → DRAFT → ACTIVE ⇄ INACTIVE | create: `master.customer.manage` / `master.vendor.manage`; moves: `master.customer.approve` / `master.vendor.approve` | The activator differs from the creator; reason on deactivation and reactivation; sensitive edits on an active record need a countersign |
+| Approved source / AVL (`approved_sources.status`) | (new) → PENDING → APPROVED or REJECTED; APPROVED → BLOCKED | create: `master.vendor.manage`; decide and block: `master.avl.approve` (QA) | Decided through the approval workflow with an e-signature, with evidence attached; blocking needs an e-signature (REJECTED) and a reason |
+| Master formula (`master_formulas.status`) | (new) → DRAFT → PENDING_APPROVAL → APPROVED (or back to DRAFT on rejection, with a reason); APPROVED → OBSOLETE | draft and submit: `master.formula.manage`; decide: `master.formula.approve` (QA) | One APPROVED version per product; approving a new version makes the previous one OBSOLETE; the approver is not the drafter |
+
+Simple masters (UoM, categories, tax codes, warehouses, locations, accounts, cost centres, posting rules, price lists, products, addresses) have an active/inactive switch, not a status: rule 7 does not apply to it, but each switch needs a reason (audit trail) and a master still in use cannot be switched off (owner 2026-11-19; migration 0021).
+
 **Production order / batch** (`production_orders.status`):
 
 | From | To | Who | Permission key | Condition |
@@ -192,7 +203,7 @@ About 80 tables in 9 groups, all in one PostgreSQL schema per module (`core`, `i
 - Primary key `id BIGINT GENERATED ALWAYS AS IDENTITY`; documents also carry a human number (`doc_no`, e.g. `PO-2026-00042`) from `core.number_series`.
 - `company_id` (FK to `core.companies`), `created_at`, `created_by`, `updated_at`, `updated_by` (FK to `core.users`) on all business tables. Seeds and jobs act as the SYSTEM user.
 - Quantities `NUMERIC(18,4)`, money `NUMERIC(18,2)`, rates and assay `NUMERIC(9,4)`, dates `DATE`, timestamps `TIMESTAMPTZ` stored in UTC, shown in Asia/Karachi.
-- Status columns are `TEXT` with a CHECK constraint; masters use `is_active`, never hard delete.
+- Status columns are `TEXT` with a CHECK constraint. Masters are never hard-deleted: items, customers, vendors, AVL entries and formulas have a status (§4 Master statuses); the other masters have an `is_active` switch.
 - Foreign keys everywhere, `ON DELETE RESTRICT`.
 
 | Group | Tables | Key columns and rules |

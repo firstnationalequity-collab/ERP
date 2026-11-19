@@ -1,6 +1,6 @@
 # Roles and permissions — Phase 1
 
-**Status: DRAFT for owner review. Nothing is seeded from this file until it is approved.**
+**Status: approved by the owner on 2026-11-17 (Review points below), with the later owner corrections listed there. `pnpm db:seed` syncs role bundles from this file (adds missing keys, never removes; decisions 2026-11-18).**
 
 Source of truth for keys: `packages/shared/src/permissions.ts` (updated from this table in M1).
 Design context: `docs/architecture.md` §3 and §4.
@@ -15,7 +15,7 @@ Design context: `docs/architecture.md` §3 and §4.
 
 ## Key catalogue
 
-"New" = added by the M1 Q&A (decisions log, Q14). "Proposed" = needed by a decided rule but not named in the Q&A; **please confirm**.
+"New" = added by the M1 Q&A (decisions log, Q14). "Accepted" = proposed by the agent for a decided rule, then accepted by the owner (2026-11-17).
 
 | Key | Class | Description | Status |
 | --- | --- | --- | --- |
@@ -44,7 +44,7 @@ Design context: `docs/architecture.md` §3 and §4.
 | `inv.adjustment.request` | action | Request stock adjustments | existing |
 | `inv.adjustment.approve` | action | Approve stock adjustments | existing |
 | `inv.label.print` | action | Print labels | existing |
-| `inv.lot.dispose` | action | Move a REJECTED lot to DESTROYED / RETURNED (needs QA witness) | **proposed** |
+| `inv.lot.dispose` | action | Move a REJECTED lot to DESTROYED / RETURNED (needs QA witness) | accepted (owner 2026-11-17) |
 | `sales.view` | view | View quotations, orders, customer ledger | new |
 | `sales.quotation.manage` | action | Create/edit quotations | existing |
 | `sales.quotation.approve` | action | Approve quotations and discounts | existing |
@@ -74,9 +74,9 @@ Design context: `docs/architecture.md` §3 and §4.
 | `qa.deviation.close` | action | Close deviations | existing |
 | `qa.batch.release` | action | Release or reject batches; release FG lots; re-release return lots (e-signature + assessment reason) | existing (owner 2026-11-18: also return-lot re-release) |
 | `qa.lot.hold` | action | Place or lift HOLD on a lot | new |
-| `qa.lot.witness` | action | Witness e-signature for lot destruction / return | **proposed** |
+| `qa.lot.witness` | action | Witness e-signature for lot destruction / return | accepted (owner 2026-11-17) |
 | `qa.lot.reject_fg` | action | Reject finished-goods and return lots (HOLD → REJECTED), e-signature required; QA-controlled | new (owner 2026-11-18) |
-| `qa.access.countersign` | action | E-signature countersign for role changes touching QA-controlled keys | **proposed** |
+| `qa.access.countersign` | action | E-signature countersign for role changes touching QA-controlled keys | accepted (owner 2026-11-17) |
 | `qa.product.countersign` | action | Countersign product registration no., artwork version and quality-agreement changes | new (M2) |
 | `fg.view` | view | View delivery orders, gate passes, returns | new |
 | `fg.delivery.manage` | action | Delivery orders, picking, returns receipt | existing |

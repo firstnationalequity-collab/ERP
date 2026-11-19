@@ -28,7 +28,7 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 | 7–7a | `engines/posting` and rounding sweep `0016`; owner Q8/Q9: value adjustment, batch cost close, sales returns `0017` | ✅ |
 | 8–8b | Done-when test `m2-done-when.test.ts`; return limit per customer `0018`; FG doer + checker (`prod.output.verify`); dispatch only to an ACTIVE customer `0019` | ✅ |
 | 9 | Web: DataTable/DocForm, all master, finance and journal screens | ✅ |
-| 10 | Owner Q19 Excel numbers ✅; `/check-rules` since `m1` ✅ with fixes: disposal QA witness `0020` (A) and deactivation guards `0021` (B, rule 7 scope); docs, CI and the open-question list next | in progress |
+| 10 | Owner Q19 Excel numbers ✅; `/check-rules` since `m1` ✅ with fixes: disposal QA witness `0020` (A) and deactivation guards `0021` (B, rule 7 scope); docs check ✅ (roles.md, architecture §4 master statuses); CI and the open-question list next | in progress |
 
 **For task 10:**
 - The Done-when checks are in the build-plan M2 section. They are automated in `apps/api/src/__tests__/m2-done-when.test.ts` (5 tests, mutation-checked).
