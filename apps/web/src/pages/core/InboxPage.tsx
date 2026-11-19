@@ -2,7 +2,10 @@
 import { useState } from 'react';
 import { App, Button, Descriptions, Drawer, Space, Table, Timeline, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ApprovalDto, InboxItemDto, Page } from '@albert/shared';
+import type { ApprovalDto, ApprovedSourceDto, FormulaDto, InboxItemDto, Page } from '@albert/shared';
+import { AttachmentList } from '../../components/Attachments';
+import { RefLabel } from '../../components/RefSelect';
+import { FormulaLinesTable } from '../master/FormulasPage';
 import { api, newIdempotencyKey } from '../../api/client';
 import { ESignModal, type ESignResult } from '../../components/ESignModal';
 import { PageHeader } from '../../components/PageHeader';
@@ -73,7 +76,7 @@ export function InboxPage() {
         scroll={{ x: true }}
       />
 
-      <Drawer open={openId !== null} onClose={() => setOpenId(null)} width={520} title={a ? (a.docNo ?? `${a.docType} #${a.docId}`) : 'Approval'}>
+      <Drawer open={openId !== null} onClose={() => setOpenId(null)} width={720} title={a ? (a.docNo ?? `${a.docType} #${a.docId}`) : 'Approval'}>
         {a && (
           <>
             <Descriptions column={1} size="small" bordered>
@@ -84,6 +87,13 @@ export function InboxPage() {
               <Descriptions.Item label="Requested by">{a.requestedBy.fullName}</Descriptions.Item>
               <Descriptions.Item label="Requested">{formatDateTime(a.createdAt)}</Descriptions.Item>
             </Descriptions>
+            <ApprovalDocument approval={a} />
+            {(a.attachments.length > 0 || a.docType === 'AVL') && (
+              <>
+                <Typography.Title level={5} style={{ marginTop: 16 }}>Attachments</Typography.Title>
+                <AttachmentList items={a.attachments} />
+              </>
+            )}
             <Typography.Title level={5} style={{ marginTop: 16 }}>Steps</Typography.Title>
             <Timeline
               items={a.steps.map((s) => ({
@@ -121,4 +131,56 @@ export function InboxPage() {
       />
     </>
   );
+}
+
+/** What is being approved, for the document types that have a detail view (AVL source, master formula). */
+function ApprovalDocument({ approval }: { approval: ApprovalDto }) {
+  const avl = useQuery({
+    queryKey: ['approvals', 'doc', 'AVL', approval.docId],
+    queryFn: () => api<ApprovedSourceDto>(`/master/approved-sources/${approval.docId}`),
+    enabled: approval.docType === 'AVL',
+  });
+  const formula = useQuery({
+    queryKey: ['approvals', 'doc', 'MASTER_FORMULA', approval.docId],
+    queryFn: () => api<FormulaDto>(`/master/formulas/${approval.docId}`),
+    enabled: approval.docType === 'MASTER_FORMULA',
+  });
+  if (approval.docType === 'AVL' && avl.data) {
+    const s = avl.data;
+    return (
+      <>
+        <Typography.Title level={5} style={{ marginTop: 16 }}>Approved source</Typography.Title>
+        <Descriptions column={1} size="small" bordered>
+          <Descriptions.Item label="Vendor">{s.vendorCode} — {s.vendorName}</Descriptions.Item>
+          <Descriptions.Item label="Item">{s.itemCode} — {s.itemName}</Descriptions.Item>
+          <Descriptions.Item label="Manufacturer">{s.manufacturer}</Descriptions.Item>
+          <Descriptions.Item label="Site">{s.manufacturingSite}</Descriptions.Item>
+          {s.notes && <Descriptions.Item label="Notes">{s.notes}</Descriptions.Item>}
+        </Descriptions>
+        {approval.attachments.length === 0 && (
+          <Typography.Paragraph type="warning" style={{ marginTop: 8 }}>
+            No evidence is attached yet; the approval is refused until the proposer attaches it.
+          </Typography.Paragraph>
+        )}
+      </>
+    );
+  }
+  if (approval.docType === 'MASTER_FORMULA' && formula.data) {
+    const f = formula.data;
+    return (
+      <>
+        <Typography.Title level={5} style={{ marginTop: 16 }}>Master formula</Typography.Title>
+        <Descriptions column={1} size="small" bordered>
+          <Descriptions.Item label="Product">{f.productItemCode} — {f.productItemName}</Descriptions.Item>
+          <Descriptions.Item label="Version">{f.version}</Descriptions.Item>
+          <Descriptions.Item label="Batch size">{formatDecimal(f.batchSize, 4)} <RefLabel path="/master/uoms" id={f.batchUomId} /></Descriptions.Item>
+          {f.notes && <Descriptions.Item label="Notes">{f.notes}</Descriptions.Item>}
+        </Descriptions>
+        <div style={{ marginTop: 8 }}>
+          <FormulaLinesTable lines={f.lines ?? []} />
+        </div>
+      </>
+    );
+  }
+  return null;
 }

@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { MenuProps } from 'antd';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
-import { visibleMenu } from './menu';
+import { selectedMenuPath, visibleMenu } from './menu';
 
 /** Inbox count for the badge; refreshed every minute. */
 export function useInboxCount(enabled: boolean) {
@@ -46,7 +46,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
     ];
   }, [user, count]);
 
-  const selected = '/' + (location.pathname.split('/').filter(Boolean).slice(0, location.pathname.startsWith('/admin') ? 2 : 1).join('/'));
+  const selected = selectedMenuPath(location.pathname);
 
   const userMenu: MenuProps['items'] = [
     { key: 'password', label: 'Change password', onClick: () => navigate('/change-password') },

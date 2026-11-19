@@ -41,6 +41,19 @@ export type PriceListLineRow = typeof priceListLines.$inferSelect;
 // Generic list helpers live in db/list.ts (shared by every module); re-exported for the masters services.
 export { countWhere, likePattern, listWhere, type Paging } from '../../db/list';
 import type { Paging } from '../../db/list';
+import { likePattern as like } from '../../db/list';
+
+/** Product list search: registration no., or the FG item's code or name. */
+export function productSearch(search: string): SQL {
+  const p = like(search);
+  return sql`(${products.registrationNo} ILIKE ${p} OR ${products.itemId} IN (SELECT i.id FROM master.items i WHERE i.code ILIKE ${p} OR i.name ILIKE ${p}))`;
+}
+
+/** Formula list search: the product's item code or name. */
+export function formulaSearch(search: string): SQL {
+  const p = like(search);
+  return sql`${masterFormulas.productId} IN (SELECT pr.id FROM master.products pr JOIN master.items i ON i.id = pr.item_id WHERE i.code ILIKE ${p} OR i.name ILIKE ${p})`;
+}
 
 function tableSql(entity: string): SQL {
   const [schema, table] = entity.split('.') as [string, string];

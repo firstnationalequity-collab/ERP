@@ -26,6 +26,8 @@ interface Props {
   countersignNote?: string;
   /** Who countersigns, e.g. "QA Manager" (default) or "Finance Manager". */
   countersignBy?: string;
+  /** Ask for the reason of the change itself (default true). A countersign-only step has its own reason. */
+  askReason?: boolean;
   okText?: string;
   onCancel(): void;
   /** Throw to keep the dialog open and show the error. */
@@ -34,14 +36,14 @@ interface Props {
 
 interface Values {
   password?: string;
-  reason: string;
+  reason?: string;
   csUsername?: string;
   csPassword?: string;
   csReason?: string;
 }
 
 export function ESignModal(props: Props) {
-  const { open, title, meaning, summary, ownSignature = true, countersign = 'none', countersignNote, countersignBy = 'QA Manager', okText, onCancel, onSubmit } = props;
+  const { open, title, meaning, summary, ownSignature = true, countersign = 'none', countersignNote, countersignBy = 'QA Manager', askReason = true, okText, onCancel, onSubmit } = props;
   const [form] = Form.useForm<Values>();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -59,8 +61,8 @@ export function ESignModal(props: Props) {
     setError(null);
     try {
       await onSubmit({
-        reason: v.reason,
-        signature: { password: v.password ?? '', meaning, reason: v.reason },
+        reason: v.reason ?? v.csReason ?? '',
+        signature: { password: v.password ?? '', meaning, reason: v.reason ?? '' },
         countersign:
           countersign === 'required'
             ? { username: v.csUsername ?? '', password: v.csPassword ?? '', meaning: 'APPROVED', reason: v.csReason ?? '' }
@@ -89,9 +91,11 @@ export function ESignModal(props: Props) {
             </Form.Item>
           </>
         )}
-        <Form.Item name="reason" label="Reason" rules={[{ required: true, min: 3, message: 'Give a reason (at least 3 characters)' }]}>
-          <Input.TextArea rows={2} maxLength={500} />
-        </Form.Item>
+        {askReason && (
+          <Form.Item name="reason" label="Reason" rules={[{ required: true, min: 3, message: 'Give a reason (at least 3 characters)' }]}>
+            <Input.TextArea rows={2} maxLength={500} />
+          </Form.Item>
+        )}
         {countersign === 'required' && (
           <>
             <Divider orientation="left" plain>

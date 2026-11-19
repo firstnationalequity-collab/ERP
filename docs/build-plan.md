@@ -38,7 +38,7 @@ Tasks:
 - [x] `inv` tables: lots (status history in `core.status_history`), stock_movements (immutable), stock_balances (CHECK qty >= 0), stock_reservations. (`0014_inventory.sql`, decisions 18-11-2026 M2 task 5.)
 - [x] `engines/inventory`: `postMovement()`, `reserve()`, `fefoCandidates()`, lot-actual cost (no moving average; GL inventory = Σ ledger movement values, rounding per decisions 2026-11-18), toll stock at zero value. (`apps/api/src/engines/inventory`, `0015_movement_valuation.sql`.)
 - [x] `engines/posting`: `postJournal()` (balanced, open period, posting_rules lookup), `reverse()`. (`apps/api/src/engines/posting`, rounding sweep `0016`; value-only adjustment and customer-return posting `0017`, owner 2026-11-18.)
-- [ ] Web: CRUD screens for all masters (shared DataTable / DocForm).
+- [x] Web: CRUD screens for all masters (shared DataTable / DocForm). (Task 9: masters, AVL with evidence, formula versions + lines, price lists, finance masters, journals; approvals show the AVL source / formula and attachments.)
 
 Done when: a test receipt posts a stock movement AND a balanced journal in one transaction; a forced error rolls back both; negative stock is refused by the DB. (Test: `apps/api/src/__tests__/m2-done-when.test.ts`, also toll = no journal and GL inventory = Σ ledger values after every movement type.)
 

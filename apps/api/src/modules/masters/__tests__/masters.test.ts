@@ -535,6 +535,18 @@ describe('master formulas (versions, QA approval, one APPROVED per product)', ()
     const approved = await get('ceo', `/master/formulas?productId=${ids.product}&status=APPROVED`);
     expect(approved.body.items.map((f: Body) => f.version)).toEqual([2]);
   });
+
+  it('lists products and formulas by searching the FG item code or name (web pickers, task 9)', async () => {
+    const products = await get('ceo', '/master/products?search=para500');
+    expect(products.body.items.map((p: Body) => p.itemCode)).toEqual(['FG-PARA500']);
+    expect(products.body.total).toBe(1);
+    expect((await get('ceo', '/master/products?search=012345')).body.items.map((p: Body) => p.itemCode)).toEqual(['FG-PARA500']);
+    expect((await get('ceo', '/master/products?search=no-such-product')).body.total).toBe(0);
+    const formulas = await get('ceo', '/master/formulas?search=FG-PARA500');
+    expect(formulas.body.items.map((f: Body) => f.version).sort()).toEqual([1, 2]);
+    expect(formulas.body.total).toBe(2);
+    expect((await get('ceo', '/master/formulas?search=no-such-product')).body.total).toBe(0);
+  });
 });
 
 describe('price lists (master.price.manage)', () => {

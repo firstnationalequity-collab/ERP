@@ -36,9 +36,10 @@ export async function listProducts(auth: AuthContext, query: MasterListQuery): P
     products.companyId,
     {
       ...query,
-      searchCols: [products.registrationNo],
+      search: undefined,
+      searchCols: [],
       activeCol: products.isActive,
-      extra: [query.customerId ? eq(products.customerId, query.customerId) : undefined],
+      extra: [query.customerId ? eq(products.customerId, query.customerId) : undefined, query.search ? repo.productSearch(query.search) : undefined],
     },
     auth.companyId,
   );

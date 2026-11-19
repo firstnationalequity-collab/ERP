@@ -13,6 +13,14 @@ import { ApprovalRulesPage } from './pages/core/ApprovalRulesPage';
 import { NumberSeriesPage } from './pages/core/NumberSeriesPage';
 import { FiscalPeriodsPage } from './pages/core/FiscalPeriodsPage';
 import { AuditPage } from './pages/core/AuditPage';
+import { CategoriesPage, ConversionsPage, LocationsPage, TaxCodesPage, UomsPage, WarehousesPage } from './pages/master/CatalogPages';
+import { ItemsPage } from './pages/master/ItemsPage';
+import { CustomersPage, VendorsPage } from './pages/master/PartiesPages';
+import { ApprovedSourcesPage } from './pages/master/ApprovedSourcesPage';
+import { ProductsPage } from './pages/master/ProductsPage';
+import { FormulasPage } from './pages/master/FormulasPage';
+import { PriceListsPage } from './pages/master/PriceListsPage';
+import { AccountsPage, CostCentersPage, JournalsPage, PostingRulesPage } from './pages/fin/FinancePages';
 
 export function App() {
   const { user, restoring } = useAuth();
@@ -34,6 +42,23 @@ export function App() {
         <Route path="/" element={<HomePage />} />
         <Route path="/change-password" element={<ChangePasswordPage forced={false} />} />
         <Route path="/approvals" element={<RequirePermission anyOf={['core.approval.inbox']}><InboxPage /></RequirePermission>} />
+        <Route path="/master/items" element={<RequirePermission anyOf={['master.view']}><ItemsPage /></RequirePermission>} />
+        <Route path="/master/formulas" element={<RequirePermission anyOf={['master.view']}><FormulasPage /></RequirePermission>} />
+        <Route path="/master/products" element={<RequirePermission anyOf={['master.view']}><ProductsPage /></RequirePermission>} />
+        <Route path="/master/customers" element={<RequirePermission anyOf={['master.view']}><CustomersPage /></RequirePermission>} />
+        <Route path="/master/price-lists" element={<RequirePermission anyOf={['master.view']}><PriceListsPage /></RequirePermission>} />
+        <Route path="/master/vendors" element={<RequirePermission anyOf={['master.view']}><VendorsPage /></RequirePermission>} />
+        <Route path="/master/approved-sources" element={<RequirePermission anyOf={['master.view']}><ApprovedSourcesPage /></RequirePermission>} />
+        <Route path="/master/item-categories" element={<RequirePermission anyOf={['master.view']}><CategoriesPage /></RequirePermission>} />
+        <Route path="/master/uoms" element={<RequirePermission anyOf={['master.view']}><UomsPage /></RequirePermission>} />
+        <Route path="/master/uom-conversions" element={<RequirePermission anyOf={['master.view']}><ConversionsPage /></RequirePermission>} />
+        <Route path="/master/warehouses" element={<RequirePermission anyOf={['master.view']}><WarehousesPage /></RequirePermission>} />
+        <Route path="/master/locations" element={<RequirePermission anyOf={['master.view']}><LocationsPage /></RequirePermission>} />
+        <Route path="/master/tax-codes" element={<RequirePermission anyOf={['master.view']}><TaxCodesPage /></RequirePermission>} />
+        <Route path="/fin/journals" element={<RequirePermission anyOf={['fin.view']}><JournalsPage /></RequirePermission>} />
+        <Route path="/fin/accounts" element={<RequirePermission anyOf={['fin.view', 'master.view']}><AccountsPage /></RequirePermission>} />
+        <Route path="/fin/posting-rules" element={<RequirePermission anyOf={['fin.view', 'master.view']}><PostingRulesPage /></RequirePermission>} />
+        <Route path="/fin/cost-centers" element={<RequirePermission anyOf={['fin.view', 'master.view']}><CostCentersPage /></RequirePermission>} />
         <Route path="/fiscal-periods" element={<RequirePermission anyOf={['core.period.manage', 'core.period.close', 'fin.view']}><FiscalPeriodsPage /></RequirePermission>} />
         <Route path="/audit" element={<RequirePermission anyOf={['core.audit.view']}><AuditPage /></RequirePermission>} />
         <Route path="/admin/users" element={<RequirePermission anyOf={['core.user.manage']}><UsersPage /></RequirePermission>} />

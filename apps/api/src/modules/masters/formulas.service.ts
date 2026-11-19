@@ -94,7 +94,11 @@ export async function listFormulas(auth: AuthContext, query: MasterListQuery): P
     {
       search: undefined,
       searchCols: [],
-      extra: [status ? eq(masterFormulas.status, status) : undefined, query.productId ? eq(masterFormulas.productId, query.productId) : undefined],
+      extra: [
+        status ? eq(masterFormulas.status, status) : undefined,
+        query.productId ? eq(masterFormulas.productId, query.productId) : undefined,
+        query.search ? repo.formulaSearch(query.search) : undefined,
+      ],
     },
     auth.companyId,
   );
