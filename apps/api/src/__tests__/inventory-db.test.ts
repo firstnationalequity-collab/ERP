@@ -10,7 +10,8 @@ import { createTestUser } from '../test/factories';
 
 const client = new pg.Client({ connectionString: databaseUrl });
 let wm: string; // Warehouse Manager: creates items
-let qa: string; // QA Manager: activates GMP items
+let qa: string; // QA Manager: activates GMP items; QA witness for disposals (qa.lot.witness)
+let fm: string; // Finance Manager: periods; holds no qa.lot.witness
 const ids: Record<string, string> = {};
 let seq = 0;
 
@@ -107,6 +108,8 @@ interface MoveOptions {
   value?: string;
   location?: string;
   reversalOf?: string;
+  /** core.e_signatures id of the QA witness (DESTROY / RETURN_TO_VENDOR, 0020). */
+  witness?: string;
 }
 /**
  * Insert a ledger row; qty > 0 goes into the location, qty < 0 comes out of it. Value defaults to qty × 10.
@@ -118,9 +121,9 @@ function insertMove(type: string, lot: string, qty: string, o: MoveOptions = {})
   const customer = type === 'DISPATCH' || type === 'SALES_RETURN' ? ids.PLAIN : null;
   return one(
     `INSERT INTO inv.stock_movements
-       (movement_type, movement_date, lot_id, from_location_id, to_location_id, qty, unit_cost, value, ref_doc_type, ref_doc_id, reversal_of, customer_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'TEST', 1, $9, $10) RETURNING id`,
-    [type, o.date ?? '2026-11-18', lot, inbound ? null : loc, inbound ? loc : null, qty, o.unitCost ?? '10', o.value ?? String(Number(qty) * 10), o.reversalOf ?? null, customer],
+       (movement_type, movement_date, lot_id, from_location_id, to_location_id, qty, unit_cost, value, ref_doc_type, ref_doc_id, reversal_of, customer_id, witness_esign_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'TEST', 1, $9, $10, $11) RETURNING id`,
+    [type, o.date ?? '2026-11-18', lot, inbound ? null : loc, inbound ? loc : null, qty, o.unitCost ?? '10', o.value ?? String(Number(qty) * 10), o.reversalOf ?? null, customer, o.witness ?? null],
   );
 }
 const move = (type: string, lot: string, qty: string, o: MoveOptions = {}) => tx(() => insertMove(type, lot, qty, o));
@@ -135,7 +138,7 @@ beforeAll(async () => {
   await runSeed({ nodeEnv: 'test' });
   wm = await createTestUser({ username: 'wm001', roleCodes: ['WAREHOUSE_MANAGER'] });
   qa = await createTestUser({ username: 'qam001', roleCodes: ['QA_MANAGER'] });
-  const fm = await createTestUser({ username: 'fm001', roleCodes: ['FINANCE_MANAGER'] });
+  fm = await createTestUser({ username: 'fm001', roleCodes: ['FINANCE_MANAGER'] });
   await tx(async () => {
     ids.uom = await one(`INSERT INTO master.uoms (code, name) VALUES ('KG', 'Kilogram') RETURNING id`);
     ids.category = await one(`INSERT INTO master.item_categories (code, name) VALUES ('RM', 'Raw material') RETURNING id`);
@@ -348,18 +351,149 @@ describe('stock ledger and balances', () => {
 });
 
 describe('rejected lots (rule 1)', () => {
-  it('leave only by DESTROY / RETURN_TO_VENDOR; become DESTROYED only when empty; then never move', async () => {
+  /** What the witness signs for (0020): "DESTROY lot 7 qty 15.0000". */
+  const subject = (type: string, lot: string, qty: string, reversal = false) => {
+    const [int, frac = ''] = qty.replace('-', '').split('.');
+    return `${reversal ? 'REVERSE ' : ''}${type} lot ${lot} qty ${int}.${frac.padEnd(4, '0')}`;
+  };
+  interface SigOptions {
+    signer?: string;
+    meaning?: string;
+    subject?: string;
+    recordId?: string;
+  }
+  const witnessSig = (lot: string, subj: string, o: SigOptions = {}) =>
+    one(
+      `INSERT INTO core.e_signatures (user_id, signer_username, signer_name, meaning, reason, record_table, record_id, subject)
+       VALUES ($1, 'witness', 'Witness', $2, 'witnessed the disposal', 'inv.lots', $3, $4) RETURNING id`,
+      [o.signer ?? qa, o.meaning ?? 'WITNESSED', o.recordId ?? lot, o.subject ?? subj],
+    );
+  /** Inside a transaction: the witness signs, then the disposal row carries the signature. */
+  async function insertDisposal(type: string, lot: string, qty: string, o: SigOptions & MoveOptions = {}): Promise<string> {
+    const sig = await witnessSig(lot, subject(type, lot, qty, o.reversalOf !== undefined), o);
+    await insertMove(type, lot, qty, { ...o, witness: sig });
+    return sig;
+  }
+  const dispose = (type: string, lot: string, qty: string, o: SigOptions & MoveOptions = {}) => tx(() => insertDisposal(type, lot, qty, o), wm);
+  /** REJECTED → DESTROYED / RETURNED with a witness signature (history first, as core/transition does). */
+  async function closeLot(lot: string, to: string, witnessEsignId: string): Promise<void> {
+    await client.query(
+      `INSERT INTO core.status_history (entity_table, entity_id, from_status, to_status, actor_id, witness_esign_id) VALUES ('inv.lots', $1, 'REJECTED', $2, $3, $4)`,
+      [lot, to, wm, witnessEsignId],
+    );
+    await client.query(`UPDATE inv.lots SET status = $1 WHERE id = $2`, [to, lot]);
+  }
+  const rejectedLot = async (qty: string) => {
+    const lot = await newLot();
+    await move('RECEIPT', lot, qty);
+    await setLot(lot, 'UNDER_TEST', 'REJECTED');
+    return lot;
+  };
+
+  it('leave only by a witnessed DESTROY / RETURN_TO_VENDOR; closed only when empty, with that signature; then never move', async () => {
     const lot = await newLot();
     await move('RECEIPT', lot, '20');
-    await expect(move('DESTROY', lot, '-20')).rejects.toThrow(/only a REJECTED lot/);
+    await expect(dispose('DESTROY', lot, '-20')).rejects.toThrow(/only a REJECTED lot/);
     await setLot(lot, 'UNDER_TEST', 'REJECTED');
     await expect(move('TRANSFER_OUT', lot, '-5')).rejects.toThrow(/LOT_NOT_APPROVED: .*REJECTED/);
     await expect(move('ADJUSTMENT_OUT', lot, '-5')).rejects.toThrow(/LOT_NOT_APPROVED/);
-    await move('DESTROY', lot, '-15');
-    await expect(setLot(lot, 'DESTROYED')).rejects.toThrow(/still holds/);
-    await move('RETURN_TO_VENDOR', lot, '-5');
-    await setLot(lot, 'DESTROYED');
+    const first = await dispose('DESTROY', lot, '-15');
+    await expect(tx(() => closeLot(lot, 'DESTROYED', first), wm)).rejects.toThrow(/still holds/);
+    // The last 5 go back to the vendor and the lot closes with the same signature, in one transaction.
+    await tx(async () => closeLot(lot, 'RETURNED', await insertDisposal('RETURN_TO_VENDOR', lot, '-5')), wm);
     await expect(move('ADJUSTMENT_IN', lot, '1')).rejects.toThrow(/never moves again/);
+  });
+
+  it('a disposal row needs the QA witness signature for exactly this movement, by someone else, in this transaction (0020)', async () => {
+    const lot = await rejectedLot('10');
+    await expect(tx(() => insertMove('DESTROY', lot, '-1'), wm)).rejects.toThrow(/WITNESS_REQUIRED/);
+    await expect(dispose('DESTROY', lot, '-1', { signer: wm })).rejects.toThrow(/SEGREGATION_OF_DUTIES/);
+    await expect(dispose('DESTROY', lot, '-1', { signer: fm })).rejects.toThrow(/FORBIDDEN: .*qa\.lot\.witness/);
+    await expect(dispose('DESTROY', lot, '-1', { meaning: 'APPROVED' })).rejects.toThrow(/WITNESS_REQUIRED/);
+    await expect(dispose('DESTROY', lot, '-1', { subject: subject('DESTROY', lot, '-2') })).rejects.toThrow(/WITNESS_MISMATCH/);
+    await expect(dispose('DESTROY', lot, '-1', { subject: subject('RETURN_TO_VENDOR', lot, '-1') })).rejects.toThrow(/WITNESS_MISMATCH/);
+    const other = await rejectedLot('5');
+    await expect(dispose('DESTROY', lot, '-1', { subject: subject('DESTROY', other, '-1'), recordId: other })).rejects.toThrow(/WITNESS_REQUIRED/);
+    // A signature recorded in an earlier transaction is not reused.
+    const earlier = await tx(() => witnessSig(lot, subject('DESTROY', lot, '-1')), wm);
+    await expect(tx(() => insertMove('DESTROY', lot, '-1', { witness: earlier }), wm)).rejects.toThrow(/in this transaction/);
+    // One signature, one movement.
+    await expect(
+      tx(async () => {
+        const sig = await witnessSig(lot, subject('DESTROY', lot, '-1'));
+        await insertMove('DESTROY', lot, '-1', { witness: sig });
+        await insertMove('DESTROY', lot, '-1', { witness: sig });
+      }, wm),
+    ).rejects.toThrow(/stock_movements_witness_uidx/);
+    // Only disposal rows carry a witness.
+    const fresh = await newLot();
+    const sig = await tx(() => witnessSig(fresh, 'RECEIPT'), wm);
+    await expect(tx(() => insertMove('RECEIPT', fresh, '1', { witness: sig }), wm)).rejects.toThrow(/only a DESTROY or RETURN_TO_VENDOR/);
+    expect(await balance(lot)).toBe('10.0000');
+    // The witnessed one goes through; its reversal needs its own witness.
+    await dispose('DESTROY', lot, '-1');
+    const { rows } = await client.query<{ id: string }>(`SELECT id FROM inv.stock_movements WHERE lot_id = $1 AND movement_type = 'DESTROY'`, [lot]);
+    await expect(tx(() => insertMove('DESTROY', lot, '1', { reversalOf: rows[0]!.id }), wm)).rejects.toThrow(/WITNESS_REQUIRED/);
+    await dispose('DESTROY', lot, '1', { reversalOf: rows[0]!.id });
+    expect(await balance(lot)).toBe('10.0000');
+  });
+
+  it('a lot emptied by a disposal closes in the same transaction, with that disposal\'s witness (0020)', async () => {
+    const lot = await rejectedLot('4');
+    // Emptied but left REJECTED: refused at COMMIT.
+    await expect(dispose('DESTROY', lot, '-4')).rejects.toThrow(/LOT_NOT_CLOSED/);
+    // Closed without a witness, with a signature no disposal carries, or as the wrong status.
+    await expect(
+      tx(async () => {
+        await insertDisposal('DESTROY', lot, '-4');
+        await client.query(`INSERT INTO core.status_history (entity_table, entity_id, from_status, to_status, actor_id) VALUES ('inv.lots', $1, 'REJECTED', 'DESTROYED', $2)`, [lot, wm]);
+        await client.query(`UPDATE inv.lots SET status = 'DESTROYED' WHERE id = $1`, [lot]);
+      }, wm),
+    ).rejects.toThrow(/WITNESS_REQUIRED/);
+    await expect(
+      tx(async () => {
+        await insertDisposal('DESTROY', lot, '-4');
+        await closeLot(lot, 'DESTROYED', await witnessSig(lot, 'something else'));
+      }, wm),
+    ).rejects.toThrow(/WITNESS_REQUIRED/);
+    await expect(tx(async () => closeLot(lot, 'RETURNED', await insertDisposal('DESTROY', lot, '-4')), wm)).rejects.toThrow(/WITNESS_REQUIRED/);
+    // The witness's signature is not the actor's own.
+    await expect(
+      tx(async () => {
+        const sig = await insertDisposal('DESTROY', lot, '-4');
+        await client.query(
+          `INSERT INTO core.status_history (entity_table, entity_id, from_status, to_status, actor_id, witness_esign_id) VALUES ('inv.lots', $1, 'REJECTED', 'DESTROYED', $2, $3)`,
+          [lot, qa, sig],
+        );
+        await client.query(`UPDATE inv.lots SET status = 'DESTROYED' WHERE id = $1`, [lot]);
+      }, wm),
+    ).rejects.toThrow(/WITNESS_REQUIRED/);
+    await tx(async () => closeLot(lot, 'DESTROYED', await insertDisposal('DESTROY', lot, '-4')), wm);
+    const { rows } = await client.query<{ status: string }>(`SELECT status FROM inv.lots WHERE id = $1`, [lot]);
+    expect(rows[0]!.status).toBe('DESTROYED');
+  });
+});
+
+describe('deactivating a location or warehouse (owner 2026-11-19, 0021)', () => {
+  it('is refused while it holds stock (IN_USE) and allowed once the stock has moved out', async () => {
+    const wh = await tx(() => one(`INSERT INTO master.warehouses (code, name) VALUES ('GUARD', 'Guard store') RETURNING id`));
+    const loc = await tx(() => one(`INSERT INTO master.locations (warehouse_id, code, name) VALUES ($1, 'G1', 'Guard rack') RETURNING id`, [wh]));
+    const lot = await newLot();
+    await move('RECEIPT', lot, '3', { location: loc });
+    const off = (table: string, id: string) => tx(() => client.query(`UPDATE ${table} SET is_active = false WHERE id = $1`, [id]), wm);
+    const on = (table: string, id: string) => tx(() => client.query(`UPDATE ${table} SET is_active = true WHERE id = $1`, [id]), wm);
+    await expect(off('master.locations', loc)).rejects.toThrow(/IN_USE: location G1 holds stock/);
+    await expect(off('master.warehouses', wh)).rejects.toThrow(/IN_USE: warehouse GUARD holds stock/);
+    // Move it to another rack (a transfer pair, in one transaction).
+    await tx(async () => {
+      await insertMove('TRANSFER_OUT', lot, '-3', { location: loc });
+      await insertMove('TRANSFER_IN', lot, '3', { location: ids.loc2 });
+    });
+    expect(await balance(lot, loc)).toBe('0.0000');
+    await off('master.locations', loc);
+    await off('master.warehouses', wh);
+    await on('master.warehouses', wh);
+    await on('master.locations', loc);
   });
 });
 

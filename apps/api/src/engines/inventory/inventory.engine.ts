@@ -9,6 +9,7 @@
 //                          valued at the lot's cost with the owner's rounding rules (valuation.ts).
 //  - transfer():           TRANSFER_OUT + TRANSFER_IN pair, value moves with the stock.
 //  - reverseMovements():   correction rows that mirror the originals (rule 4).
+//  - closeDisposedLot():   REJECTED → DESTROYED / RETURNED with the witness of the disposal movement (rule 1; 0020).
 //  - reserve() / releaseReservation(): quantity held for a document line; only APPROVED lots (rule 2).
 //  - fefoCandidates() / allocateFefo(): usable lots, earliest expiry first.
 //  - sweepEmptyLot():      value-only ROUNDING_SWEEP row for an empty lot still holding paisa; called only by
@@ -31,7 +32,9 @@ import {
 import type { Queryable, Tx } from '../../db/client';
 import type { stockMovements } from '../../db/schema/inv';
 import { AppError, fromDbError } from '../../core/errors';
-import { defineTransitions, recordInitialStatus, type Actor, type TransitionMap } from '../../core/transition/transition';
+import { defineTransitions, recordInitialStatus, transition, type Actor, type TransitionMap, type TransitionResult } from '../../core/transition/transition';
+import { permissionKeysForUser } from '../../core/auth/auth.repo';
+import { recordSignature, type SignatureProof, type SignatureRecord } from '../../core/esign/esign.service';
 import {
   assertCustomerFor,
   assertReturnsArea,
@@ -76,6 +79,69 @@ const lotCreationMaps = Object.fromEntries(
 
 /** Batch close (architecture §4, Production Manager e-signature): the key that closes an FG lot's cost. */
 export const BATCH_CLOSE_KEY: PermissionKey = 'prod.batch.approve_close';
+
+// ---------------------------------------------------------------- disposal (rule 1; owner 2026-11-19; 0020)
+
+/**
+ * A REJECTED lot leaves stock only by DESTROY or RETURN_TO_VENDOR, posted by the Warehouse Manager
+ * (`inv.lot.dispose`) with a QA witness e-signature (`qa.lot.witness`, a different person). The witness signs at
+ * the same terminal (core/esign verifyWitness, meaning WITNESSED, single use, 2 minutes) for the subject
+ * disposalSubject(): the lot, the movement type and the quantity. The engine refuses the signature if the movement
+ * differs, records it against the lot in the posting transaction and stores its id on the movement. When the
+ * disposal empties the lot, the same signature moves the lot to DESTROYED / RETURNED (closeDisposedLot) in the same
+ * transaction. The database (0020) re-checks all of it.
+ */
+export const DisposalMovementTypes = ['DESTROY', 'RETURN_TO_VENDOR'] as const;
+export type DisposalMovementType = (typeof DisposalMovementTypes)[number];
+export const DISPOSE_KEY: PermissionKey = 'inv.lot.dispose';
+export const DISPOSAL_WITNESS_KEY: PermissionKey = 'qa.lot.witness';
+
+export const isDisposal = (type: StockMovementType): type is DisposalMovementType =>
+  (DisposalMovementTypes as readonly StockMovementType[]).includes(type);
+
+/** What the QA witness signs for: "DESTROY lot 12 qty 4.0000" ("REVERSE …" for the reversal of a disposal row). */
+export function disposalSubject(type: DisposalMovementType, lotId: string, qty: string, reversal = false): string {
+  return `${reversal ? 'REVERSE ' : ''}${type} lot ${lotId} qty ${quantity(new Decimal(qty).abs())}`;
+}
+
+const lotDisposalMap = defineTransitions<LotStatus>({
+  entityTable: LOT_TABLE,
+  statuses: LotStatus,
+  moves: [
+    { from: 'REJECTED', to: 'DESTROYED', permission: DISPOSE_KEY, witness: { permission: DISPOSAL_WITNESS_KEY, meanings: ['WITNESSED'] } },
+    { from: 'REJECTED', to: 'RETURNED', permission: DISPOSE_KEY, witness: { permission: DISPOSAL_WITNESS_KEY, meanings: ['WITNESSED'] } },
+  ],
+});
+
+/** Check the witness proof against the movement, then store it against the lot (single use, 2 minutes). */
+async function recordDisposalWitness(tx: Tx, actor: Actor, proof: SignatureProof, lotId: string, subject: string): Promise<SignatureRecord> {
+  if (proof.subject !== subject) {
+    throw new AppError('WITNESS_MISMATCH', `The witness signed for "${proof.subject ?? 'nothing'}", not "${subject}"; the witness signs again`, {
+      signed: proof.subject,
+      expected: subject,
+    });
+  }
+  if (proof.userId === actor.userId) throw new AppError('SEGREGATION_OF_DUTIES', 'The witness must be a different person from the one posting');
+  if (proof.companyId !== actor.companyId) throw new AppError('ESIGN_FAILED', 'The witness belongs to a different company');
+  if (!(await permissionKeysForUser(tx, proof.userId)).includes(DISPOSAL_WITNESS_KEY)) {
+    throw new AppError('FORBIDDEN', `The witness does not hold ${DISPOSAL_WITNESS_KEY}`, { permission: DISPOSAL_WITNESS_KEY });
+  }
+  return recordSignature(tx, proof, { table: LOT_TABLE, id: lotId }, ['WITNESSED']);
+}
+
+/**
+ * REJECTED → DESTROYED / RETURNED once a disposal has emptied the lot, with that disposal's witness signature
+ * (one signature covers both; owner 2026-11-19). Call it after postStockJournal (the rounding sweep may still write
+ * to the lot) and in the same transaction; the database refuses a commit that leaves an emptied lot REJECTED.
+ */
+export async function closeDisposedLot(tx: Tx, actor: Actor, movement: PostedMovement): Promise<TransitionResult<LotStatus>> {
+  const witness = movement.witness;
+  if (!isDisposal(movement.movementType) || movement.reversalOf !== null || !witness) {
+    throw new AppError('VALIDATION_FAILED', 'Only a witnessed DESTROY or RETURN_TO_VENDOR movement closes a lot');
+  }
+  const to: LotStatus = movement.movementType === 'DESTROY' ? 'DESTROYED' : 'RETURNED';
+  return guarded(() => transition(tx, lotDisposalMap, { entityId: movement.lotId, to, actor, witness, reason: witness.reason }));
+}
 
 export interface NewLot {
   /** SALES_RETURN lots are made by createReturnLot(). */
@@ -215,6 +281,8 @@ export interface PostedMovement {
   /** VALUE_ADJUSTMENT: its ValueAdjustmentReason, which decides the GL event. */
   reasonCode: string | null;
   reversalOf: string | null;
+  /** DESTROY / RETURN_TO_VENDOR: the QA witness signature stored on the row; null otherwise. */
+  witness: SignatureRecord | null;
 }
 
 export interface DocumentRef {
@@ -240,6 +308,8 @@ export interface MovementInput extends DocumentRef {
   consumeReservation?: DocumentRef;
   /** DISPATCH and SALES_RETURN only, required there: the customer the goods go to / come back from (0018). */
   customerId?: string;
+  /** DESTROY and RETURN_TO_VENDOR only, required there: the QA witness proof for disposalSubject(type, lot, qty). */
+  witness?: SignatureProof;
 }
 
 const CustomerMovementTypes: readonly StockMovementType[] = ['DISPATCH', 'SALES_RETURN'];
@@ -273,6 +343,11 @@ export async function postMovement(tx: Tx, actor: Actor, input: MovementInput): 
   }
   const lot = await lockLotOrFail(tx, actor.companyId, input.lotId);
   assertLotAllows(input.type, lot);
+  const disposal = isDisposal(input.type);
+  if (disposal && !input.witness) {
+    throw new AppError('WITNESS_REQUIRED', `A ${input.type} needs a QA witness e-signature (${DISPOSAL_WITNESS_KEY})`, { permission: DISPOSAL_WITNESS_KEY });
+  }
+  if (!disposal && input.witness) throw new AppError('VALIDATION_FAILED', 'Only a DESTROY or RETURN_TO_VENDOR movement carries a witness signature');
   await assertStockLocation(tx, actor.companyId, input.locationId, inbound);
   if (input.customerId !== undefined) {
     await assertCustomerFor(tx, actor.companyId, input.customerId, input.type === 'DISPATCH' ? 'DISPATCH' : 'SALES_RETURN');
@@ -294,6 +369,10 @@ export async function postMovement(tx: Tx, actor: Actor, input: MovementInput): 
     outputValue: input.value,
   });
   if (input.consumeReservation) await consume(tx, lot.id, input.consumeReservation, qty.neg());
+  const witness =
+    disposal && input.witness
+      ? await recordDisposalWitness(tx, actor, input.witness, lot.id, disposalSubject(input.type as DisposalMovementType, lot.id, input.qty))
+      : null;
   return insertRow(tx, actor, lot, {
     movementType: input.type,
     movementDate: input.date,
@@ -307,7 +386,8 @@ export async function postMovement(tx: Tx, actor: Actor, input: MovementInput): 
     refDocId: input.refDocId,
     reasonCode: input.reasonCode ?? null,
     customerId: input.customerId ?? null,
-  });
+    witnessEsignId: witness?.id ?? null,
+  }, witness);
 }
 
 export interface TransferInput extends DocumentRef {
@@ -367,6 +447,11 @@ export interface ReversalInput extends DocumentRef {
   movementIds: string[];
   date: string;
   reasonCode?: string;
+  /**
+   * Required when a DESTROY / RETURN_TO_VENDOR row is reversed (one such row per call): the QA witness proof for
+   * disposalSubject(type, lot, qty, true). The database requires it on every disposal-type row (0020).
+   */
+  witness?: SignatureProof;
 }
 
 /**
@@ -390,6 +475,12 @@ export async function reverseMovements(tx: Tx, actor: Actor, input: ReversalInpu
       throw new AppError('VALIDATION_FAILED', `Movement ${m.id} is a value adjustment; it is not reversed (batch close is final; M3 defines landed-cost corrections)`);
     }
   }
+  const disposals = originals.filter((m) => isDisposal(m.movementType));
+  if (disposals.length > 1) throw new AppError('VALIDATION_FAILED', 'Reverse one disposal movement at a time; each needs its own witness');
+  if (disposals.length === 1 && !input.witness) {
+    throw new AppError('WITNESS_REQUIRED', 'Reversing a disposal needs a QA witness e-signature', { permission: DISPOSAL_WITNESS_KEY });
+  }
+  if (disposals.length === 0 && input.witness) throw new AppError('VALIDATION_FAILED', 'Only the reversal of a disposal carries a witness signature');
   const already = await repo.reversalsOf(tx, ids);
   if (already.length > 0) throw new AppError('INVALID_TRANSITION', `Movement ${already.join(', ')} is already reversed`, { movementIds: already });
   assertTransfersWhole(originals);
@@ -416,6 +507,9 @@ export async function reverseMovements(tx: Tx, actor: Actor, input: ReversalInpu
       const pairedIn = m.movementType === 'TRANSFER_IN';
       await assertCanTakeOut(tx, lot, location, qty.neg(), undefined, pairedIn);
     }
+    const mType = m.movementType;
+    const witness =
+      isDisposal(mType) && input.witness ? await recordDisposalWitness(tx, actor, input.witness, m.lotId, disposalSubject(mType, m.lotId, m.qty, true)) : null;
     posted.push(
       await insertRow(tx, actor, lot, {
         movementType: m.movementType,
@@ -431,7 +525,8 @@ export async function reverseMovements(tx: Tx, actor: Actor, input: ReversalInpu
         reasonCode: input.reasonCode ?? null,
         reversalOf: m.id,
         customerId: m.customerId,
-      }),
+        witnessEsignId: witness?.id ?? null,
+      }, witness),
     );
   }
   return posted;
@@ -928,6 +1023,7 @@ async function insertRow(
   actor: Actor,
   lot: repo.LotRow,
   row: Omit<typeof stockMovements.$inferInsert, 'companyId'>,
+  witness: SignatureRecord | null = null,
 ): Promise<PostedMovement> {
   const item = await stockItem(tx, actor.companyId, lot.itemId);
   const m = await guarded(() => repo.insertMovement(tx, row));
@@ -948,5 +1044,6 @@ async function insertRow(
     refDocId: m.refDocId,
     reasonCode: m.reasonCode,
     reversalOf: m.reversalOf,
+    witness,
   };
 }

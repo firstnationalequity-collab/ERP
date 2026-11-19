@@ -3,16 +3,21 @@
 // decision 2026-11-18 (Option A): qty × unit cost rounded half-up, last-out residual, FG at exact batch cost.
 import pg from 'pg';
 import { sql } from 'drizzle-orm';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { databaseUrl } from '../../../config/env';
 import { systemContext, withTransaction, type Tx } from '../../../db/client';
 import { runSeed } from '../../../db/seed/run';
 import { permissionKeysForUser } from '../../../core/auth/auth.repo';
 import type { Actor } from '../../../core/transition/transition';
-import { createTestUser } from '../../../test/factories';
+import type { AuthContext } from '../../../core/auth/auth.service';
+import { PROOF_TTL_MS, verifyWitness, type SignatureProof } from '../../../core/esign/esign.service';
+import { createTestUser, TEST_PASSWORD } from '../../../test/factories';
 import {
   allocateFefo,
   closeBatchCost,
+  closeDisposedLot,
+  disposalSubject,
+  type DisposalMovementType,
   createLot,
   fefoCandidates,
   fgUnitCost,
@@ -99,6 +104,41 @@ const base = (o: Partial<MovementInput>): MovementInput => ({
 });
 const post =(o: Partial<MovementInput>) => as('store', (tx, a) => postMovement(tx, a, base(o)));
 
+// Disposal (rule 1; owner 2026-11-19; 0020): the Warehouse Manager posts, a QA witness signs at the same terminal.
+const meta = { ip: '10.0.0.9', userAgent: 'vitest' };
+const authOf = (who: string): AuthContext => ({
+  userId: actors[who]!.userId,
+  companyId: '1',
+  sessionId: '0',
+  username: who,
+  mustChangePassword: false,
+  passwordExpired: false,
+  permissions: actors[who]!.permissions,
+});
+interface WitnessOptions {
+  /** Poster at the terminal (default wm). */
+  poster?: string;
+  /** Witness username (default e_qa). */
+  witness?: string;
+  reversal?: boolean;
+}
+const witnessFor = (type: DisposalMovementType, lotId: string, qty: string, o: WitnessOptions = {}): Promise<SignatureProof> =>
+  verifyWitness(
+    authOf(o.poster ?? 'wm'),
+    { username: o.witness ?? 'e_qa', password: TEST_PASSWORD, meaning: 'WITNESSED', reason: 'Witnessed the disposal' },
+    meta,
+    disposalSubject(type, lotId, qty, o.reversal),
+  );
+/** A witnessed DESTROY / RETURN_TO_VENDOR posted by the Warehouse Manager. */
+async function dispose(type: DisposalMovementType, lotId: string, qty: string, o: WitnessOptions & { close?: boolean } = {}) {
+  const witness = await witnessFor(type, lotId, qty, o);
+  return as(o.poster ?? 'wm', async (tx, a) => {
+    const m = await postMovement(tx, a, base({ type, lotId, qty, witness }));
+    if (o.close) await closeDisposedLot(tx, a, m);
+    return m;
+  });
+}
+
 /** Lot with `qty` received and APPROVED. */
 async function approvedLot(qty: string, o: Partial<NewLot> = {}): Promise<string> {
   const l = await lot(o);
@@ -127,9 +167,12 @@ beforeAll(async () => {
   actors.sup = await actorFor('e_sup', ['PRODUCTION_SUPERVISOR']);
   actors.op = await actorFor('e_op', ['PRODUCTION_OPERATOR']);
   actors.analyst = await actorFor('e_qca', ['QC_ANALYST']);
-  const wm = await createTestUser({ username: 'e_wm', roleCodes: ['WAREHOUSE_MANAGER'] });
-  const qa = await createTestUser({ username: 'e_qa', roleCodes: ['QA_MANAGER'] });
-  const fm = await createTestUser({ username: 'e_fm', roleCodes: ['FINANCE_MANAGER'] });
+  actors.wm = await actorFor('e_wm', ['WAREHOUSE_MANAGER']);
+  actors.qa = await actorFor('e_qa', ['QA_MANAGER']);
+  actors.fm = await actorFor('e_fm', ['FINANCE_MANAGER']);
+  const wm = actors.wm.userId;
+  const qa = actors.qa.userId;
+  const fm = actors.fm.userId;
 
   const one = async (text: string, params: unknown[] = []) => (await client.query<{ id: string }>(text, params)).rows[0]!.id;
   await inTx('1', async () => {
@@ -295,17 +338,112 @@ describe('postMovement', () => {
     await expect(post({ type: 'ISSUE', lotId: l.id, qty: '1' })).rejects.toMatchObject({ code: 'LOT_NOT_APPROVED', details: { status: 'HOLD' } });
   });
 
-  it('a REJECTED lot leaves only by destroy / return; a destroyed lot never moves', async () => {
+  it('a REJECTED lot leaves only by a witnessed destroy / return; the last one closes it; a destroyed lot never moves', async () => {
     const l = await lot();
     await post({ lotId: l.id, qty: '10' });
-    await expect(post({ type: 'DESTROY', lotId: l.id, qty: '1' })).rejects.toMatchObject({ code: 'INVALID_TRANSITION' });
+    await expect(dispose('DESTROY', l.id, '1')).rejects.toMatchObject({ code: 'INVALID_TRANSITION' });
     await setLot(l.id, 'UNDER_TEST', 'REJECTED');
     await expect(post({ type: 'ADJUSTMENT_OUT', lotId: l.id, qty: '1' })).rejects.toMatchObject({ code: 'LOT_NOT_APPROVED' });
-    await post({ type: 'RETURN_TO_VENDOR', lotId: l.id, qty: '4' });
-    const last = await post({ type: 'DESTROY', lotId: l.id, qty: '6' });
+    const rtv = await dispose('RETURN_TO_VENDOR', l.id, '4');
+    expect(rtv.witness).toMatchObject({ userId: actors.qa!.userId, meaning: 'WITNESSED', recordTable: 'inv.lots', recordId: l.id, subject: `RETURN_TO_VENDOR lot ${l.id} qty 4.0000` });
+    // A partial disposal does not close the lot.
+    await expect(as('wm', (tx, a) => closeDisposedLot(tx, a, rtv))).rejects.toMatchObject({ code: 'INVALID_TRANSITION', message: expect.stringMatching(/still holds/) });
+    // Emptied but not closed: refused at COMMIT (the deferred check raises; the HTTP error handler maps it to LOT_NOT_CLOSED).
+    await expect(dispose('DESTROY', l.id, '6')).rejects.toThrow(/LOT_NOT_CLOSED/);
+    const last = await dispose('DESTROY', l.id, '6', { close: true });
     expect(last.value).toBe('-60.00');
-    await setLot(l.id, 'DESTROYED');
+    const [hist] = await raw<{ to_status: string; actor_id: string; witness_esign_id: string }>(
+      `SELECT to_status, actor_id, witness_esign_id FROM core.status_history WHERE entity_table = 'inv.lots' AND entity_id = $1 ORDER BY id DESC LIMIT 1`,
+      [l.id],
+    );
+    // One signature covers the movement and the status change.
+    expect(hist).toEqual({ to_status: 'DESTROYED', actor_id: actors.wm!.userId, witness_esign_id: last.witness!.id });
     await expect(post({ type: 'ADJUSTMENT_IN', lotId: l.id, qty: '1' })).rejects.toMatchObject({ code: 'INVALID_TRANSITION' });
+  });
+
+  describe('disposal witness (rule 1; owner 2026-11-19)', () => {
+    const rejected = async (qty = '10') => {
+      const l = await lot();
+      await post({ lotId: l.id, qty });
+      await setLot(l.id, 'UNDER_TEST', 'REJECTED');
+      return l.id;
+    };
+    const postWith = (lotId: string, witness: SignatureProof | undefined, o: Partial<MovementInput> = {}, poster = 'wm') =>
+      as(poster, (tx, a) => postMovement(tx, a, base({ type: 'DESTROY', lotId, qty: '1', ...(witness ? { witness } : {}), ...o })));
+    const written = async (lotId: string) =>
+      (await raw<{ n: string }>(`SELECT count(*)::text AS n FROM core.e_signatures WHERE record_table = 'inv.lots' AND record_id = $1`, [lotId]))[0]!.n;
+
+    it('refuses a disposal without a witness, and a witness on any other movement', async () => {
+      const id = await rejected();
+      await expect(postWith(id, undefined)).rejects.toMatchObject({ code: 'WITNESS_REQUIRED' });
+      await expect(postWith(id, undefined, { type: 'RETURN_TO_VENDOR' })).rejects.toMatchObject({ code: 'WITNESS_REQUIRED' });
+      const ok = await lot();
+      const proof = await witnessFor('DESTROY', ok.id, '1');
+      await expect(postWith(ok.id, proof, { type: 'RECEIPT' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+      expect(await balance(id)).toBe('10.0000');
+    });
+
+    it('refuses a witness without qa.lot.witness, and the poster as their own witness', async () => {
+      const id = await rejected();
+      await expect(postWith(id, await witnessFor('DESTROY', id, '1', { witness: 'e_fm' }))).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: expect.stringMatching(/qa\.lot\.witness/),
+      });
+      // Signed at a QA terminal by e_qa but posted by e_qa: the witness is the poster.
+      await expect(postWith(id, await witnessFor('DESTROY', id, '1', { poster: 'fm' }), {}, 'qa')).rejects.toMatchObject({ code: 'SEGREGATION_OF_DUTIES' });
+      // core/esign already refuses the poster signing as witness at their own terminal.
+      await expect(witnessFor('DESTROY', id, '1', { witness: 'e_wm' })).rejects.toMatchObject({ code: 'SEGREGATION_OF_DUTIES' });
+      expect(await written(id)).toBe('0');
+    });
+
+    it('refuses a signature for a different lot, quantity or movement type', async () => {
+      const id = await rejected();
+      const other = await rejected();
+      for (const proof of [
+        await witnessFor('DESTROY', other, '1'),
+        await witnessFor('DESTROY', id, '2'),
+        await witnessFor('RETURN_TO_VENDOR', id, '1'),
+        await witnessFor('DESTROY', id, '1', { reversal: true }),
+      ]) {
+        await expect(postWith(id, proof)).rejects.toMatchObject({ code: 'WITNESS_MISMATCH' });
+      }
+      expect(await balance(id)).toBe('10.0000');
+      expect(await written(id)).toBe('0');
+    });
+
+    it('refuses an expired or reused signature', async () => {
+      const id = await rejected();
+      const proof = await witnessFor('DESTROY', id, '1');
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        vi.setSystemTime(Date.now() + PROOF_TTL_MS + 1000);
+        await expect(postWith(id, proof)).rejects.toMatchObject({ code: 'ESIGN_FAILED', message: expect.stringMatching(/expired/) });
+      } finally {
+        vi.useRealTimers();
+      }
+      const fresh = await witnessFor('DESTROY', id, '1');
+      await postWith(id, fresh);
+      await expect(postWith(id, fresh)).rejects.toMatchObject({ code: 'ESIGN_FAILED', message: expect.stringMatching(/already used/) });
+      expect(await balance(id)).toBe('9.0000');
+    });
+
+    it('a reversal of a disposal needs its own witness for that reversal', async () => {
+      const id = await rejected();
+      const m = await dispose('DESTROY', id, '3');
+      const rev = (witness?: SignatureProof) =>
+        as('wm', (tx, a) => reverseMovements(tx, a, { movementIds: [m.id], date: '2026-11-18', refDocType: 'TEST', refDocId: '2', ...(witness ? { witness } : {}) }));
+      await expect(rev()).rejects.toMatchObject({ code: 'WITNESS_REQUIRED' });
+      await expect(rev(await witnessFor('DESTROY', id, '3'))).rejects.toMatchObject({ code: 'WITNESS_MISMATCH' });
+      const [back] = await rev(await witnessFor('DESTROY', id, '3', { reversal: true }));
+      expect(back!.witness?.subject).toBe(`REVERSE DESTROY lot ${id} qty 3.0000`);
+      expect(await balance(id)).toBe('10.0000');
+    });
+
+    it('closeDisposedLot takes only a witnessed, non-reversal disposal', async () => {
+      const id = await approvedLot('2');
+      const issue = await as('store', (tx, a) => postMovement(tx, a, base({ type: 'ISSUE', lotId: id, qty: '1' })));
+      await expect(as('wm', (tx, a) => closeDisposedLot(tx, a, issue))).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    });
   });
 
   it('refuses taking out more than the location holds (rule 3)', async () => {

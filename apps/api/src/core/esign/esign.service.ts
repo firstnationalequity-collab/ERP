@@ -27,6 +27,8 @@ export interface SignatureProof {
   readonly fullName: string;
   readonly meaning: SignatureMeaning;
   readonly reason: string;
+  /** What was signed for, set by the service from the request (e.g. a disposal: lot, type, quantity); null = the record only. */
+  readonly subject: string | null;
   readonly verifiedAt: number;
   readonly ip: string | null;
   readonly userAgent: string | null;
@@ -38,6 +40,7 @@ export interface SignatureRecord {
   userId: string;
   meaning: SignatureMeaning;
   reason: string;
+  subject: string | null;
   recordTable: string;
   recordId: string;
 }
@@ -45,7 +48,7 @@ export interface SignatureRecord {
 /** Proofs issued and not yet used. Single use: recordSignature removes the proof. */
 const unused = new WeakSet<SignatureProof>();
 
-function makeProof(user: UserRow, input: ESignRequest, meta: RequestMeta): SignatureProof {
+function makeProof(user: UserRow, input: ESignRequest, meta: RequestMeta, subject: string | null): SignatureProof {
   const proof: SignatureProof = {
     [proofBrand]: true,
     userId: user.id,
@@ -54,6 +57,7 @@ function makeProof(user: UserRow, input: ESignRequest, meta: RequestMeta): Signa
     fullName: user.fullName,
     meaning: input.meaning,
     reason: input.reason.trim(),
+    subject,
     verifiedAt: Date.now(),
     ip: meta.ip,
     userAgent: meta.userAgent,
@@ -70,6 +74,7 @@ async function checkPassword(
   input: ESignRequest,
   meta: RequestMeta,
   role: 'signer' | 'witness',
+  subject: string | null,
 ): Promise<Outcome> {
   const failMessage = role === 'signer' ? 'E-signature failed: password is incorrect' : 'Witness signature failed';
   if (user.lockedAt) {
@@ -87,17 +92,17 @@ async function checkPassword(
     return { ok: false, error: new AppError('ESIGN_FAILED', failMessage) };
   }
   if (user.failedAttempts > 0) await authRepo.updateUser(tx, user.id, { failedAttempts: 0 });
-  return { ok: true, proof: makeProof(user, input, meta) };
+  return { ok: true, proof: makeProof(user, input, meta, subject) };
 }
 
 /** Re-verify the signed-in user's password for an e-signature. */
-export async function verifySignature(auth: AuthContext, input: ESignRequest, meta: RequestMeta): Promise<SignatureProof> {
+export async function verifySignature(auth: AuthContext, input: ESignRequest, meta: RequestMeta, subject: string | null = null): Promise<SignatureProof> {
   const outcome = await withTransaction(txContext(auth, 'e-signature check'), async (tx): Promise<Outcome> => {
     const user = await authRepo.findUserById(tx, auth.userId, true);
     if (!user || !user.isActive || user.isSystem) {
       return { ok: false, error: new AppError('ESIGN_FAILED', 'E-signature failed') };
     }
-    return checkPassword(tx, user, input, meta, 'signer');
+    return checkPassword(tx, user, input, meta, 'signer', subject);
   });
   if (!outcome.ok) throw outcome.error;
   return outcome.proof;
@@ -106,8 +111,9 @@ export async function verifySignature(auth: AuthContext, input: ESignRequest, me
 /**
  * A second person signs at the same terminal (QA witness, QA countersign).
  * The witness must be a different person; their wrong password counts against their own account.
+ * `subject` binds the proof to what is witnessed (a disposal: disposalSubject()); the consumer compares it.
  */
-export async function verifyWitness(auth: AuthContext, input: WitnessSignRequest, meta: RequestMeta): Promise<SignatureProof> {
+export async function verifyWitness(auth: AuthContext, input: WitnessSignRequest, meta: RequestMeta, subject: string | null = null): Promise<SignatureProof> {
   const outcome = await withTransaction(txContext(auth, 'witness signature check'), async (tx): Promise<Outcome> => {
     const [user] = await tx
       .select()
@@ -120,7 +126,7 @@ export async function verifyWitness(auth: AuthContext, input: WitnessSignRequest
     if (user.id === auth.userId) {
       return { ok: false, error: new AppError('SEGREGATION_OF_DUTIES', 'The witness must be a different person') };
     }
-    return checkPassword(tx, user, input, meta, 'witness');
+    return checkPassword(tx, user, input, meta, 'witness', subject);
   });
   if (!outcome.ok) throw outcome.error;
   return outcome.proof;
@@ -152,6 +158,7 @@ export async function recordSignature(
       signerName: proof.fullName,
       meaning: proof.meaning,
       reason: proof.reason,
+      subject: proof.subject,
       recordTable: record.table,
       recordId: record.id,
       ip: proof.ip,
@@ -164,6 +171,7 @@ export async function recordSignature(
     userId: row.userId,
     meaning: row.meaning,
     reason: row.reason,
+    subject: row.subject,
     recordTable: row.recordTable,
     recordId: row.recordId,
   };

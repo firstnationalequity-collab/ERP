@@ -43,6 +43,12 @@ export const ErrorCodes = [
   'LOT_VALUE_NEGATIVE',
   'RETURN_EXCEEDS_DISPATCH',
   'CUSTOMER_NOT_ACTIVE',
+  /** A lot disposal (DESTROY / RETURN_TO_VENDOR, → DESTROYED / RETURNED) without a valid QA witness signature (0020). */
+  'WITNESS_REQUIRED',
+  /** The witness signed for a different lot, movement type or quantity (0020). */
+  'WITNESS_MISMATCH',
+  /** A lot emptied by a disposal was not closed (DESTROYED / RETURNED) in the same transaction (0020). */
+  'LOT_NOT_CLOSED',
   'VENDOR_NOT_APPROVED',
   'CREDIT_LIMIT_EXCEEDED',
   'OPEN_DEVIATION',

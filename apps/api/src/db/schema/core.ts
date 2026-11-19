@@ -132,6 +132,8 @@ export const eSignatures = core.table('e_signatures', {
   reason: text('reason').notNull(),
   recordTable: text('record_table').notNull(),
   recordId: text('record_id').notNull(),
+  /** What was signed for, when the action names it (0020: a disposal witness). */
+  subject: text('subject'),
   signedAt: tstz('signed_at').notNull().defaultNow(),
   ip: text('ip'),
   userAgent: text('user_agent'),

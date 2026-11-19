@@ -50,6 +50,8 @@ export const stockMovements = inv.table('stock_movements', {
   reversalOf: bigintString('reversal_of'),
   /** DISPATCH / SALES_RETURN only (required there): the customer the goods went to or came back from (0018). */
   customerId: bigintString('customer_id'),
+  /** DESTROY / RETURN_TO_VENDOR only, required there: the QA witness e-signature (0020). */
+  witnessEsignId: bigintString('witness_esign_id'),
   postedAt: tstz('posted_at').notNull().defaultNow(),
   ...auditColumns(),
 });

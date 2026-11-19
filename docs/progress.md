@@ -18,7 +18,7 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 
 ## Handoff (19-11-2026, M2 in progress)
 
-**State:** M2 tasks 1–9 are done and pushed (`0b79177`), with 537 tests green (500 API, 22 web, 15 shared). API tests need the Docker DB (`docker compose up -d`). We work on `main` with one commit per task. History and the detailed notes from tasks 3–9 are in `docs/progress-log.md`: grep it, never read it whole.
+**State:** M2 tasks 1–9 are done; task 10 is in progress. 550 tests green (511 API, 24 web, 15 shared). API tests need the Docker DB (`docker compose up -d`). We work on `main` with one commit per task. History and the detailed notes from tasks 3–9 are in `docs/progress-log.md`: grep it, never read it whole.
 
 | # | M2 task (scope: build-plan.md M2) | Status |
 | --- | --- | --- |
@@ -28,7 +28,7 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 | 7–7a | `engines/posting` and rounding sweep `0016`; owner Q8/Q9: value adjustment, batch cost close, sales returns `0017` | ✅ |
 | 8–8b | Done-when test `m2-done-when.test.ts`; return limit per customer `0018`; FG doer + checker (`prod.output.verify`); dispatch only to an ACTIVE customer `0019` | ✅ |
 | 9 | Web: DataTable/DocForm, all master, finance and journal screens | ✅ |
-| 10 | Done-when evidence, `/check-rules`, docs, CI | |
+| 10 | Owner Q19 Excel numbers ✅; `/check-rules` since `m1` ✅ with fixes: disposal QA witness `0020` (A) and deactivation guards `0021` (B, rule 7 scope); docs, CI and the open-question list next | in progress |
 
 **For task 10:**
 - The Done-when checks are in the build-plan M2 section. They are automated in `apps/api/src/__tests__/m2-done-when.test.ts` (5 tests, mutation-checked).
@@ -36,6 +36,8 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 
 **Rules the code already relies on (M3+):**
 - A module posts stock in ONE `withTransaction`: `postMovement` (engines/inventory) then `postStockJournal` (engines/posting). Corrections: `reverseMovements` then `reverseStockJournal`. Transfers post no journal. Toll rows post nothing.
+- Disposal (rule 1, `0020`): `verifyWitness(..., disposalSubject(type, lot, qty))` BEFORE the transaction; then in one transaction `postMovement({ witness })`, `postStockJournal`, and `closeDisposedLot` when the lot is empty. A reversal of a disposal needs its own witness (`disposalSubject(..., true)`).
+- Masters still in use cannot be deactivated (`0021`, IN_USE). An item becomes ACTIVE only while its UoM, category and tax code are active.
 - The actor must hold the event's key (`JournalPostingKeys`). Non-stock events (invoice, payment, landed cost, conversion) have no key yet; their module adds one.
 - Never write `inv.stock_balances` (the ledger trigger keeps it). Lock lots and balances `FOR UPDATE` in the engine. Raw-SQL lot inserts need `source`. DISPATCH and SALES_RETURN need `customerId`.
 - An FG lot is created only under `prod.output.verify`. DISPATCH needs `closeBatchCost` first and an ACTIVE customer.
@@ -55,5 +57,6 @@ Current milestone: **M2 — Masters & engines** (M1 done, tag `m1`)
 13. M6 note: the conversion journal (CONVERSION_ABSORB) has no posting key yet; M6 adds it with batch close.
 17. `prod.output.verify` is not QA-controlled (granting it needs no QA Manager countersign). Agent default, PENDING OWNER (decisions.md).
 18. M6: which other stage steps need a checker (at least API dispensing/weighing)? Owner to decide when M6 starts.
+20. Disposal details (decisions 2026-11-19, agent default, PENDING OWNER): (a) reversing a disposal row needs its own QA witness; (b) one witness signature per movement, so a lot at several locations is moved to one location first.
 
-**Local dev DB:** migrated to 0019 and seeded. It has the `demo.<role>` users (password = `DEV_DEMO_PASSWORD` in `.env`) and FY 2026-27 periods OPEN. `demo.qa_manager` holds the QA countersign.
+**Local dev DB:** migrated to 0021 and seeded. It has the `demo.<role>` users (password = `DEV_DEMO_PASSWORD` in `.env`) and FY 2026-27 periods OPEN. `demo.qa_manager` holds the QA countersign.

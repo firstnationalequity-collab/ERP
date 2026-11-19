@@ -301,6 +301,24 @@ describe('journal entries', () => {
   });
 });
 
+describe('deactivating an account with a balance (owner 2026-11-19, 0021)', () => {
+  it('is refused while posted lines leave a balance, and allowed once they net to zero; drafts do not count', async () => {
+    acct['1199'] = await tx(fm, () =>
+      one(`INSERT INTO fin.accounts (code, name, type, parent_id) VALUES ('1199', 'Guard test cash', 'ASSET', (SELECT parent_id FROM fin.accounts WHERE code = '1110')) RETURNING id`),
+    );
+    const off = () => tx(fm, () => client.query(`UPDATE fin.accounts SET is_active = false WHERE code = '1199'`));
+    const on = () => tx(fm, () => client.query(`UPDATE fin.accounts SET is_active = true WHERE code = '1199'`));
+    await draft([['1199', '250.00', '0'], ['1110', '0', '250.00']]); // a DRAFT has no effect
+    await off();
+    await on();
+    await post(await draft([['1199', '250.00', '0'], ['1110', '0', '250.00']]));
+    await expect(off()).rejects.toThrow(/IN_USE: account 1199 has a balance of 250/);
+    await post(await draft([['1110', '250.00', '0'], ['1199', '0', '250.00']]));
+    await off();
+    await on();
+  });
+});
+
 describe('manual and system journals (0013)', () => {
   const insert = (sourceType: string, sourceId: string | null, event: string | null) =>
     tx(fm, () =>

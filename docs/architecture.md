@@ -149,8 +149,18 @@ Three status chains hold the system together: lot status (QC approves and reject
 | HOLD | RELEASED | QA Manager re-releases a **return lot**, e-signature | `qa.batch.release` | Return lots only; mandatory assessment reason (owner 2026-11-18) |
 | APPROVED | RETEST\_DUE / EXPIRED | Nightly job (SYSTEM user) | (system job) | Retest or expiry date reached |
 | RETEST\_DUE | UNDER\_TEST | QC Analyst | `qc.result.enter` | Re-sample; new assay updates the lot |
-| REJECTED | DESTROYED / RETURNED | Warehouse Manager, plus QA Manager witness e-signature | `inv.lot.dispose` + witness `qa.lot.witness` | Stock moved out, value written off or debit note |
+| REJECTED | DESTROYED / RETURNED | Warehouse Manager, plus QA Manager witness e-signature | `inv.lot.dispose` + witness `qa.lot.witness` | Stock moved out, value written off or debit note. The status changes in the same transaction as the DESTROY / RETURN_TO_VENDOR movement that empties the lot, with that movement's witness signature (one signature covers both; see **Disposal witness** below). Owner 2026-11-19 |
 | QC APPROVED (FG only) | RELEASED | QA Manager via batch release | `qa.batch.release` | See batch release below |
+
+**Disposal witness** (rule 1; owner 2026-11-19; migration 0020). How the witness is passed:
+
+1. The disposal request carries the lot, the movement type (DESTROY or RETURN_TO_VENDOR), the quantity and `witness: { username, password, meaning: "WITNESSED", reason }`, entered by the QA witness at the Warehouse Manager's terminal, like the role-change countersign.
+2. The service calls `verifyWitness` (core/esign) with the subject `"<TYPE> lot <lot id> qty <qty, 4 decimals>"` (`disposalSubject()`). The password is re-checked in its own transaction (a wrong password counts against the witness). The proof is single-use and valid for 2 minutes. The witness must be a different person from the poster.
+3. In ONE transaction: `postMovement` (engines/inventory) refuses a proof whose subject names a different lot, type or quantity (`WITNESS_MISMATCH`), from the poster (`SEGREGATION_OF_DUTIES`) or from someone without `qa.lot.witness` (`FORBIDDEN`). It records the signature against the lot (`core.e_signatures`, with the subject) and stores its id on the movement (`witness_esign_id`). Then `postStockJournal` runs, and, if the lot is now empty, `closeDisposedLot` moves it REJECTED → DESTROYED / RETURNED through core/transition, with the same signature as the witness.
+4. The database re-checks everything. A DESTROY / RETURN_TO_VENDOR row cannot be written without a WITNESSED signature for that lot, recorded in the same transaction, naming exactly that movement, by an active holder of `qa.lot.witness` who is not the poster. One signature serves one movement. A lot becomes DESTROYED / RETURNED only with the witness of a disposal of the matching type posted in that transaction. A commit that leaves a lot emptied by a disposal still REJECTED is refused (`LOT_NOT_CLOSED`).
+5. Reversing a disposal row needs its own witness signature, with the subject `"REVERSE <TYPE> lot <id> qty <qty>"`, one disposal row per reversal. A DESTROYED / RETURNED lot never moves again, so only a partial disposal can be reversed.
+
+A lot held at several locations is moved to one location first; each disposal movement has its own witness signature.
 
 Only **APPROVED** material lots can be issued or reserved; only **RELEASED** FG lots can be picked for dispatch, and an FG lot made by production is dispatched only after its batch is closed (`BATCH_NOT_CLOSED`, enforced in the service and the database; owner 2026-11-18, Q8).
 
@@ -197,7 +207,9 @@ About 80 tables in 9 groups, all in one PostgreSQL schema per module (`core`, `i
 | QA | `deviations`, `batch_releases` | Deviation: batch, class MINOR/MAJOR/CRITICAL, status OPEN/CLOSED, root cause, closed\_by. Release: production order, checklist JSONB, decision, e-signature id |
 | Finance | `accounts`, `cost_centers`, `posting_rules`, `journal_entries`, `journal_lines`, `bank_accounts`, `bank_statement_lines`, `batch_costs`, `cost_rates` | Journal entry: date, period, source\_type/id, status, reversal\_of; manual journal vouchers (source MANUAL, no event) number from the `JV` series, system journals posted by modules from `SJ` and always name their source document and event. Lines: account, debit, credit, cost\_center, customer\_id, vendor\_id, production\_order\_id, tax\_code\_id; a line booking a WITHHOLDING code whose rate Finance has not confirmed (`is_placeholder`) cannot be posted (`TAX_RATE_NOT_CONFIRMED`); CHECK one of debit/credit is zero; trigger ensures entry balances. `cost_rates`: per line machine-hour rate, labour rate, overhead % |
 
-**Database-enforced rules** (not only in code): balances never negative; journal entries balance; no insert into a closed period; no UPDATE/DELETE on posted rows, audit log, auth events, status history or stock movements (trigger raises an error).
+**Disposal columns** (0020): `core.e_signatures.subject` (what was signed for; NULL when only the record is signed) and `inv.stock_movements.witness_esign_id` (required on DESTROY / RETURN_TO_VENDOR rows, forbidden on all others, unique). See §4 **Disposal witness**.
+
+**Database-enforced rules** (not only in code): balances never negative; a disposal has a QA witness signature (0020); journal entries balance; no insert into a closed period; no UPDATE/DELETE on posted rows, audit log, auth events, status history or stock movements (trigger raises an error).
 
 ## 6. Inventory ledger and GL posting rules
 
@@ -226,8 +238,8 @@ Accounts are not hard-coded: `posting_rules` maps (event, account role, item cat
 | Sales invoice (toll conversion) | — | Accounts receivable | Conversion revenue; Output sales tax |
 | Customer receipt | — | Bank; WHT receivable (deducted by customer) | Accounts receivable |
 | Stock adjustment / write-off | ± lot | Inventory loss expense (or Inventory) | Inventory (or Inventory gain) |
-| Rejected lot destroyed | − lot | Rejection write-off expense | Inventory |
-| Rejected lot returned to vendor | − lot | Accounts payable (debit note) | Inventory |
+| Rejected lot destroyed (QA witness, §4) | − lot; when empty, the lot becomes DESTROYED in the same transaction | Rejection write-off expense | Inventory |
+| Rejected lot returned to vendor (QA witness, §4) | − lot; when empty, the lot becomes RETURNED in the same transaction | Accounts payable (debit note) | Inventory |
 | Rounding sweep (empty lot left with paisa) | Value-only row, lot value to zero | Inventory (paisa below zero) or Rounding difference (paisa above zero) | Rounding difference or Inventory |
 | Any reversal | Mirror of the original | Original credits | Original debits |
 

@@ -451,6 +451,47 @@ describe('products (regulated fields need a QA countersign)', () => {
   });
 });
 
+describe('deactivating a master still in use (owner 2026-11-19, 0021)', () => {
+  it('refuses a UoM, category or tax code used by an ACTIVE item or by an item an active product sells; a DRAFT item does not block', async () => {
+    const uom = (await post('wm', '/master/uoms', { code: 'BOXG', name: 'Box (guard test)' })).body.id as string;
+    const cat = (await post('wm', '/master/item-categories', { code: 'FGG', name: 'FG (guard test)' })).body.id as string;
+    const tax = (await post('fm', '/master/tax-codes', { code: 'GSTG', name: 'Sales tax (guard test)', kind: 'SALES_TAX', rate: '17' })).body.id as string;
+    const refs: [string, string, string][] = [
+      ['wm', 'uoms', uom],
+      ['wm', 'item-categories', cat],
+      ['fm', 'tax-codes', tax],
+    ];
+    const toggle = async (expectStatus: 204 | 409) => {
+      for (const [who, path, id] of refs) {
+        const res = await post(who, `/master/${path}/${id}/deactivate`, { reason: 'Guard test' });
+        if (expectStatus === 409) {
+          expectError(res, 409, 'IN_USE');
+        } else {
+          expect(res.status).toBe(204);
+          expect((await post(who, `/master/${path}/${id}/activate`, { reason: 'Guard test' })).status).toBe(204);
+        }
+      }
+    };
+    const fg = await post('wm', '/master/items', { code: 'FG-GUARD', name: 'Guard FG', type: 'FG', categoryId: cat, baseUomId: uom, taxCodeId: tax });
+    expect(fg.body.status).toBe('DRAFT');
+    await toggle(204); // only a DRAFT item uses them
+    // ... but the item becomes ACTIVE only while all three are active.
+    for (const [who, path, id] of refs) {
+      expect((await post(who, `/master/${path}/${id}/deactivate`, { reason: 'Guard test' })).status).toBe(204);
+      expectError(await post('qam', `/master/items/${fg.body.id}/activate`), 400, 'VALIDATION_FAILED');
+      expect((await post(who, `/master/${path}/${id}/activate`, { reason: 'Guard test' })).status).toBe(204);
+    }
+    expect((await post('qam', `/master/items/${fg.body.id}/activate`)).body.status).toBe('ACTIVE');
+    await toggle(409); // an ACTIVE item uses them
+    const product = await post('sm', '/master/products', { itemId: fg.body.id });
+    expect(product.status).toBe(201);
+    expect((await post('qam', `/master/items/${fg.body.id}/deactivate`, { reason: 'Guard test' })).body.status).toBe('INACTIVE');
+    await toggle(409); // the item is INACTIVE but an active product still sells it
+    expect((await post('sm', `/master/products/${product.body.id}/deactivate`, { reason: 'Guard test' })).status).toBe(204);
+    await toggle(204); // nothing active uses them any more; reactivation is never refused
+  });
+});
+
 describe('master formulas (versions, QA approval, one APPROVED per product)', () => {
   const lines = () => [
     { itemId: ids.api, qtyPerBatch: '50', uomId: ids.kg, isApi: true, assayBasis: 'DRIED' },

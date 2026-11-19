@@ -3,7 +3,7 @@
 // Rules (service first, database backstop in 0012_finance_masters.sql):
 //  - account code and type never change; a parent is an active header account of the same type, never itself;
 //  - a header (not postable) takes no journal lines; an account with lines never becomes a header;
-//  - an account used by an active posting rule, or with active sub-accounts, cannot be deactivated;
+//  - an account used by an active posting rule, with active sub-accounts, or with a balance cannot be deactivated (DB 0012, 0021);
 //  - a posting rule's role must be one its event uses; one rule per (event, role, item category);
 //    its account is an active postable account; event, role and category never change;
 //  - the placeholder flag can only be cleared (Finance confirms), never set again.

@@ -16,10 +16,14 @@ import { systemContext, withTransaction, type Tx } from '../db/client';
 import { runSeed } from '../db/seed/run';
 import { permissionKeysForUser } from '../core/auth/auth.repo';
 import type { Actor } from '../core/transition/transition';
-import { createTestUser } from '../test/factories';
+import { verifyWitness } from '../core/esign/esign.service';
+import { createTestUser, TEST_PASSWORD } from '../test/factories';
 import {
   closeBatchCost,
+  closeDisposedLot,
   createLot,
+  disposalSubject,
+  type DisposalMovementType,
   createReturnLot,
   fgUnitCost,
   postMovement,
@@ -92,6 +96,26 @@ const postDoc = (who: string, inputs: Partial<MovementInput>[], refDocType = 'TE
     const posting = await postStockJournal(tx, a, { movements, narration: `${movements[0]!.movementType} (done-when)` });
     return { movements, ...posting };
   });
+/**
+ * A disposal as M4/M7 will post it (rule 1; owner 2026-11-19): the QA witness signs at the Warehouse Manager's
+ * terminal for this lot, type and quantity; then ONE transaction posts the movement, its journal, and — the lot
+ * being empty — moves it to DESTROYED / RETURNED with the same signature.
+ */
+async function disposeDoc(type: DisposalMovementType, lotId: string, qty: string) {
+  const wm = actors.wm!;
+  const witness = await verifyWitness(
+    { userId: wm.userId, companyId: '1', sessionId: '0', username: 'd_wm', mustChangePassword: false, passwordExpired: false, permissions: wm.permissions },
+    { username: 'd_qa', password: TEST_PASSWORD, meaning: 'WITNESSED', reason: 'Witnessed the disposal' },
+    { ip: null, userAgent: 'vitest' },
+    disposalSubject(type, lotId, qty),
+  );
+  return as('wm', async (tx, a) => {
+    const m = await postMovement(tx, a, mv({ type, lotId, qty, witness, refDocType: 'DISPOSAL', refDocId: doc() }));
+    const posting = await postStockJournal(tx, a, { movements: [m], narration: `${type} (done-when)` });
+    await closeDisposedLot(tx, a, m);
+    return { movements: [m], ...posting };
+  });
+}
 const newLot = (who: string, o: Partial<NewLot> & { lotNo: string }) =>
   as(who, (tx, a) => createLot(tx, a, { source: 'GRN', itemId: ids.rm!, unitCost: '0', ...o }));
 
@@ -384,19 +408,32 @@ describe('M2 Done when', () => {
     });
     await expectGlEqualsLedger('reversal of an adjustment');
 
-    // DESTROY and RETURN_TO_VENDOR of REJECTED lots (Warehouse Manager, inv.lot.dispose).
+    // DESTROY and RETURN_TO_VENDOR of REJECTED lots (Warehouse Manager, inv.lot.dispose, QA witness qa.lot.witness).
     const rej = await newLot('store', { lotNo: 'DW-B', unitCost: '5.00' });
     await postDoc('store', [{ lotId: rej.id, qty: '10' }], 'GRN');
     const vend = await newLot('store', { lotNo: 'DW-C', unitCost: '7.77' });
     await postDoc('store', [{ lotId: vend.id, qty: '4' }], 'GRN');
     await setLot(rej.id, 'UNDER_TEST', 'REJECTED');
     await setLot(vend.id, 'UNDER_TEST', 'REJECTED');
-    const destroy = await postDoc('wm', [{ type: 'DESTROY', lotId: rej.id, qty: '10' }], 'DISPOSAL');
+    await expect(postDoc('wm', [{ type: 'DESTROY', lotId: rej.id, qty: '10' }], 'DISPOSAL')).rejects.toMatchObject({ code: 'WITNESS_REQUIRED' });
+    const destroy = await disposeDoc('DESTROY', rej.id, '10');
     expect(lineView(destroy.entry!)).toEqual([['1310', '0.00', '50.00'], ['6200', '50.00', '0.00']]);
     await expectGlEqualsLedger('DESTROY');
-    const rtv = await postDoc('wm', [{ type: 'RETURN_TO_VENDOR', lotId: vend.id, qty: '4' }], 'DISPOSAL');
+    const rtv = await disposeDoc('RETURN_TO_VENDOR', vend.id, '4');
     expect(lineView(rtv.entry!)).toEqual([['1310', '0.00', '31.08'], ['2110', '31.08', '0.00']]);
     await expectGlEqualsLedger('RETURN_TO_VENDOR');
+    // Each lot closed with the witness signature its movement carries.
+    for (const [lotId, status, posted] of [[rej.id, 'DESTROYED', destroy], [vend.id, 'RETURNED', rtv]] as const) {
+      const [row] = await q<{ status: string; witness: string; on_move: string }>(
+        `SELECT l.status, h.witness_esign_id AS witness, m.witness_esign_id AS on_move
+           FROM inv.lots l
+           JOIN core.status_history h ON h.entity_table = 'inv.lots' AND h.entity_id = l.id::text AND h.to_status = l.status
+           JOIN inv.stock_movements m ON m.id = $2
+          WHERE l.id = $1`,
+        [lotId, posted.movements[0]!.id],
+      );
+      expect(row).toEqual({ status, witness: posted.movements[0]!.witness!.id, on_move: posted.movements[0]!.witness!.id });
+    }
 
     // ROUNDING_SWEEP: a reversal that empties a lot leaves -0.01; swept to 5400 in the same transaction.
     const d = await newLot('store', { lotNo: 'DW-D', unitCost: '3.33' });
