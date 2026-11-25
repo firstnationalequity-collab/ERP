@@ -27,6 +27,9 @@ import {
   AddressType,
   AccountType,
   PostingEvent,
+  LandedCostBasis,
+  LandedCostStatus,
+  LandedCostTaxRole,
   AccountRole,
   GrnStatus,
   PostingStatus,
@@ -92,6 +95,10 @@ const cases: [string, string, readonly string[]][] = [
   ['inv.lots', 'source', LotSource],
   ['inv.stock_movements', 'movement_type', StockMovementType],
   ['purch.grns', 'status', GrnStatus],
+  ['purch.landed_costs', 'status', LandedCostStatus],
+  ['purch.landed_costs', 'basis', LandedCostBasis],
+  ['purch.landed_cost_types', 'default_basis', LandedCostBasis],
+  ['purch.landed_cost_types', 'tax_role', LandedCostTaxRole],
   ['qc.sample_requests', 'status', SampleRequestStatus],
 ];
 

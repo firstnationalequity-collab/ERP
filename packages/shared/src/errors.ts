@@ -63,6 +63,8 @@ export const ErrorCodes = [
   'SHELF_LIFE_TOO_SHORT',
   /** A GRN reversal refused: a lot was sampled, moved, reserved or changed status (owner 2026-11-25; 0028). */
   'GRN_LOTS_IN_USE',
+  /** A GRN reversal refused: a landed-cost charge was posted on it (its value adjustment is never reversed; 0029). */
+  'GRN_HAS_LANDED_COST',
   'CREDIT_LIMIT_EXCEEDED',
   'OPEN_DEVIATION',
   'DUPLICATE_REQUEST',

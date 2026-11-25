@@ -28,6 +28,8 @@ export const PLACEHOLDER_ACCOUNTS: readonly AccountSeed[] = [
   { code: '1210', name: 'Trade receivables', type: 'ASSET', parent: '1200' },
   { code: '1220', name: 'Income tax withheld by customers', type: 'ASSET', parent: '1200' },
   { code: '1230', name: 'Input sales tax', type: 'ASSET', parent: '1200' },
+  // Owner Q21 (2026-11-19): income tax collected at import is not cost; it goes to an advance tax account (0029).
+  { code: '1240', name: 'Advance income tax (collected at import)', type: 'ASSET', parent: '1200' },
   { code: '1300', name: 'Stock in trade', type: 'ASSET', parent: '1000', header: true },
   { code: '1310', name: 'Stock - all item categories', type: 'ASSET', parent: '1300' },
   { code: '1320', name: 'Work in process', type: 'ASSET', parent: '1300' },
@@ -66,6 +68,7 @@ export const PLACEHOLDER_ROLE_ACCOUNTS: Readonly<Record<AccountRole, string>> = 
   PRICE_VARIANCE: '5200',
   LANDED_COST_CLEARING: '2130',
   INPUT_TAX: '1230',
+  ADVANCE_TAX: '1240',
   ACCOUNTS_PAYABLE: '2110',
   BANK: '1120',
   WHT_PAYABLE: '2220',

@@ -5,7 +5,9 @@
 //       owner 2026-11-25), and an OPEN QC sample request (modules/qc; owner Q1);
 //     - the GRN_RECEIPT journal (Dr Inventory / Cr GRNI, vendor on the GRNI line) through engines/posting (rule 5);
 //     - the PO's received quantities and PARTIALLY_RECEIVED / RECEIVED status.
-//   No landed charges here (owner 2026-11-25: task 4 adds them).
+//   Landed charges entered on the DRAFT GRN post with it (landed-costs.service, owner Q2/Q21; task 4, 0029): after
+//   the GRN is POSTED, each capitalised charge raises its lots by a LANDED_COST value adjustment on the GRN date, so
+//   the lots are received at full cost; tax charges post their IMPORT_TAX journal.
 //   Refusals: OVER_RECEIPT (ordered + tolerance), AVL_NOT_APPROVED (GMP material needs an APPROVED source for
 //   item + vendor + manufacturer at posting), RATE_MISSING, SEGREGATION_OF_DUTIES (receiver ≠ PO creator / approver),
 //   SHELF_LIFE_TOO_SHORT (setting purch.grn.min_shelf_life_pct), expired / retest passed / mfg after the GRN date.
@@ -63,6 +65,7 @@ import { cancelGrnSampleRequests, requestSample, sampleRequestsOfLots } from '..
 import * as repo from './grns.repo';
 import { findPo, listPos, poLinesOf, userNames, type PoLineRow, type PoRow } from './procurement.repo';
 import { minShelfLifePct, overReceiptPct } from './procurement.settings';
+import { assertNoPostedCharges, cancelChargesOfGrn, landedCostsOfGrns, postChargesWithGrn } from './landed-costs.service';
 import { PO_TABLE, PurchaseOrderMoves } from './orders.service';
 
 export const GRN_TABLE = 'purch.grns';
@@ -163,7 +166,7 @@ export async function poReceipt(auth: AuthContext, poRef: { poId?: string; docNo
 async function toDtos(q: Queryable, companyId: string, rows: repo.GrnRow[]): Promise<GrnDto[]> {
   const lines = await repo.grnLinesOf(q, rows.map((r) => r.id));
   const lotIds = lines.flatMap((l) => (l.lotId ? [l.lotId] : []));
-  const [vendors, items, locations, names, lots, samples, pos] = await Promise.all([
+  const [vendors, items, locations, names, lots, samples, pos, charges] = await Promise.all([
     purchVendors(q, companyId, rows.map((r) => r.vendorId)),
     purchItems(q, companyId, lines.map((l) => l.itemId)),
     purchLocations(q, companyId, rows.map((r) => r.locationId)),
@@ -171,6 +174,7 @@ async function toDtos(q: Queryable, companyId: string, rows: repo.GrnRow[]): Pro
     lotsByIds(q, companyId, lotIds),
     sampleRequestsOfLots(q, companyId, lotIds),
     Promise.all([...new Set(rows.map((r) => r.poId))].map((id) => findPo(q, companyId, id))),
+    landedCostsOfGrns(q, companyId, rows.map((r) => r.id)),
   ]);
   const poDoc = new Map(pos.flatMap((p) => (p ? [[p.id, p.docNo] as const] : [])));
   // The GRN_RECEIPT journal is the first one of the GRN; a reversal adds its mirror after it.
@@ -248,6 +252,18 @@ async function toDtos(q: Queryable, companyId: string, rows: repo.GrnRow[]): Pro
       journalId: journal?.id ?? null,
       journalDocNo: journal?.docNo ?? null,
       reversalJournalDocNo: reversalJournal?.docNo ?? null,
+      landedCosts: charges
+        .filter((c) => c.grnId === r.id)
+        .map((c) => ({
+          id: c.id,
+          docNo: c.docNo,
+          chargeTypeCode: c.chargeTypeCode,
+          chargeTypeName: c.chargeTypeName,
+          capitalise: c.capitalise,
+          amount: c.amount,
+          status: c.status,
+          withGrn: c.withGrn,
+        })),
       lines: myLines,
     };
   });
@@ -491,6 +507,8 @@ export async function postGrn(auth: AuthContext, id: string): Promise<GrnDto> {
       actor: auth,
       alsoSet: { exchange_rate: new Decimal(rate).toFixed(6), exchange_rate_date: rateDate, posted_by: auth.userId, posted_at: new Date().toISOString() },
     });
+    // Owner Q2: the charges entered with the GRN roll into the lot cost now (after the receipt, same transaction).
+    await postChargesWithGrn(tx, auth, id);
 
     const received = new Map<string, Decimal>();
     for (const l of lines) received.set(l.poLineId, (received.get(l.poLineId) ?? new Decimal(0)).plus(l.qty));
@@ -515,6 +533,7 @@ export async function cancelGrn(auth: AuthContext, id: string, reason: string): 
       });
     }
     await transition(tx, GrnMoves, { entityId: id, to: 'CANCELLED', actor: auth, reason });
+    await cancelChargesOfGrn(tx, auth, id, 'purch.grn.post', `GRN ${grn.docNo} cancelled: ${reason}`);
   });
   return getGrn(auth, id);
 }
@@ -541,6 +560,8 @@ export async function reverseGrn(auth: AuthContext, id: string, input: GrnRevers
       throw new AppError('INVALID_TRANSITION', `Purchase order ${po.docNo} is ${po.status}; its receipts can no longer be reversed`, { status: po.status });
     }
     await repo.lockPoLines(tx, po.id);
+    // A posted landed cost raised the lots by a value adjustment that is never reversed (0017, 0029).
+    await assertNoPostedCharges(tx, grn);
     const lines = await repo.grnLinesOf(tx, [id]);
     const lotIds = lines.flatMap((l) => (l.lotId ? [l.lotId] : []));
     const doc = { refDocType: GRN_DOC_TYPE, refDocId: id };
@@ -563,6 +584,7 @@ export async function reverseGrn(auth: AuthContext, id: string, input: GrnRevers
 
     const signature = await recordSignature(tx, proof, { table: GRN_TABLE, id }, ['APPROVED']);
     await transition(tx, GrnMoves, { entityId: id, to: 'REVERSED', actor: auth, signature, reason });
+    await cancelChargesOfGrn(tx, auth, id, 'purch.grn.reverse', `GRN ${grn.docNo} reversed: ${reason}`);
 
     const given = new Map<string, Decimal>();
     for (const l of lines) given.set(l.poLineId, (given.get(l.poLineId) ?? new Decimal(0)).plus(l.qty));

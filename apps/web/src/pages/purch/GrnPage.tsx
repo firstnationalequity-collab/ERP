@@ -3,6 +3,7 @@
 // QUARANTINE, valued at PO price × the GRN-date rate, a QC sample request is opened per lot, and labels print.
 // Owner 2026-11-25 (0028): an item that needs no QC is received APPROVED without a sample request; a DRAFT is
 // cancelled with a reason; a POSTED GRN whose lots are untouched is reversed by the Warehouse Manager (e-signature).
+// M3 task 4: the drawer lists the GRN's landed costs; the Purchase Officer adds charges (posted with a DRAFT GRN).
 import { useState } from 'react';
 import dayjs from 'dayjs';
 import { Alert, App, Button, DatePicker, Descriptions, Drawer, Input, InputNumber, Modal, Select, Space, Table, Typography } from 'antd';
@@ -25,6 +26,7 @@ import { PageHeader } from '../../components/PageHeader';
 import { RefSelect } from '../../components/RefSelect';
 import { StatusTag } from '../../components/StatusTag';
 import { companyToday, formatDate, formatDecimal, formatRate, toBusinessDate } from '../../lib/format';
+import { GrnLandedCosts } from './LandedCostPage';
 
 const grnKey = ['purch', 'grns'];
 
@@ -365,6 +367,7 @@ function GrnDrawer({ id, onClose, onEdit, onChanged }: { id: string; onClose(): 
               { title: 'QC sample', render: (_, l) => (l.sampleRequest ? <StatusTag status={l.sampleRequest.status} /> : '—') },
             ]}
           />
+          <GrnLandedCosts grn={g} onChanged={reload} />
         </>
       )}
       <Modal

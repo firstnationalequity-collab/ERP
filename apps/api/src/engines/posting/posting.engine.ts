@@ -58,6 +58,19 @@ export const JournalPostingKeys: Readonly<Partial<Record<PostingEvent, Permissio
   STOCK_ADJUSTMENT: 'inv.adjustment.approve',
   LOT_DESTROYED: 'inv.lot.dispose',
   LOT_RETURNED: 'inv.lot.dispose',
+  // M3 task 4 (owner Q21; Q2 2026-11-25): landed costs are entered and later bills posted by the Purchase Officer.
+  LANDED_COST: 'purch.landed_cost.manage',
+  IMPORT_TAX: 'purch.landed_cost.manage',
+};
+
+/**
+ * Other keys a caller may name for an event (JournalInput.key), where one business action posts another's journal.
+ * Owner 2026-11-25 (Q2): posting the GRN (purch.grn.post, Storekeeper) posts the landed-cost and import-tax journals
+ * of the charges entered with it, without the Storekeeper holding purch.landed_cost.manage.
+ */
+export const JournalAlternativeKeys: Readonly<Partial<Record<PostingEvent, readonly PermissionKey[]>>> = {
+  LANDED_COST: ['purch.grn.post'],
+  IMPORT_TAX: ['purch.grn.post'],
 };
 
 /**
@@ -88,9 +101,10 @@ export const StockMovementPosting: Readonly<Partial<Record<StockMovementType, Po
   ROUNDING_SWEEP: { event: 'ROUNDING_DIFFERENCE', counter: 'ROUNDING_DIFFERENCE' },
 };
 
-/** VALUE_ADJUSTMENT reason → posting event and counter role (owner Q8, 2026-11-18). M3 adds LANDED_COST. */
+/** VALUE_ADJUSTMENT reason → posting event and counter role (owner Q8, 2026-11-18; LANDED_COST owner Q21, 0029). */
 export const ValueAdjustmentPosting: Readonly<Record<ValueAdjustmentReason, Posting>> = {
   BATCH_CLOSE: { event: 'FG_COST_ADJUSTMENT', counter: 'WIP' },
+  LANDED_COST: { event: 'LANDED_COST', counter: 'LANDED_COST_CLEARING' },
 };
 
 /** The event and counter role of one movement (undefined: no posting rule). */
@@ -120,12 +134,16 @@ function journalMap(key: PermissionKey): TransitionMap<PostingStatus> {
   return map;
 }
 
-function postingKey(event: PostingEvent): PermissionKey {
+function postingKey(event: PostingEvent, requested?: PermissionKey): PermissionKey {
   const key = JournalPostingKeys[event];
   if (!key) {
     throw new AppError('VALIDATION_FAILED', `No posting key is defined for ${event} journals yet; its module adds it when it is built`, { event });
   }
-  return key;
+  if (requested === undefined || requested === key) return key;
+  if (!(JournalAlternativeKeys[event] ?? []).includes(requested)) {
+    throw new AppError('VALIDATION_FAILED', `${event} journals are not posted under ${requested}`, { event, key: requested });
+  }
+  return requested;
 }
 
 function reversalKey(event: PostingEvent): PermissionKey {
@@ -162,6 +180,8 @@ export interface JournalInput {
   date: string;
   narration: string;
   lines: JournalLineInput[];
+  /** The business action's key, when it is one of JournalAlternativeKeys for the event (default: JournalPostingKeys). */
+  key?: PermissionKey;
 }
 
 export interface JournalLine {
@@ -216,7 +236,7 @@ export async function postJournal(tx: Tx, actor: Actor, input: JournalInput): Pr
   if (input.event === 'ROUNDING_DIFFERENCE') {
     throw new AppError('VALIDATION_FAILED', 'Rounding differences are posted only by the stock sweep (postStockJournal)');
   }
-  return post(tx, actor, postingKey(input.event), input);
+  return post(tx, actor, postingKey(input.event, input.key), input);
 }
 
 export interface ReverseInput {
@@ -289,6 +309,13 @@ export interface StockJournalInput {
   narration: string;
   /** Put on the lines opposite INVENTORY (e.g. the production order on WIP, the vendor on a debit note). */
   dimensions?: LineDimensions;
+  /**
+   * Lines of the same event that move no stock, balanced among themselves (never INVENTORY, so the GL keeps equal
+   * to the ledger): e.g. a landed cost's consumed share, Dr PRICE_VARIANCE / Cr LANDED_COST_CLEARING (owner Q21).
+   */
+  otherLines?: JournalLineInput[];
+  /** As JournalInput.key. */
+  key?: PermissionKey;
 }
 
 /**
@@ -313,8 +340,12 @@ export async function postStockJournal(tx: Tx, actor: Actor, input: StockJournal
   }
   const event = oneEvent(movements);
   const { doc, date } = oneDocumentAndDate(movements);
-  const key = postingKey(event);
-  const lines = stockLines(movements, input.dimensions);
+  const key = postingKey(event, input.key);
+  const other = input.otherLines ?? [];
+  if (other.some((l) => l.role === 'INVENTORY')) {
+    throw new AppError('VALIDATION_FAILED', 'Inventory lines come only from the movements');
+  }
+  const lines = [...stockLines(movements, input.dimensions), ...other];
   const entry = lines.length
     ? await post(tx, actor, key, { event, sourceType: doc.refDocType, sourceId: doc.refDocId, date, narration: input.narration, lines })
     : null;

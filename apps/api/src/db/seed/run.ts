@@ -15,6 +15,7 @@ import { approvalRules, numberSeries, permissions, rolePermissions, roles, userC
 import { assertPasswordPolicy, hashPassword } from '../../core/auth/password';
 import { FIRST_ADMIN_USERNAME, ROLE_SEEDS } from './roles';
 import { seedFinance, type FinanceSeedReport } from './finance';
+import { seedLandedCostTypes } from './procurement';
 
 /**
  * Decision Q16 defaults: PO-2627-00042 (resets each fiscal year), AP26-0001 (resets each calendar year).
@@ -27,6 +28,8 @@ export const DEFAULT_SERIES = [
   { docType: 'GRN', name: 'Goods received note', prefix: 'GRN', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
   // Material lot numbers given at GRN posting (M3 task 3; format: agent default, PENDING OWNER), e.g. ML26-00001.
   { docType: 'MATERIAL_LOT', name: 'Material lot number', prefix: 'ML', pattern: '{PREFIX}{YY}-{SEQ:5}', reset: 'CALENDAR_YEAR' },
+  // Landed-cost charges (M3 task 4, 0029), e.g. LC-2627-00001 (format: agent default, PENDING OWNER).
+  { docType: 'LANDED_COST', name: 'Landed cost charge', prefix: 'LC', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
   { docType: 'BATCH', name: 'Batch number', prefix: 'AP', pattern: '{PREFIX}{YY}-{SEQ:4}', reset: 'CALENDAR_YEAR' },
   { docType: 'JV', name: 'Manual journal voucher', prefix: 'JV', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
   { docType: 'SJ', name: 'System journal', prefix: 'SJ', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
@@ -84,6 +87,7 @@ export interface SeedReport extends FinanceSeedReport {
   keysAdded: Record<string, string[]>;
   seriesCreated: string[];
   approvalRulesCreated: string[];
+  landedCostTypesCreated: string[];
   adminCreated: boolean;
   /** Why the admin was not created, when it was not. */
   adminSkipped?: string;
@@ -108,6 +112,7 @@ export async function runSeed(opts: SeedOptions): Promise<SeedReport> {
       accountsCreated: [],
       postingRulesCreated: [],
       taxCodesCreated: [],
+      landedCostTypesCreated: [],
       adminCreated: false,
     };
     await syncPermissions(tx, report);
@@ -115,6 +120,7 @@ export async function runSeed(opts: SeedOptions): Promise<SeedReport> {
     await createMissingSeries(tx, report);
     await createMissingApprovalRules(tx, report);
     await seedFinance(tx, report);
+    report.landedCostTypesCreated = await seedLandedCostTypes(tx);
     await createFirstAdmin(tx, opts.initialAdminPassword, report);
     return report;
   });

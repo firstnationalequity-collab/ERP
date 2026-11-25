@@ -7,6 +7,13 @@ import { z } from 'zod';
 import {
   ConvertPrRequest,
   CreateGrnRequest,
+  CreateLandedCostRequest,
+  CreateLandedCostTypeRequest,
+  DeactivateRequest,
+  LandedCostListQuery,
+  MasterActionRequest,
+  UpdateLandedCostRequest,
+  UpdateLandedCostTypeRequest,
   CreatePoRequest,
   CreatePrRequest,
   GrnReverseRequest,
@@ -16,13 +23,14 @@ import {
   UpdatePoRequest,
   UpdatePrRequest,
 } from '@albert/shared';
-import { requirePermission } from '../../core/rbac/require-permission';
+import { requireAnyPermission, requirePermission } from '../../core/rbac/require-permission';
 import { asyncHandler, authOf, requestMeta } from '../../core/auth/middleware';
 import { idempotent } from '../../core/idempotency/idempotency';
 import * as prs from './requisitions.service';
 import * as pos from './orders.service';
 import * as grns from './grns.service';
 import { grnLabelsPdf } from './grn-labels';
+import * as landed from './landed-costs.service';
 
 const IdParam = z.object({ id: z.string().regex(/^\d+$/, 'Invalid id') });
 const idOf = (req: Request) => IdParam.parse(req.params).id;
@@ -97,4 +105,40 @@ r.post('/grns/:id/reverse', requirePermission('purch.grn.reverse'), idempotent()
 r.get('/grns/:id/labels.pdf', requirePermission('inv.label.print'), asyncHandler(async (req, res) => {
   const { fileName, pdf } = await grnLabelsPdf(authOf(req), idOf(req));
   res.type('application/pdf').set('Content-Disposition', `inline; filename="${fileName}"`).send(pdf);
+}));
+
+// ---------------------------------------------------------------- landed cost (M3 task 4; owner Q21, Q2; 0029)
+// Charge types are accounting policy (capitalise flag, tax role): Finance keeps them (fin.master.manage).
+const TypesQuery = z.object({ active: z.enum(['true', 'false']).optional() });
+r.get('/landed-cost-types', requireAnyPermission('purch.view', 'fin.view'), asyncHandler(async (req, res) => {
+  res.json(await landed.listLandedCostTypes(authOf(req), TypesQuery.parse(req.query).active === 'true'));
+}));
+r.post('/landed-cost-types', requirePermission('fin.master.manage'), asyncHandler(async (req, res) => {
+  res.status(201).json(await landed.createLandedCostType(authOf(req), CreateLandedCostTypeRequest.parse(req.body)));
+}));
+r.patch('/landed-cost-types/:id', requirePermission('fin.master.manage'), asyncHandler(async (req, res) => {
+  res.json(await landed.updateLandedCostType(authOf(req), idOf(req), UpdateLandedCostTypeRequest.parse(req.body)));
+}));
+r.post('/landed-cost-types/:id/activate', requirePermission('fin.master.manage'), asyncHandler(async (req, res) => {
+  res.json(await landed.setLandedCostTypeActive(authOf(req), idOf(req), true, MasterActionRequest.parse(req.body ?? {}).reason));
+}));
+r.post('/landed-cost-types/:id/deactivate', requirePermission('fin.master.manage'), asyncHandler(async (req, res) => {
+  res.json(await landed.setLandedCostTypeActive(authOf(req), idOf(req), false, DeactivateRequest.parse(req.body ?? {}).reason));
+}));
+
+// Charges: the Purchase Officer enters them (purch.landed_cost.manage). A charge on a DRAFT GRN posts with the GRN
+// (purch.grn.post); a later bill posts here, on its charge date (Idempotency-Key required).
+r.get('/landed-costs', VIEW, asyncHandler(async (req, res) => { res.json(await landed.listLandedCosts(authOf(req), LandedCostListQuery.parse(req.query))); }));
+r.get('/landed-costs/:id', VIEW, asyncHandler(async (req, res) => { res.json(await landed.getLandedCost(authOf(req), idOf(req))); }));
+r.post('/landed-costs', requirePermission('purch.landed_cost.manage'), asyncHandler(async (req, res) => {
+  res.status(201).json(await landed.createLandedCost(authOf(req), CreateLandedCostRequest.parse(req.body)));
+}));
+r.patch('/landed-costs/:id', requirePermission('purch.landed_cost.manage'), asyncHandler(async (req, res) => {
+  res.json(await landed.updateLandedCost(authOf(req), idOf(req), UpdateLandedCostRequest.parse(req.body)));
+}));
+r.post('/landed-costs/:id/post', requirePermission('purch.landed_cost.manage'), idempotent(), asyncHandler(async (req, res) => {
+  res.json(await landed.postLandedCost(authOf(req), idOf(req)));
+}));
+r.post('/landed-costs/:id/cancel', requirePermission('purch.landed_cost.manage'), once, asyncHandler(async (req, res) => {
+  res.json(await landed.cancelLandedCost(authOf(req), idOf(req), PurchActionRequest.parse(req.body).reason));
 }));

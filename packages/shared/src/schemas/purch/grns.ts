@@ -3,7 +3,7 @@
 // QUARANTINE, the receipt movements and journal, and a QC sample request per lot. PATCH edits a DRAFT only.
 // Quantities and rates travel as decimal strings, never JS numbers (rule 10).
 import { z } from 'zod';
-import type { GrnStatus, SampleRequestStatus } from '../../enums';
+import type { GrnStatus, LandedCostStatus, SampleRequestStatus } from '../../enums';
 import { ESignRequest } from '../core/esign';
 import { decimalString } from '../master/masters';
 
@@ -96,6 +96,17 @@ export interface GrnLineDto {
   notes: string | null;
 }
 
+export interface GrnLandedCostDto {
+  id: string;
+  docNo: string;
+  chargeTypeCode: string;
+  chargeTypeName: string;
+  capitalise: boolean;
+  amount: string;
+  status: LandedCostStatus;
+  withGrn: boolean;
+}
+
 export interface GrnDto {
   id: string;
   docNo: string;
@@ -128,6 +139,8 @@ export interface GrnDto {
   journalDocNo: string | null;
   /** The mirror journal, once the GRN is REVERSED. */
   reversalJournalDocNo: string | null;
+  /** Landed-cost charges on this GRN (M3 task 4): entered with the DRAFT (posted with it) or later bills. */
+  landedCosts: GrnLandedCostDto[];
   lines: GrnLineDto[];
 }
 

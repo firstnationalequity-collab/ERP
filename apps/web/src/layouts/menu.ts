@@ -17,6 +17,7 @@ export const MENU: MenuEntry[] = [
   { key: 'requisitions', label: 'Requisitions', path: '/purch/requisitions', group: 'Procurement', anyOf: ['purch.view'] },
   { key: 'purchase-orders', label: 'Purchase orders', path: '/purch/orders', group: 'Procurement', anyOf: ['purch.view'] },
   { key: 'grns', label: 'Goods received (GRN)', path: '/purch/grns', group: 'Procurement', anyOf: ['purch.view'] },
+  { key: 'landed-costs', label: 'Landed costs', path: '/purch/landed-costs', group: 'Procurement', anyOf: ['purch.view'] },
   { key: 'items', label: 'Items', path: '/master/items', group: 'Masters', anyOf: ['master.view'] },
   { key: 'formulas', label: 'Master formulas', path: '/master/formulas', group: 'Masters', anyOf: ['master.view'] },
   { key: 'products', label: 'Products', path: '/master/products', group: 'Masters', anyOf: ['master.view'] },

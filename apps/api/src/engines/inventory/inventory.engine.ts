@@ -3,7 +3,9 @@
 //  - createLot():          a new lot in QUARANTINE (APPROVED: a GRN lot of an item that needs no QC, owner
 //                          2026-11-25, 0028), through core/transition (rule 7).
 //  - createReturnLot():    a customer-return lot in HOLD, linked to the original lot, "<lot>-R<n>" (owner Q9).
-//  - postValueAdjustment(): value-only VALUE_ADJUSTMENT row; resets the lot's unit cost (owner Q8; 0017).
+//  - postValueAdjustment(): value-only VALUE_ADJUSTMENT row; resets the lot's unit cost (owner Q8; 0017);
+//                          reason LANDED_COST raises a GRN lot for a landed-cost bill (owner Q21; 0029).
+//  - lockLotHolding():     a lot locked, with what it holds now (landed cost: held vs consumed share).
 //  - closeBatchCost():     at batch close, the adjustment that brings an FG lot to the batch cost; marks the
 //                          batch closed so the lot may be dispatched (owner Q8; 0017).
 //  - postMovement():       one ledger row (receipt, issue, output, dispatch, adjustment, destroy, return ...),
@@ -593,6 +595,10 @@ export async function postValueAdjustment(tx: Tx, actor: Actor, input: ValueAdju
   if (input.reason === 'BATCH_CLOSE' && (lot.source !== 'PRODUCTION_OUTPUT' || lot.batchClosedAt)) {
     throw new AppError('INVALID_TRANSITION', `The batch-close adjustment applies once, to a production lot whose batch is not closed (lot ${lot.lotNo})`, details);
   }
+  // Owner Q21 (0029): a later landed-cost bill raises a GRN lot's value, for a landed-cost document.
+  if (input.reason === 'LANDED_COST' && (lot.source !== 'GRN' || input.refDocType !== 'LANDED_COST' || new Decimal(input.value).lte(0))) {
+    throw new AppError('VALIDATION_FAILED', `A landed-cost adjustment raises a GRN lot's value for a landed-cost document (lot ${lot.lotNo})`, details);
+  }
   const totals = await repo.lotLedgerTotals(tx, lot.id);
   const lotQty = new Decimal(totals.qty);
   const adjustment = new Decimal(input.value);
@@ -622,6 +628,26 @@ export async function postValueAdjustment(tx: Tx, actor: Actor, input: ValueAdju
     refDocId: input.refDocId,
     reasonCode: input.reason,
   });
+}
+
+export interface LotHolding {
+  lotId: string;
+  lotNo: string;
+  itemCategoryId: string;
+  /** What the lot holds now (sum of its ledger rows), quantity and value. */
+  qty: string;
+  value: string;
+}
+
+/**
+ * The lot, locked FOR UPDATE, and what it holds now. For a landed-cost bill (owner Q21): the share of the charge
+ * for the quantity still held goes into the lot, the rest to price variance.
+ */
+export async function lockLotHolding(tx: Tx, actor: Actor, lotId: string): Promise<LotHolding> {
+  const lot = await lockLotOrFail(tx, actor.companyId, lotId);
+  const item = await stockItem(tx, actor.companyId, lot.itemId);
+  const totals = await repo.lotLedgerTotals(tx, lot.id);
+  return { lotId: lot.id, lotNo: lot.lotNo, itemCategoryId: item.categoryId, qty: totals.qty, value: totals.value };
 }
 
 export interface BatchCloseCostInput extends DocumentRef {

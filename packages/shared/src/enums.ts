@@ -47,9 +47,9 @@ export type LotSource = (typeof LotSource)[number];
 
 /**
  * Why a lot's value is adjusted (VALUE_ADJUSTMENT rows, reason_code; 0017). BATCH_CLOSE: conversion cost and the
- * true-up added to the FG lot at batch close (owner 2026-11-18, Q8). M3 adds LANDED_COST.
+ * true-up added to the FG lot at batch close (owner 2026-11-18, Q8). LANDED_COST: a landed-cost charge billed after receipt, on the share of the GRN lot still held (owner Q21; 0029).
  */
-export const ValueAdjustmentReason = ['BATCH_CLOSE'] as const;
+export const ValueAdjustmentReason = ['BATCH_CLOSE', 'LANDED_COST'] as const;
 export type ValueAdjustmentReason = (typeof ValueAdjustmentReason)[number];
 
 export const StockOwner = ['OWN', 'CUSTOMER'] as const;
@@ -135,6 +135,25 @@ export type PostingStatus = (typeof PostingStatus)[number];
 /** GRN (0027, 0028): DRAFT → POSTED; DRAFT → CANCELLED (reason); POSTED → REVERSED (lots untouched; owner 2026-11-25). */
 export const GrnStatus = ['DRAFT', 'POSTED', 'CANCELLED', 'REVERSED'] as const;
 export type GrnStatus = (typeof GrnStatus)[number];
+
+/**
+ * Landed cost charge (0029; owner Q21, Q2): DRAFT → POSTED (with its GRN, or alone as a later bill);
+ * DRAFT → CANCELLED (reason; also when its GRN is cancelled or reversed). A posted charge never changes.
+ */
+export const LandedCostStatus = ['DRAFT', 'POSTED', 'CANCELLED'] as const;
+export type LandedCostStatus = (typeof LandedCostStatus)[number];
+
+/**
+ * How a capitalised charge is spread over the GRN lines (owner Q21): VALUE (default), WEIGHT (freight and other
+ * charges, weight per PO line), GD_AMOUNTS (duties: the amounts per PO line from the goods declaration).
+ * Within one PO line received on several GRN lines, the share is split by quantity.
+ */
+export const LandedCostBasis = ['VALUE', 'WEIGHT', 'GD_AMOUNTS'] as const;
+export type LandedCostBasis = (typeof LandedCostBasis)[number];
+
+/** Where a charge type that is not capitalised is debited (owner Q21): input sales tax or advance income tax. */
+export const LandedCostTaxRole = ['INPUT_TAX', 'ADVANCE_TAX'] as const;
+export type LandedCostTaxRole = (typeof LandedCostTaxRole)[number];
 
 /**
  * QC sample request (M3 stub, owner 2026-11-25 Q1: created OPEN with each GRN lot; M4 adds the sampling moves).
@@ -238,6 +257,7 @@ export type AccountType = (typeof AccountType)[number];
 export const PostingEvent = [
   'GRN_RECEIPT',
   'LANDED_COST',
+  'IMPORT_TAX', // import-stage sales tax and income tax collected at import: not capitalised (owner Q21; 0029)
   'VENDOR_INVOICE',
   'VENDOR_PAYMENT',
   'MATERIAL_ISSUE',
@@ -264,6 +284,7 @@ export const AccountRole = [
   'PRICE_VARIANCE',
   'LANDED_COST_CLEARING',
   'INPUT_TAX',
+  'ADVANCE_TAX', // income tax collected at import (owner Q21; 0029)
   'ACCOUNTS_PAYABLE',
   'BANK',
   'WHT_PAYABLE',
@@ -290,6 +311,7 @@ export type AccountRole = (typeof AccountRole)[number];
 export const PostingEventRoles: Readonly<Record<PostingEvent, readonly AccountRole[]>> = {
   GRN_RECEIPT: ['INVENTORY', 'GRNI'],
   LANDED_COST: ['INVENTORY', 'PRICE_VARIANCE', 'LANDED_COST_CLEARING'],
+  IMPORT_TAX: ['INPUT_TAX', 'ADVANCE_TAX', 'LANDED_COST_CLEARING'],
   VENDOR_INVOICE: ['GRNI', 'INPUT_TAX', 'PRICE_VARIANCE', 'ACCOUNTS_PAYABLE'],
   VENDOR_PAYMENT: ['ACCOUNTS_PAYABLE', 'BANK', 'WHT_PAYABLE'],
   MATERIAL_ISSUE: ['WIP', 'INVENTORY'],

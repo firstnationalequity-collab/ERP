@@ -1,6 +1,6 @@
-// Drizzle description of the `purch` schema. Source of truth: src/db/migrations/0023_procurement_pr_po.sql, 0025, 0027 (GRN).
-import { date, integer, numeric, pgSchema, text } from 'drizzle-orm/pg-core';
-import type { GrnStatus, Incoterm, PurchaseOrderStatus, PurchaseOrderType, PurchaseRequisitionStatus } from '@albert/shared';
+// Drizzle description of the `purch` schema. Source of truth: src/db/migrations/0023_procurement_pr_po.sql, 0025, 0027 (GRN), 0029 (landed cost).
+import { boolean, date, integer, numeric, pgSchema, text } from 'drizzle-orm/pg-core';
+import type { GrnStatus, LandedCostBasis, LandedCostStatus, LandedCostTaxRole, Incoterm, PurchaseOrderStatus, PurchaseOrderType, PurchaseRequisitionStatus } from '@albert/shared';
 import { auditColumns, bigintString, companyId, identityId, tstz } from './columns';
 
 export const purch = pgSchema('purch');
@@ -103,5 +103,62 @@ export const grnLines = purch.table('grn_lines', {
   retestDate: date('retest_date', { mode: 'string' }),
   lotId: bigintString('lot_id'),
   notes: text('notes'),
+  ...auditColumns(),
+});
+
+export const landedCostTypes = purch.table('landed_cost_types', {
+  id: identityId(),
+  companyId: companyId(),
+  code: text('code').notNull(),
+  name: text('name').notNull(),
+  capitalise: boolean('capitalise').notNull(),
+  taxRole: text('tax_role').$type<LandedCostTaxRole>(),
+  isDuty: boolean('is_duty').notNull().default(false),
+  defaultBasis: text('default_basis').$type<LandedCostBasis>(),
+  isActive: boolean('is_active').notNull().default(true),
+  ...auditColumns(),
+});
+
+export const landedCosts = purch.table('landed_costs', {
+  id: identityId(),
+  companyId: companyId(),
+  docNo: text('doc_no').notNull(),
+  grnId: bigintString('grn_id').notNull(),
+  chargeTypeId: bigintString('charge_type_id').notNull(),
+  chargeDate: date('charge_date', { mode: 'string' }).notNull(),
+  amount: numeric('amount', { precision: 18, scale: 2 }).notNull(),
+  basis: text('basis').$type<LandedCostBasis>(),
+  vendorId: bigintString('vendor_id'),
+  reference: text('reference'),
+  notes: text('notes'),
+  withGrn: boolean('with_grn').notNull(),
+  status: text('status').$type<LandedCostStatus>().notNull(),
+  postingDate: date('posting_date', { mode: 'string' }),
+  postedBy: bigintString('posted_by'),
+  postedAt: tstz('posted_at'),
+  ...auditColumns(),
+});
+
+export const landedCostInputs = purch.table('landed_cost_inputs', {
+  id: identityId(),
+  companyId: companyId(),
+  landedCostId: bigintString('landed_cost_id').notNull(),
+  poLineId: bigintString('po_line_id').notNull(),
+  gdAmount: numeric('gd_amount', { precision: 18, scale: 2 }),
+  weightKg: numeric('weight_kg', { precision: 18, scale: 4 }),
+  ...auditColumns(),
+});
+
+export const landedCostAllocations = purch.table('landed_cost_allocations', {
+  id: identityId(),
+  companyId: companyId(),
+  landedCostId: bigintString('landed_cost_id').notNull(),
+  grnLineId: bigintString('grn_line_id').notNull(),
+  lotId: bigintString('lot_id').notNull(),
+  amount: numeric('amount', { precision: 18, scale: 2 }).notNull(),
+  heldQty: numeric('held_qty', { precision: 18, scale: 4 }).notNull(),
+  heldAmount: numeric('held_amount', { precision: 18, scale: 2 }).notNull(),
+  varianceAmount: numeric('variance_amount', { precision: 18, scale: 2 }).notNull(),
+  movementId: bigintString('movement_id'),
   ...auditColumns(),
 });
