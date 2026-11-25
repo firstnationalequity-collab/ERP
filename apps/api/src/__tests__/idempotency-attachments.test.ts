@@ -14,7 +14,7 @@ import { AppError, errorHandler } from '../core/errors';
 import { authenticate } from '../core/auth/middleware';
 import { authenticateToken, txContext } from '../core/auth/auth.service';
 import { idempotent, purgeExpiredIdempotencyKeys, requestHash } from '../core/idempotency/idempotency';
-import { countForDocument, registerAttachmentTarget } from '../core/attachments/attachments.service';
+import { countForDocument, gmpAttachmentTables, registerAttachmentTarget } from '../core/attachments/attachments.service';
 import { LocalDiskStorage } from '../core/storage/storage';
 import { registerApprovalHandler, startApproval } from '../core/approvals/approvals.service';
 import { createTestUser, TEST_PASSWORD } from '../test/factories';
@@ -56,7 +56,15 @@ const post = (who: string, url: string, key: string | null, body: object) => {
 registerAttachmentTarget('test.records', {
   readPermission: 'qc.view',
   writePermission: 'qc.result.enter',
+  gmp: false,
   exists: async (_q, id) => id === '1' || id === '2',
+});
+// ---- a GMP attachment target (owner 2026-11-25, answer 1): voiding needs a QA Manager e-signature
+registerAttachmentTarget('test.gmp_records', {
+  readPermission: 'qa.view',
+  writePermission: 'qa.deviation.manage',
+  gmp: true,
+  exists: async (_q, id) => id === '1',
 });
 
 const upload = (who: string, url: string, body: Buffer, contentType: string, fileName: string) =>
@@ -80,6 +88,8 @@ beforeAll(async () => {
     ['buyer', 'PURCHASE_OFFICER'],
     ['pm', 'PURCHASE_MANAGER'],
     ['fm', 'FINANCE_MANAGER'],
+    ['qao', 'QA_OFFICER'],
+    ['qam', 'QA_MANAGER'],
   ] as const) {
     await createTestUser({ username: `i_${name}`, roleCodes: [role] });
     const res = await request(app).post('/api/v1/core/auth/login').send({ username: `i_${name}`, password: TEST_PASSWORD });
@@ -362,6 +372,63 @@ describe('attachments: void with reason (owner Q5, 2026-11-19; 0022)', () => {
       /APPEND_ONLY/,
     );
     await expect(raw(`DELETE FROM core.attachments WHERE id = $1`)).rejects.toThrow(/APPEND_ONLY/);
+  });
+});
+
+describe('attachments: voiding GMP evidence needs a QA Manager e-signature (owner 2026-11-25, answer 1; 0025)', () => {
+  const voidAs = (who: string, id: string, body: object) =>
+    request(app).post(`/api/v1/core/attachment-files/${id}/void`).set('Authorization', `Bearer ${tokens[who]}`).send(body);
+  const sig = (username: string, meaning = 'APPROVED') => ({ username, password: TEST_PASSWORD, meaning, reason: 'Wrong certificate uploaded' });
+  const gmpFile = async (name: string) => (await upload('qao', '/attachments/test.gmp_records/1', PDF, 'application/pdf', name)).body.id as string;
+
+  it('refuses without a signature, a signer without qa.attachment.countersign, a wrong meaning, a wrong password; nothing is voided', async () => {
+    const id = await gmpFile('gmp-refusals.pdf');
+    const none = await voidAs('qao', id, { reason: 'Wrong certificate' });
+    expect([none.status, none.body.error.code]).toEqual([403, 'COUNTERSIGN_REQUIRED']);
+    const notQa = await voidAs('qao', id, { reason: 'Wrong certificate', countersign: sig('i_qcm') });
+    expect([notQa.status, notQa.body.error.code]).toEqual([403, 'FORBIDDEN']);
+    expect((await voidAs('qao', id, { reason: 'Wrong certificate', countersign: sig('i_qam', 'REVIEWED') })).body.error.code).toBe('ESIGN_FAILED');
+    const badPw = await voidAs('qao', id, { reason: 'Wrong certificate', countersign: { ...sig('i_qam'), password: 'not-the-password-1' } });
+    expect(badPw.body.error.code).toBe('ESIGN_FAILED');
+    const { rows } = await client.query(`SELECT voided_at FROM core.attachments WHERE id = $1`, [id]);
+    expect(rows).toEqual([{ voided_at: null }]);
+  });
+
+  it('voids with the QA Manager countersign (stored on the attachment), or the QA Manager signing their own void', async () => {
+    const id = await gmpFile('gmp-countersigned.pdf');
+    const res = await voidAs('qao', id, { reason: 'Wrong certificate', countersign: sig('i_qam') });
+    expect(res.status).toBe(200);
+    expect(res.body.voided).toMatchObject({ reason: 'Wrong certificate' });
+    const { rows } = await client.query(
+      `SELECT signer_username, meaning FROM core.e_signatures WHERE record_table = 'core.attachments' AND record_id = $1`,
+      [id],
+    );
+    expect(rows).toEqual([{ signer_username: 'i_qam', meaning: 'APPROVED' }]);
+    const own = await gmpFile('gmp-own.pdf');
+    expect((await voidAs('qam', own, { reason: 'Duplicate upload', countersign: sig('i_qam') })).status).toBe(200);
+  });
+
+  it('a non-GMP file takes no QA signature', async () => {
+    const up = await upload('a', '/attachments/test.records/2', PDF, 'application/pdf', 'non-gmp-sig.pdf');
+    const res = await voidAs('a', up.body.id, { reason: 'Duplicate upload', countersign: sig('i_qam') });
+    expect([res.status, res.body.error.code]).toEqual([400, 'VALIDATION_FAILED']);
+  });
+
+  it('the database refuses a GMP void without the signature, and lists the same GMP record types as the code', async () => {
+    const { rows: dbList } = await client.query<{ t: string[] }>(`SELECT core.gmp_attachment_tables() AS t`);
+    expect([...dbList[0]!.t].sort()).toEqual(gmpAttachmentTables().filter((t) => !t.startsWith('test.')));
+    await client.query('BEGIN');
+    try {
+      await client.query(`SELECT set_config('app.user_id','1',true), set_config('app.company_id','1',true)`);
+      const { rows } = await client.query<{ id: string }>(
+        `INSERT INTO core.attachments (record_table, record_id, file_name, content_type, size_bytes, sha256, storage_driver, storage_key)
+         VALUES ('master.approved_sources', '1', 'coa.pdf', 'application/pdf', 10, repeat('a', 64), 'local', 'gmp-db-test-key') RETURNING id`,
+      );
+      await client.query(`UPDATE core.attachments SET voided_at = now(), voided_by = 1, void_reason = 'Wrong file' WHERE id = $1`, [rows[0]!.id]);
+      await expect(client.query('SET CONSTRAINTS ALL IMMEDIATE')).rejects.toThrow(/COUNTERSIGN_REQUIRED/);
+    } finally {
+      await client.query('ROLLBACK');
+    }
   });
 });
 

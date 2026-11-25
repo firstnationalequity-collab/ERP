@@ -489,7 +489,9 @@ function PoDrawer({ id, onClose, onEdit, onChanged }: { id: string; onClose(): v
             <Descriptions.Item label="Type">{po.poType}{po.incoterm ? ` · ${po.incoterm}` : ''}</Descriptions.Item>
             <Descriptions.Item label="Total">{po.currency} {formatDecimal(po.totalAmount)}</Descriptions.Item>
             <Descriptions.Item label="PKR (approval value)">
-              {po.totalPkr ? `PKR ${formatDecimal(po.totalPkr)} at ${formatDecimal(po.exchangeRate, 4)}` : 'Set when submitted'}
+              {po.totalPkr
+                ? `PKR ${formatDecimal(po.totalPkr)} at ${formatDecimal(po.exchangeRate, 4)}${po.currency !== 'PKR' && po.exchangeRateDate ? ` (rate of ${formatDate(po.exchangeRateDate)})` : ''}`
+                : 'Set when submitted'}
             </Descriptions.Item>
             <Descriptions.Item label="Delivery by">{formatDate(po.deliveryDate)}</Descriptions.Item>
             <Descriptions.Item label="Created by">{po.createdByName}</Descriptions.Item>
@@ -509,7 +511,7 @@ function PoDrawer({ id, onClose, onEdit, onChanged }: { id: string; onClose(): v
               { title: 'Unit price', render: (_, l) => formatRate(l.unitPrice) },
               { title: 'Amount', render: (_, l) => formatDecimal(l.lineAmount) },
               { title: 'Received', render: (_, l) => formatDecimal(l.receivedQty, 4) },
-              { title: 'Requisition', render: (_, l) => l.prDocNo ?? '—' },
+              { title: 'Requisition', render: (_, l) => (l.prDocNo ? (l.prReleased ? `${l.prDocNo} (freed by cancellation)` : l.prDocNo) : '—') },
             ]}
           />
           <ReasonModal

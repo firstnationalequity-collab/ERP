@@ -1,5 +1,6 @@
 // Attachments (docs/architecture.md §5, §7.1; decision Q17). Upload = raw file body + headers.
 import { z } from 'zod';
+import { WitnessSignRequest } from './esign';
 
 export const ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
 
@@ -32,5 +33,15 @@ export interface AttachmentDto {
   voided: { by: string; at: string; reason: string } | null;
 }
 
-export const VoidAttachmentRequest = z.object({ reason: z.string().trim().min(3, 'Give a reason (at least 3 characters)').max(500) }).strict();
+/**
+ * Void with a reason (owner Q5). A file on a GMP record also needs a QA Manager e-signature (owner 2026-11-25,
+ * answer 1): `countersign` by a holder of qa.attachment.countersign, meaning APPROVED; the QA Manager may sign
+ * their own void with their own username.
+ */
+export const VoidAttachmentRequest = z
+  .object({
+    reason: z.string().trim().min(3, 'Give a reason (at least 3 characters)').max(500),
+    countersign: WitnessSignRequest.optional(),
+  })
+  .strict();
 export type VoidAttachmentRequest = z.infer<typeof VoidAttachmentRequest>;

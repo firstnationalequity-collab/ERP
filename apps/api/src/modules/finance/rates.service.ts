@@ -2,11 +2,32 @@
 // key fin.rate.manage (Finance Manager), audited. Documents look up the rate of their own date with rateOn()
 // and copy it, so a later correction never changes a document.
 import { Decimal } from 'decimal.js';
+import { z } from 'zod';
 import type { ExchangeRateDto, ExchangeRateQuery, SetExchangeRateRequest } from '@albert/shared';
 import { db, withTransaction, type Queryable } from '../../db/client';
 import { AppError } from '../../core/errors';
 import { txContext, type AuthContext } from '../../core/auth/auth.service';
 import * as repo from './rates.repo';
+import { getSetting, registerSetting } from '../../core/settings/app-settings.service';
+
+/** Owner 2026-11-25 (answer 3): how old the latest rate may be, in days, before a document is refused. */
+export const RATE_MAX_AGE_SETTING = 'fin.rate.max_age_days';
+registerSetting({
+  key: RATE_MAX_AGE_SETTING,
+  description: 'A document uses the latest exchange rate on or before its date, no older than this many days (else RATE_MISSING)',
+  schema: z.number().int().min(0).max(31),
+  defaultValue: 3,
+});
+
+export interface RateUsed {
+  /** PKR per 1 unit, NUMERIC(9,4) text. */
+  rate: string;
+  /** The day of that rate (YYYY-MM-DD); the document date for PKR. */
+  rateDate: string;
+}
+
+const days = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+const ddmmyyyy = (d: string) => d.split('-').reverse().join('-');
 
 function toDto(r: repo.ExchangeRateRow & { updatedByName: string }): ExchangeRateDto {
   return {
@@ -47,17 +68,21 @@ export async function setRate(auth: AuthContext, input: SetExchangeRateRequest):
 }
 
 /**
- * For other modules, inside their transaction: PKR per 1 unit of `currency` on `date` ('1' for PKR).
- * No rate for that exact date → RATE_MISSING (owner Q4: never an older rate silently).
+ * For other modules, inside their transaction: PKR per 1 unit of `currency` for a document dated `date`
+ * (1 for PKR). Owner 2026-11-25 (answer 3): the latest rate on or before the date, no older than setting
+ * fin.rate.max_age_days (default 3); older or none → RATE_MISSING. The caller copies rate and date.
  */
-export async function rateOn(q: Queryable, companyId: string, currency: string, date: string): Promise<string> {
-  if (currency === 'PKR') return '1.0000';
-  const row = await repo.findRate(q, companyId, currency, date);
-  if (!row) {
-    throw new AppError('RATE_MISSING', `No ${currency} exchange rate for ${date.split('-').reverse().join('-')}; Finance must enter it first`, {
-      currency,
-      date,
-    });
+export async function rateOn(q: Queryable, companyId: string, currency: string, date: string): Promise<RateUsed> {
+  if (currency === 'PKR') return { rate: '1.0000', rateDate: date };
+  const maxAge = await getSetting<number>(q, companyId, RATE_MAX_AGE_SETTING);
+  const row = await repo.findLatestRate(q, companyId, currency, date);
+  if (!row || days(row.rateDate, date) > maxAge) {
+    const latest = row ? `; the latest is of ${ddmmyyyy(row.rateDate)}` : '';
+    throw new AppError(
+      'RATE_MISSING',
+      `No ${currency} exchange rate within ${maxAge} days before ${ddmmyyyy(date)}${latest}; Finance must enter it first`,
+      { currency, date, maxAgeDays: maxAge, latestRateDate: row?.rateDate ?? null },
+    );
   }
-  return row.rate;
+  return { rate: row.rate, rateDate: row.rateDate };
 }

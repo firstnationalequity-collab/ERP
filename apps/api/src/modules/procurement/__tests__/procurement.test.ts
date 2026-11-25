@@ -426,7 +426,77 @@ describe('purchase orders: submit, approval matrix and segregation', () => {
   });
 });
 
+describe('exchange rate lookup (owner 2026-11-25, answer 3)', () => {
+  const eurPo = async (poDate: string) =>
+    (await call('buyer', 'post', '/purch/pos', { poDate, vendorId: ids.foreign, poType: 'IMPORT', currency: 'EUR', incoterm: 'FOB', lines: [{ itemId: ids.spare, qty: '1', unitPrice: '10' }] })).body;
+
+  it('takes the latest rate on or before the PO date, up to fin.rate.max_age_days (3) old, and keeps its date', async () => {
+    await call('fm', 'post', '/fin/exchange-rates', { currency: 'EUR', rateDate: '2026-11-13', rate: '300.0000', source: 'SBP' });
+    await call('fm', 'post', '/fin/exchange-rates', { currency: 'EUR', rateDate: '2026-11-16', rate: '301.5000', source: 'SBP' });
+    const friday = await eurPo('2026-11-19'); // 3 days after the 16th: allowed
+    const sub = await call('buyer', 'post', `/purch/pos/${friday.id}/submit`);
+    expect(sub.body).toMatchObject({ exchangeRate: '301.5000', exchangeRateDate: '2026-11-16' });
+    const local = (await call('buyer', 'post', '/purch/pos', localPo(ids.vendor!, [{ itemId: ids.rm!, qty: '1', unitPrice: '10' }]))).body;
+    expect((await call('buyer', 'post', `/purch/pos/${local.id}/submit`)).body).toMatchObject({ exchangeRate: '1.0000', exchangeRateDate: PO_DATE });
+  });
+
+  it('refuses a rate older than the limit (RATE_MISSING names the latest), and takes a newer one once entered', async () => {
+    const late = await eurPo('2026-11-20'); // 4 days after the 16th
+    const res = await call('buyer', 'post', `/purch/pos/${late.id}/submit`);
+    expect(res.status).toBe(422);
+    expect(res.body.error).toMatchObject({ code: 'RATE_MISSING', details: { currency: 'EUR', maxAgeDays: 3, latestRateDate: '2026-11-16' } });
+    await call('fm', 'post', '/fin/exchange-rates', { currency: 'EUR', rateDate: '2026-11-21', rate: '302.0000', source: 'SBP' }); // after the PO date: not used
+    expect((await call('buyer', 'post', `/purch/pos/${late.id}/submit`)).status).toBe(422);
+    await call('fm', 'post', '/fin/exchange-rates', { currency: 'EUR', rateDate: '2026-11-18', rate: '301.7500', source: 'SBP' });
+    expect((await call('buyer', 'post', `/purch/pos/${late.id}/submit`)).body).toMatchObject({ exchangeRate: '301.7500', exchangeRateDate: '2026-11-18' });
+  });
+});
+
 describe('purchase orders: cancel', () => {
+  it('cancelling a PO frees its requisition lines (owner 2026-11-25, answer 4): requisition back to SUBMITTED, history kept, lines ordered again', async () => {
+    const pr = (await call('buyer', 'post', '/purch/prs', { prDate: PO_DATE, lines: [{ itemId: ids.rm, qty: '5' }, { itemId: ids.spare, qty: '2' }] })).body;
+    await call('buyer', 'post', `/purch/prs/${pr.id}/submit`);
+    const header = { poDate: PO_DATE, vendorId: ids.vendor, poType: 'LOCAL', currency: 'PKR' };
+    const lines = (pr.lines as { id: string }[]).map((l) => ({ prLineId: l.id, unitPrice: '10' }));
+    const po = (await call('buyer', 'post', `/purch/prs/${pr.id}/convert`, { ...header, lines })).body;
+    expect((await call('buyer', 'get', `/purch/prs/${pr.id}`)).body.status).toBe('CONVERTED');
+
+    const cancelled = (await call('buyer', 'post', `/purch/pos/${po.id}/cancel`, { reason: 'Vendor withdrew the offer' })).body;
+    expect(cancelled.status).toBe('CANCELLED');
+    expect(cancelled.lines.map((l: { prLineId: string | null; prDocNo: string; prReleased: boolean }) => [l.prLineId, l.prDocNo, l.prReleased])).toEqual([
+      [null, pr.docNo, true],
+      [null, pr.docNo, true],
+    ]);
+    const reopened = (await call('buyer', 'get', `/purch/prs/${pr.id}`)).body;
+    expect(reopened.status).toBe('SUBMITTED');
+    expect(reopened.lines.map((l: { poDocNo: string | null }) => l.poDocNo)).toEqual([null, null]);
+    const { rows: hist } = await client.query(
+      `SELECT from_status, to_status, reason FROM core.status_history WHERE entity_table = 'purch.purchase_requisitions' AND entity_id = $1 ORDER BY id`,
+      [pr.id],
+    );
+    expect(hist.at(-1)).toEqual({ from_status: 'CONVERTED', to_status: 'SUBMITTED', reason: `Purchase order ${po.docNo} cancelled: its lines may be ordered again` });
+
+    const again = await call('buyer', 'post', `/purch/prs/${pr.id}/convert`, { ...header, lines });
+    expect(again.status).toBe(201);
+    expect((await call('buyer', 'get', `/purch/prs/${pr.id}`)).body.status).toBe('CONVERTED');
+  });
+
+  it('database: a requisition link is freed only on a CANCELLED PO, and a requisition reopens only with a free line', async () => {
+    const pr = (await call('buyer', 'post', '/purch/prs', { prDate: PO_DATE, lines: [{ itemId: ids.spare, qty: '1' }] })).body;
+    await call('buyer', 'post', `/purch/prs/${pr.id}/submit`);
+    const po = (await call('buyer', 'post', `/purch/prs/${pr.id}/convert`, {
+      poDate: PO_DATE, vendorId: ids.vendor, poType: 'LOCAL', currency: 'PKR', lines: [{ prLineId: pr.lines[0].id, unitPrice: '5' }],
+    })).body;
+    await call('buyer', 'post', `/purch/pos/${po.id}/submit`);
+    await expect(raw(`UPDATE purch.po_lines SET released_pr_line_id = pr_line_id, pr_line_id = NULL WHERE po_id = $1`, [po.id])).rejects.toThrow(/RECORD_LOCKED/);
+    await expect(
+      inTx(users.buyer!, async () => {
+        await history('purch.purchase_requisitions', pr.id, 'CONVERTED', 'SUBMITTED', users.buyer!);
+        await client.query(`UPDATE purch.purchase_requisitions SET status = 'SUBMITTED' WHERE id = $1`, [pr.id]);
+      }),
+    ).rejects.toThrow(/stays CONVERTED/);
+  });
+
   it('cancels a pending PO with its approval, and an approved PO, only with a reason', async () => {
     const po = (await call('buyer', 'post', '/purch/pos', localPo(ids.vendor!, [{ itemId: ids.rm!, qty: '1', unitPrice: '10' }]))).body;
     await call('buyer', 'post', `/purch/pos/${po.id}/submit`);
@@ -452,6 +522,27 @@ describe('purchase orders: cancel', () => {
         await client.query(`UPDATE purch.purchase_orders SET status = 'CANCELLED' WHERE id = $1`, [po.id]);
       }),
     ).rejects.toThrow(/has receipts/);
+  });
+});
+
+describe('BULK / FG purchase setting (owner 2026-11-25, answer 6)', () => {
+  const setAllow = (on: boolean) =>
+    raw(`INSERT INTO core.settings (key, value) VALUES ('purch.allow_bulk_fg_purchase', $1::jsonb)
+         ON CONFLICT (company_id, key) DO UPDATE SET value = EXCLUDED.value`, [JSON.stringify(on)]);
+
+  it('refuses FG on a PO while purch.allow_bulk_fg_purchase is off (default), allows it when on; the database agrees', async () => {
+    const fgPo = () => call('buyer', 'post', '/purch/pos', localPo(ids.other!, [{ itemId: ids.fg!, qty: '1', unitPrice: '1' }]));
+    const off = await fgPo();
+    expect([off.status, off.body.error.message]).toEqual([400, expect.stringMatching(/purch.allow_bulk_fg_purchase is off/)]);
+    const spare = (await call('buyer', 'post', '/purch/pos', localPo(ids.other!, [{ itemId: ids.spare!, qty: '1', unitPrice: '1' }]))).body;
+    await expect(raw(`UPDATE purch.po_lines SET item_id = $2 WHERE po_id = $1`, [spare.id, ids.fg])).rejects.toThrow(/made here, not bought/);
+    await setAllow(true);
+    try {
+      expect((await fgPo()).status).toBe(201);
+      await raw(`UPDATE purch.po_lines SET item_id = $2 WHERE po_id = $1`, [spare.id, ids.fg]);
+    } finally {
+      await setAllow(false);
+    }
   });
 });
 

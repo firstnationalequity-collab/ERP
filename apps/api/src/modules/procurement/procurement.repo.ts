@@ -98,6 +98,19 @@ export async function replacePrLines(
 }
 
 /** For each requisition line already on a PO: the PO id and number. */
+/** Free the requisition links of a cancelled PO (pr_line_id → released_pr_line_id); the requisitions touched, by id. */
+export async function freePrLinks(q: Queryable, poId: string): Promise<string[]> {
+  const freed = await q
+    .update(poLines)
+    .set({ releasedPrLineId: sql`${poLines.prLineId}`, prLineId: null })
+    .where(and(eq(poLines.poId, poId), sql`${poLines.prLineId} IS NOT NULL`))
+    .returning({ prLineId: poLines.releasedPrLineId });
+  const ids = freed.flatMap((f) => (f.prLineId ? [f.prLineId] : []));
+  if (ids.length === 0) return [];
+  const rows = await q.selectDistinct({ prId: prLines.prId }).from(prLines).where(inArray(prLines.id, ids)).orderBy(prLines.prId);
+  return rows.map((r) => r.prId);
+}
+
 export async function ordersOfPrLines(q: Queryable, prLineIds: string[]): Promise<Map<string, { poId: string; poDocNo: string }>> {
   if (prLineIds.length === 0) return new Map();
   const rows = await q

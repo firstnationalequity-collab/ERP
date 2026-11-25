@@ -10,6 +10,7 @@ import { api, apiBlob, errorText } from '../api/client';
 import { saveBlob } from '../lib/excel';
 import { formatDateTime } from '../lib/format';
 import { ReasonModal } from './ReasonModal';
+import { ESignModal } from './ESignModal';
 
 const ACCEPT = Object.values(ATTACHMENT_TYPES)
   .flat()
@@ -72,8 +73,11 @@ export function AttachmentList({ items, onVoid }: { items: AttachmentDto[]; onVo
   );
 }
 
-/** List + upload for one record. */
-export function AttachmentsPanel({ recordTable, recordId, canUpload }: { recordTable: string; recordId: string; canUpload: boolean }) {
+/**
+ * List + upload for one record. `gmp`: the record is GMP evidence, so voiding a file also needs a QA Manager
+ * e-signature (owner 2026-11-25, answer 1).
+ */
+export function AttachmentsPanel({ recordTable, recordId, canUpload, gmp = false }: { recordTable: string; recordId: string; canUpload: boolean; gmp?: boolean }) {
   const { message } = App.useApp();
   const qc = useQueryClient();
   const key = ['attachments', recordTable, recordId];
@@ -101,8 +105,25 @@ export function AttachmentsPanel({ recordTable, recordId, canUpload }: { recordT
   return (
     <>
       <AttachmentList items={list.data ?? []} onVoid={canUpload ? setVoiding : undefined} />
+      <ESignModal
+        open={gmp && voiding !== null}
+        title={`Void ${voiding?.fileName ?? ''}`}
+        meaning="APPROVED"
+        summary="This file is GMP evidence. It is kept and stays downloadable, marked void with your reason; a QA Manager signs the void. This cannot be undone."
+        ownSignature={false}
+        countersign="required"
+        okText="Void"
+        onCancel={() => setVoiding(null)}
+        onSubmit={async (r) => {
+          if (!voiding) return;
+          await api(`/core/attachment-files/${voiding.id}/void`, { method: 'POST', body: { reason: r.reason, countersign: r.countersign } });
+          void message.success(`${voiding.fileName} voided`);
+          setVoiding(null);
+          await qc.invalidateQueries({ queryKey: key });
+        }}
+      />
       <ReasonModal
-        open={voiding !== null}
+        open={!gmp && voiding !== null}
         title={`Void ${voiding?.fileName ?? ''}`}
         text="The file is kept and stays downloadable, marked void with your name and reason. This cannot be undone."
         reasonRequired

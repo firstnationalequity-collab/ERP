@@ -21,6 +21,7 @@ import { nextDocNo } from '../../core/settings/numbering.service';
 import { assertPurchItems, purchItems } from '../masters/purch-refs.service';
 import { createPoInTx, getPo } from './orders.service';
 import * as repo from './procurement.repo';
+import { allowBulkFgPurchase } from './procurement.settings';
 
 export const PR_TABLE = 'purch.purchase_requisitions';
 
@@ -31,10 +32,32 @@ export const RequisitionMoves = defineTransitions<PurchaseRequisitionStatus>({
     { from: null, to: 'DRAFT', permission: 'purch.pr.manage' },
     { from: 'DRAFT', to: 'SUBMITTED', permission: 'purch.pr.manage' },
     { from: 'SUBMITTED', to: 'CONVERTED', permission: 'purch.po.manage' },
+    // Owner 2026-11-25 (answer 4): cancelling a PO frees its lines; the requisition is open again.
+    { from: 'CONVERTED', to: 'SUBMITTED', permission: 'purch.po.manage', reasonRequired: true },
     { from: 'DRAFT', to: 'CANCELLED', permission: 'purch.pr.manage', reasonRequired: true },
     { from: 'SUBMITTED', to: 'CANCELLED', permission: 'purch.pr.manage', reasonRequired: true },
   ],
 });
+
+/**
+ * Owner 2026-11-25 (answer 4): a PO cancelled before any receipt frees its requisition lines. Each PO line keeps
+ * the link as released_pr_line_id (history); a CONVERTED requisition goes back to SUBMITTED. Called by cancelPo
+ * inside its transaction, after the PO is CANCELLED (0025 allows the change only then).
+ */
+export async function freePrLinesOfCancelledPo(tx: Tx, auth: AuthContext, poId: string, poDocNo: string): Promise<void> {
+  const prIds = await repo.freePrLinks(tx, poId);
+  for (const prId of prIds) {
+    const pr = await lockPr(tx, auth.companyId, prId);
+    if (pr.status === 'CONVERTED') {
+      await transition(tx, RequisitionMoves, {
+        entityId: prId,
+        to: 'SUBMITTED',
+        actor: auth,
+        reason: `Purchase order ${poDocNo} cancelled: its lines may be ordered again`,
+      });
+    }
+  }
+}
 
 // ---------------------------------------------------------------- reading
 
@@ -109,7 +132,7 @@ async function prepare(q: Queryable, auth: AuthContext, input: CreatePrRequest) 
   if (input.requiredBy && input.requiredBy < input.prDate) {
     throw new AppError('VALIDATION_FAILED', 'Required-by cannot be before the requisition date', { field: 'requiredBy' });
   }
-  await assertPurchItems(q, auth.companyId, input.lines.map((l) => l.itemId));
+  await assertPurchItems(q, auth.companyId, input.lines.map((l) => l.itemId), { allowBulkFg: await allowBulkFgPurchase(q, auth.companyId) });
   return {
     header: { prDate: input.prDate, requiredBy: input.requiredBy ?? null, department: input.department?.trim() || null, notes: input.notes?.trim() || null },
     lines: input.lines.map((l, i) => ({ lineNo: i + 1, itemId: l.itemId, qty: new Decimal(l.qty).toFixed(4), notes: l.notes?.trim() || null })),
@@ -145,7 +168,7 @@ export async function submitPr(auth: AuthContext, id: string): Promise<PrDto> {
   await withTransaction(txContext(auth, 'submit purchase requisition'), async (tx) => {
     const pr = await lockPr(tx, auth.companyId, id);
     const lines = await repo.prLinesOf(tx, [id]);
-    if (pr.status === 'DRAFT') await assertPurchItems(tx, auth.companyId, lines.map((l) => l.itemId));
+    if (pr.status === 'DRAFT') await assertPurchItems(tx, auth.companyId, lines.map((l) => l.itemId), { allowBulkFg: await allowBulkFgPurchase(tx, auth.companyId) });
     await transition(tx, RequisitionMoves, { entityId: id, to: 'SUBMITTED', actor: auth });
   });
   return getPr(auth, id);

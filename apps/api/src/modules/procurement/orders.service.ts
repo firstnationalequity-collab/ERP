@@ -25,6 +25,9 @@ import { nextDocNo } from '../../core/settings/numbering.service';
 import { assertAvlApproved, assertPurchItems, assertPurchVendor, purchItems, purchVendors } from '../masters/purch-refs.service';
 import { rateOn } from '../finance/rates.service';
 import * as repo from './procurement.repo';
+import { allowBulkFgPurchase } from './procurement.settings';
+// Cycle with requisitions.service (it creates POs): used only inside functions, never at module load.
+import { freePrLinesOfCancelledPo } from './requisitions.service';
 
 export const PO_TABLE = 'purch.purchase_orders';
 export const PO_APPROVAL_DOC_TYPE = 'PO'; // approval matrix doc type (seed: DEFAULT_RULES)
@@ -55,7 +58,7 @@ async function lockPo(tx: Tx, companyId: string, id: string): Promise<repo.PoRow
 async function assertOrderable(q: Queryable, companyId: string, po: repo.PoRow): Promise<void> {
   const vendor = await assertPurchVendor(q, companyId, po.vendorId);
   const lines = await repo.poLinesOf(q, [po.id]);
-  const items = await assertPurchItems(q, companyId, lines.map((l) => l.itemId));
+  const items = await assertPurchItems(q, companyId, lines.map((l) => l.itemId), { allowBulkFg: await allowBulkFgPurchase(q, companyId) });
   await assertAvlApproved(q, companyId, vendor, [...items.values()]);
 }
 
@@ -89,7 +92,7 @@ async function toDtos(q: Queryable, companyId: string, rows: repo.PoRow[]): Prom
     purchItems(q, companyId, lines.map((l) => l.itemId)),
     repo.userNames(q, rows.map((r) => r.createdBy)),
     latestApprovalIds(q, companyId, PO_TABLE, rows.map((r) => r.id)),
-    repo.prLinesByIds(q, companyId, lines.flatMap((l) => (l.prLineId ? [l.prLineId] : []))),
+    repo.prLinesByIds(q, companyId, lines.flatMap((l) => { const pl = l.prLineId ?? l.releasedPrLineId; return pl ? [pl] : []; })),
   ]);
   const prDocOf = new Map(prLines.map((l) => [l.id, l.prDocNo]));
   return rows.map((r) => {
@@ -111,7 +114,8 @@ async function toDtos(q: Queryable, companyId: string, rows: repo.PoRow[]): Prom
           lineAmount: l.lineAmount,
           receivedQty: l.receivedQty,
           prLineId: l.prLineId,
-          prDocNo: l.prLineId ? (prDocOf.get(l.prLineId) ?? null) : null,
+          prDocNo: prDocOf.get(l.prLineId ?? l.releasedPrLineId ?? '') ?? null,
+          prReleased: l.releasedPrLineId !== null,
           notes: l.notes,
         };
       });
@@ -125,6 +129,7 @@ async function toDtos(q: Queryable, companyId: string, rows: repo.PoRow[]): Prom
       poType: r.poType,
       currency: r.currency,
       exchangeRate: r.exchangeRate,
+      exchangeRateDate: r.exchangeRateDate,
       incoterm: r.incoterm,
       deliveryDate: r.deliveryDate,
       notes: r.notes,
@@ -183,7 +188,7 @@ async function prepare(q: Queryable, auth: AuthContext, header: PoHeader, lines:
   if (vendor.isForeign && header.poType !== 'IMPORT') {
     throw new AppError('VALIDATION_FAILED', `${vendor.code} is a foreign vendor: the PO must be an import PO`, { field: 'poType' });
   }
-  const items = await assertPurchItems(q, auth.companyId, lines.map((l) => l.itemId));
+  const items = await assertPurchItems(q, auth.companyId, lines.map((l) => l.itemId), { allowBulkFg: await allowBulkFgPurchase(q, auth.companyId) });
   await assertAvlApproved(q, auth.companyId, vendor, [...items.values()]);
   const rows = lines.map((l, i) => ({
     lineNo: i + 1,
@@ -257,18 +262,18 @@ export async function updatePo(auth: AuthContext, id: string, input: UpdatePoReq
   return getPo(auth, id);
 }
 
-/** Submit for approval: stamps Finance's rate on the PO date and starts the approval on the PKR value. */
+/** Submit for approval: stamps Finance's latest rate on/before the PO date (and its day) and starts the approval on the PKR value. */
 export async function submitPo(auth: AuthContext, id: string): Promise<PoDto> {
   await withTransaction(txContext(auth, 'submit purchase order'), async (tx) => {
     const po = await lockPo(tx, auth.companyId, id);
     assertDraft(po);
     await assertOrderable(tx, auth.companyId, po);
-    const rate = await rateOn(tx, auth.companyId, po.currency, po.poDate);
+    const { rate, rateDate } = await rateOn(tx, auth.companyId, po.currency, po.poDate);
     await transition(tx, PurchaseOrderMoves, {
       entityId: id,
       to: 'PENDING_APPROVAL',
       actor: auth,
-      alsoSet: { exchange_rate: rate, submitted_by: auth.userId, submitted_at: new Date().toISOString() },
+      alsoSet: { exchange_rate: rate, exchange_rate_date: rateDate, submitted_by: auth.userId, submitted_at: new Date().toISOString() },
     });
     await startApproval(tx, auth, {
       docType: PO_APPROVAL_DOC_TYPE,
@@ -281,7 +286,7 @@ export async function submitPo(auth: AuthContext, id: string): Promise<PoDto> {
   return getPo(auth, id);
 }
 
-/** Cancel before any receipt (a pending approval is cancelled with it). */
+/** Cancel before any receipt (a pending approval is cancelled with it); its requisition lines are freed. */
 export async function cancelPo(auth: AuthContext, id: string, reason: string): Promise<PoDto> {
   await withTransaction(txContext(auth, `cancel purchase order: ${reason}`), async (tx) => {
     const po = await lockPo(tx, auth.companyId, id);
@@ -290,6 +295,7 @@ export async function cancelPo(auth: AuthContext, id: string, reason: string): P
     }
     if (po.status === 'PENDING_APPROVAL') await cancelApproval(tx, auth satisfies Actor, PO_TABLE, id, reason);
     await transition(tx, PurchaseOrderMoves, { entityId: id, to: 'CANCELLED', actor: auth, reason });
+    await freePrLinesOfCancelledPo(tx, auth, id, po.docNo); // owner 2026-11-25, answer 4
   });
   return getPo(auth, id);
 }

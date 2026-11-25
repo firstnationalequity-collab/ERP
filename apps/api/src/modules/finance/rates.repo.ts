@@ -34,6 +34,17 @@ export async function findRate(q: Queryable, companyId: string, currency: string
   return row;
 }
 
+/** The latest rate for the currency on or before `onOrBefore` (owner 2026-11-25, answer 3). */
+export async function findLatestRate(q: Queryable, companyId: string, currency: string, onOrBefore: string): Promise<ExchangeRateRow | undefined> {
+  const [row] = await q
+    .select()
+    .from(exchangeRates)
+    .where(and(eq(exchangeRates.companyId, companyId), eq(exchangeRates.currency, currency), lte(exchangeRates.rateDate, onOrBefore)))
+    .orderBy(desc(exchangeRates.rateDate))
+    .limit(1);
+  return row;
+}
+
 export async function insertRate(q: Queryable, v: { currency: string; rateDate: string; rate: string; source: string }): Promise<string> {
   const [row] = await q.insert(exchangeRates).values(v).returning({ id: exchangeRates.id });
   if (!row) throw new Error('exchange rate insert returned no row');

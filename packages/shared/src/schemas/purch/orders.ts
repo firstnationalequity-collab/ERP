@@ -152,7 +152,10 @@ export interface PoLineDto extends ItemRef {
   lineAmount: string;
   receivedQty: string;
   prLineId: string | null;
+  /** The requisition the line came from; still shown after a cancellation freed it (prReleased). */
   prDocNo: string | null;
+  /** The PO was cancelled and the requisition line freed to be ordered again (owner 2026-11-25, answer 4). */
+  prReleased: boolean;
   notes: string | null;
 }
 
@@ -167,6 +170,8 @@ export interface PoDto {
   currency: string;
   /** PKR per 1 unit, from Finance's rate on the PO date, set at submit (indicative: chooses the approval band). */
   exchangeRate: string | null;
+  /** The day of the rate used: the latest on or before the PO date (owner 2026-11-25, answer 3). */
+  exchangeRateDate: string | null;
   incoterm: Incoterm | null;
   deliveryDate: string | null;
   notes: string | null;

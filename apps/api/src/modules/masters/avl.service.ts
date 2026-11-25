@@ -44,6 +44,7 @@ export const ApprovedSourceMoves = defineTransitions<ApprovedSourceStatus>({
 registerAttachmentTarget(SOURCE_TABLE, {
   readPermission: 'master.view',
   writePermission: 'master.vendor.manage',
+  gmp: true, // AVL evidence (owner 2026-11-25, answer 1)
   exists: async (q, recordId) => {
     const rows = await q.select({ id: approvedSources.id }).from(approvedSources).where(eq(approvedSources.id, recordId));
     return rows.length > 0;

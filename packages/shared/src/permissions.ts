@@ -101,6 +101,7 @@ export const Permissions = {
   'qa.lot.reject_fg': qaAction('Reject finished-goods and return lots (HOLD → REJECTED), with e-signature'),
   'qa.access.countersign': qaAction('Countersign role changes touching QA-controlled keys'),
   'qa.product.countersign': qaAction('Countersign product registration no., artwork version and quality agreement changes'),
+  'qa.attachment.countersign': qaAction('E-sign the voiding of a file attached to a GMP record (AVL evidence, QC records, batch documents)'),
 
   // finished goods and dispatch
   'fg.view': view('View delivery orders, gate passes, returns'),

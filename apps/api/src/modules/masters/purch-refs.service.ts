@@ -42,15 +42,23 @@ export async function assertPurchVendor(q: Queryable, companyId: string, vendorI
   return v;
 }
 
-/** Items on a requisition or PO: must exist, be ACTIVE and be bought (not BULK or FG). */
-export async function assertPurchItems(q: Queryable, companyId: string, itemIds: string[]): Promise<Map<string, PurchItemRef>> {
+/**
+ * Items on a requisition or PO: must exist, be ACTIVE and be bought (not BULK or FG, unless the buyer's
+ * setting purch.allow_bulk_fg_purchase is on: owner 2026-11-25, answer 6; the caller reads it).
+ */
+export async function assertPurchItems(
+  q: Queryable,
+  companyId: string,
+  itemIds: string[],
+  opts: { allowBulkFg: boolean },
+): Promise<Map<string, PurchItemRef>> {
   const map = await purchItems(q, companyId, itemIds);
   for (const id of itemIds) {
     const it = map.get(id);
     if (!it) throw new AppError('VALIDATION_FAILED', 'Item does not exist', { field: 'itemId', id });
     if (it.status !== 'ACTIVE') throw new AppError('VALIDATION_FAILED', `Item ${it.code} is not active`, { itemId: id });
-    if (it.type === 'BULK' || it.type === 'FG') {
-      throw new AppError('VALIDATION_FAILED', `Item ${it.code} (${it.type}) is made here, not bought`, { itemId: id });
+    if ((it.type === 'BULK' || it.type === 'FG') && !opts.allowBulkFg) {
+      throw new AppError('VALIDATION_FAILED', `Item ${it.code} (${it.type}) is made here, not bought (setting purch.allow_bulk_fg_purchase is off)`, { itemId: id });
     }
   }
   return map;

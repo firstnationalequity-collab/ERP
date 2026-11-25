@@ -5,7 +5,7 @@ import express, { Router, type RequestHandler } from 'express';
 import { z } from 'zod';
 import { ATTACHMENT_FILE_NAME_HEADER, ATTACHMENT_MAX_BYTES, VoidAttachmentRequest } from '@albert/shared';
 import { AppError } from '../errors';
-import { asyncHandler, authOf } from '../auth/middleware';
+import { asyncHandler, authOf, requestMeta } from '../auth/middleware';
 import { requirePermission } from '../rbac/require-permission';
 import * as attachments from './attachments.service';
 
@@ -96,10 +96,11 @@ attachmentsRouter.get(
 );
 
 // Void with reason (owner Q5, 2026-11-19): the record type's write key; the file is kept and still served.
+// A file on a GMP record also needs a QA Manager e-signature (owner 2026-11-25, answer 1).
 attachmentsRouter.post(
   '/attachment-files/:id/void',
   requireAttachmentAccess('write'),
   asyncHandler(async (req, res) => {
-    res.json(await attachments.voidAttachment(authOf(req), IdParam.parse(req.params).id, VoidAttachmentRequest.parse(req.body)));
+    res.json(await attachments.voidAttachment(authOf(req), IdParam.parse(req.params).id, VoidAttachmentRequest.parse(req.body), requestMeta(req)));
   }),
 );

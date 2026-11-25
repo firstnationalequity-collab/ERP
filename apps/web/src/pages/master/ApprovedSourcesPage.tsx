@@ -86,7 +86,7 @@ export function ApprovedSourcesPage() {
               {open.notes && <Descriptions.Item label="Notes">{open.notes}</Descriptions.Item>}
             </Descriptions>
             <Typography.Title level={5} style={{ marginTop: 16 }}>Evidence</Typography.Title>
-            <AttachmentsPanel recordTable={SOURCE_TABLE} recordId={open.id} canUpload={can('master.vendor.manage')} />
+            <AttachmentsPanel recordTable={SOURCE_TABLE} recordId={open.id} canUpload={can('master.vendor.manage')} gmp />
             {open.status === 'APPROVED' && can('master.avl.approve') && (
               <Button danger style={{ marginTop: 16 }} onClick={() => setBlocking(true)}>
                 Block this source

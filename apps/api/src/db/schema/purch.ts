@@ -37,6 +37,7 @@ export const purchaseOrders = purch.table('purchase_orders', {
   poType: text('po_type').$type<PurchaseOrderType>().notNull(),
   currency: text('currency').notNull(),
   exchangeRate: numeric('exchange_rate', { precision: 9, scale: 4 }),
+  exchangeRateDate: date('exchange_rate_date', { mode: 'string' }),
   incoterm: text('incoterm').$type<Incoterm>(),
   deliveryDate: date('delivery_date', { mode: 'string' }),
   notes: text('notes'),
@@ -58,6 +59,7 @@ export const poLines = purch.table('po_lines', {
   lineAmount: numeric('line_amount', { precision: 18, scale: 2 }).notNull(),
   receivedQty: numeric('received_qty', { precision: 18, scale: 4 }).notNull().default('0'),
   prLineId: bigintString('pr_line_id'),
+  releasedPrLineId: bigintString('released_pr_line_id'),
   notes: text('notes'),
   ...auditColumns(),
 });

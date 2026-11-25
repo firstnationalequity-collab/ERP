@@ -15,7 +15,9 @@ import {
 import { db, withTransaction, type Queryable } from '../../db/client';
 import { attachments, users } from '../../db/schema/core';
 import { AppError } from '../errors';
-import { txContext, type AuthContext } from '../auth/auth.service';
+import { txContext, type AuthContext, type RequestMeta } from '../auth/auth.service';
+import { permissionKeysForUser } from '../auth/auth.repo';
+import { recordSignature, verifySignature, verifyWitness, type SignatureProof } from '../esign/esign.service';
 import { storage } from '../storage/storage';
 
 export interface AttachmentTarget {
@@ -25,7 +27,15 @@ export interface AttachmentTarget {
   writePermission: PermissionKey;
   /** Does the record exist in the acting company? */
   exists(q: Queryable, recordId: string): Promise<boolean>;
+  /**
+   * A GMP record (AVL evidence, QC records, batch documents): voiding one of its files also needs a QA Manager
+   * e-signature (owner 2026-11-25, answer 1). Mirrored by core.gmp_attachment_tables() (0025, tested equal).
+   */
+  gmp: boolean;
 }
+
+/** Key of the QA Manager e-signature that voids a file on a GMP record. */
+export const GMP_VOID_KEY: PermissionKey = 'qa.attachment.countersign';
 
 const targets = new Map<string, AttachmentTarget>();
 
@@ -40,6 +50,11 @@ export function attachmentPermission(recordTable: string, mode: 'read' | 'write'
   const target = targets.get(recordTable);
   if (!target) throw new AppError('NOT_FOUND', `Records of ${recordTable} do not take attachments`);
   return mode === 'read' ? target.readPermission : target.writePermission;
+}
+
+/** Record tables whose files need a QA Manager e-signature to void (for the DB mirror test). */
+export function gmpAttachmentTables(): string[] {
+  return [...targets].filter(([, t]) => t.gmp).map(([table]) => table).sort();
 }
 
 /** Record type of a stored attachment (for the route check on downloads). */
@@ -219,9 +234,30 @@ export async function download(auth: AuthContext, id: string): Promise<{ meta: A
   return { meta: toDto(row.a, row.uploader, row.voidedByName), bytes };
 }
 
-/** Void a file with a reason (owner Q5): needs the record type's write key; the file is kept and never deleted. */
-export async function voidAttachment(auth: AuthContext, id: string, input: VoidAttachmentRequest): Promise<AttachmentDto> {
+/**
+ * Void a file with a reason (owner Q5): needs the record type's write key; the file is kept and never deleted.
+ * A file on a GMP record also needs a QA Manager e-signature (owner 2026-11-25, answer 1): a holder of
+ * qa.attachment.countersign signs with meaning APPROVED (the QA Manager may sign their own void); the signature
+ * is stored on the attachment in the same transaction and the DB checks it at commit (0025).
+ */
+export async function voidAttachment(auth: AuthContext, id: string, input: VoidAttachmentRequest, meta: RequestMeta): Promise<AttachmentDto> {
   const reason = input.reason.trim();
+  const target = targets.get(await attachmentRecordTable(auth, id));
+  if (!target) throw new AppError('NOT_FOUND', 'Records of this type do not take attachments');
+  let proof: SignatureProof | undefined;
+  if (target.gmp) {
+    const cs = input.countersign;
+    if (!cs) {
+      throw new AppError('COUNTERSIGN_REQUIRED', 'This file is GMP evidence: voiding it needs a QA Manager e-signature', { permission: GMP_VOID_KEY });
+    }
+    if (cs.meaning !== 'APPROVED') throw new AppError('ESIGN_FAILED', 'The QA Manager signs with the meaning APPROVED');
+    proof =
+      cs.username.trim().toLowerCase() === auth.username.toLowerCase()
+        ? await verifySignature(auth, cs, meta)
+        : await verifyWitness(auth, cs, meta);
+  } else if (input.countersign) {
+    throw new AppError('VALIDATION_FAILED', 'This file is not GMP evidence; it is voided without a QA e-signature', { field: 'countersign' });
+  }
   await withTransaction(txContext(auth, `void attachment: ${reason}`), async (tx) => {
     const [row] = await tx
       .select()
@@ -231,6 +267,12 @@ export async function voidAttachment(auth: AuthContext, id: string, input: VoidA
     if (!row) throw new AppError('NOT_FOUND', 'Attachment not found');
     await checkAccess(auth, row.recordTable, row.recordId, 'write');
     if (row.voidedAt) throw new AppError('INVALID_TRANSITION', 'This attachment is already void');
+    if (proof) {
+      if (!(await permissionKeysForUser(tx, proof.userId)).includes(GMP_VOID_KEY)) {
+        throw new AppError('FORBIDDEN', `The signer does not hold ${GMP_VOID_KEY} (QA Manager)`, { permission: GMP_VOID_KEY });
+      }
+      await recordSignature(tx, proof, { table: 'core.attachments', id }, ['APPROVED']);
+    }
     await tx
       .update(attachments)
       .set({ voidedAt: new Date(), voidedBy: auth.userId, voidReason: reason })
