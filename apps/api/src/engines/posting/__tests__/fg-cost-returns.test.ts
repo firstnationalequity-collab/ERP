@@ -218,7 +218,7 @@ describe('FG lot valuation (owner Q8, Option A)', () => {
     const { fg, order, provisional } = await producedLot({ fgQty: '10', rmQty: '100', rmCost: '9.99' });
     expect(provisional).toBe('999.00');
     expect(await ledger(fg)).toEqual({ qty: '10.0000', value: '999.00' });
-    expect((await lotRow(fg)).unit_cost).toBe('99.90');
+    expect((await lotRow(fg)).unit_cost).toBe('99.900000');
 
     const closed = await closeBatch(fg, order, '1500.00'); // materials 999.00 + conversion 501.00
     expect(closed.adjustment).toMatchObject({ movementType: 'VALUE_ADJUSTMENT', qty: '0.0000', value: '501.00', locationId: null, reasonCode: 'BATCH_CLOSE' });
@@ -227,7 +227,7 @@ describe('FG lot valuation (owner Q8, Option A)', () => {
     expect(lineView(closed.entry!)).toEqual([['1310', '501.00', '0.00'], ['1320', '0.00', '501.00']]);
     expect(await ledger(fg)).toEqual({ qty: '10.0000', value: '1500.00' });
     const row = await lotRow(fg);
-    expect([row.unit_cost, row.batch_closed_at]).toEqual(['150.00', expect.any(Date)]);
+    expect([row.unit_cost, row.batch_closed_at]).toEqual(['150.000000', expect.any(Date)]);
     // Balances do not move: a value-only row moves no stock.
     const { rows } = await client.query(`SELECT qty FROM inv.stock_balances WHERE lot_id = $1`, [fg]);
     expect(rows).toEqual([{ qty: '10.0000' }]);
@@ -246,11 +246,11 @@ describe('FG lot valuation (owner Q8, Option A)', () => {
     const closed = await closeBatch(fg, order, '1300.00'); // the whole difference goes to the 9 units held
     expect(closed.adjustment!.value).toBe('300.00');
     expect(await ledger(fg)).toEqual({ qty: '9.0000', value: '1200.00' });
-    expect((await lotRow(fg)).unit_cost).toBe('133.33'); // 1200.00 ÷ 9, half-up
+    expect((await lotRow(fg)).unit_cost).toBe('133.333333'); // 1200.00 ÷ 9, half-up to 6 decimals (owner 2026-11-25)
     // Later outbound movements: qty × the new unit cost; the last one takes the residual.
     await setLot(fg, 'UNDER_TEST', 'APPROVED', 'RELEASED');
-    expect((await postWithJournal('store', { type: 'DISPATCH', lotId: fg, qty: '3' })).m.value).toBe('-399.99');
-    expect((await postWithJournal('store', { type: 'DISPATCH', lotId: fg, qty: '6' })).m.value).toBe('-800.01');
+    expect((await postWithJournal('store', { type: 'DISPATCH', lotId: fg, qty: '3' })).m.value).toBe('-400.00'); // 399.999999 → 400.00
+    expect((await postWithJournal('store', { type: 'DISPATCH', lotId: fg, qty: '6' })).m.value).toBe('-800.00'); // the residual
     expect(await ledger(fg)).toEqual({ qty: '0.0000', value: '0.00' });
     await expectGlEqualsLedger();
   });
@@ -260,7 +260,7 @@ describe('FG lot valuation (owner Q8, Option A)', () => {
     const down = await closeBatch(a.fg, a.order, '90.00');
     expect(down.adjustment!.value).toBe('-10.00');
     expect(lineView(down.entry!)).toEqual([['1310', '0.00', '10.00'], ['1320', '10.00', '0.00']]);
-    expect((await lotRow(a.fg)).unit_cost).toBe('22.50');
+    expect((await lotRow(a.fg)).unit_cost).toBe('22.500000');
     const b = await producedLot({ fgQty: '4', rmQty: '10', rmCost: '10' });
     const same = await closeBatch(b.fg, b.order, '100.00');
     expect([same.adjustment, same.entry]).toEqual([null, null]);
@@ -420,7 +420,7 @@ describe('VALUE_ADJUSTMENT database guards (0017)', () => {
 /** A closed, released FG lot with `dispatched` units dispatched (own stock unless owner given). */
 async function dispatchedLot(dispatched: string, o: { owner?: string; lotNo?: string } = {}) {
   const p = await producedLot(o.owner ? { fgQty: '10', owner: o.owner, lotNo: o.lotNo } : { fgQty: '3', rmQty: '10', rmCost: '10', lotNo: o.lotNo });
-  await closeBatch(p.fg, p.order, o.owner ? '0.00' : '100.00'); // own: 3 units, 33.33 each
+  await closeBatch(p.fg, p.order, o.owner ? '0.00' : '100.00'); // own: 3 units, 33.333333 each
   await setLot(p.fg, 'UNDER_TEST', 'APPROVED', 'RELEASED');
   await postWithJournal('store', { type: 'DISPATCH', lotId: p.fg, qty: dispatched, customerId: o.owner ?? ids.cust! });
   return p.fg;
@@ -433,7 +433,7 @@ describe('customer sales returns (owner Q9)', () => {
   it('receive into a new HOLD lot "<lot>-R<n>" at a returns area, at the original unit cost: Dr FG inventory / Cr COGS', async () => {
     const original = await dispatchedLot('2', { lotNo: 'AP26-0901' });
     const r1 = await returnLot(original);
-    expect(r1).toMatchObject({ lotNo: 'AP26-0901-R1', status: 'HOLD', source: 'SALES_RETURN', parentLotId: original, unitCost: '33.33', itemId: ids.fg });
+    expect(r1).toMatchObject({ lotNo: 'AP26-0901-R1', status: 'HOLD', source: 'SALES_RETURN', parentLotId: original, unitCost: '33.333333', itemId: ids.fg });
     const { rows: hist } = await client.query(`SELECT from_status, to_status, actor_id FROM core.status_history WHERE entity_table = 'inv.lots' AND entity_id = $1`, [r1.id]);
     expect(hist).toEqual([{ from_status: null, to_status: 'HOLD', actor_id: actors.store!.userId }]);
 
@@ -442,7 +442,7 @@ describe('customer sales returns (owner Q9)', () => {
     expect(entry).toMatchObject({ event: 'SALES_RETURN_RECEIPT', status: 'POSTED', sourceType: 'SALES_RETURN' });
     expect(lineView(entry!)).toEqual([['1310', '33.33', '0.00'], ['5100', '0.00', '33.33']]);
     expect((await lotRow(original)).status).toBe('RELEASED'); // the released lot is untouched
-    expect(await ledger(original)).toEqual({ qty: '1.0000', value: '33.34' });
+    expect(await ledger(original)).toEqual({ qty: '1.0000', value: '33.33' }); // 100.00 − 66.67 dispatched
 
     const r2 = await returnLot(original);
     expect(r2.lotNo).toBe('AP26-0901-R2');
@@ -480,7 +480,7 @@ describe('customer sales returns (owner Q9)', () => {
 
   it('database: a return lot is HOLD, numbered from its original, with its item, owner and unit cost; returns never exceed dispatch', async () => {
     const original = await dispatchedLot('1', { lotNo: 'AP26-0902' });
-    const insert = (lotNo: string, status = 'HOLD', unitCost = '33.33', parent = original) =>
+    const insert = (lotNo: string, status = 'HOLD', unitCost = '33.333333', parent = original) =>
       inTx('1', async () => {
         const { rows } = await client.query<{ id: string }>(
           `INSERT INTO inv.lots (item_id, lot_no, status, unit_cost, source, parent_lot_id) VALUES ($1, $2, $3, $4, 'SALES_RETURN', $5) RETURNING id`,
@@ -496,12 +496,12 @@ describe('customer sales returns (owner Q9)', () => {
       inTx('1', () => client.query(`INSERT INTO inv.lots (item_id, lot_no, status, source) VALUES ($1, 'NOPARENT', 'HOLD', 'SALES_RETURN')`, [ids.fg]).then(() => undefined)),
     ).rejects.toThrow(/original lot's item and owner/);
     const r = await returnLot(original);
-    await expect(insert(`${r.lotNo}-R1`, 'HOLD', '33.33', r.id)).rejects.toThrow(/not to another return lot/);
+    await expect(insert(`${r.lotNo}-R1`, 'HOLD', '33.333333', r.id)).rejects.toThrow(/not to another return lot/);
     await expect(
       inTx(actors.store!.userId, async () => {
         await client.query(
           `INSERT INTO inv.stock_movements (movement_type, movement_date, lot_id, to_location_id, qty, unit_cost, value, ref_doc_type, ref_doc_id, customer_id)
-           VALUES ('SALES_RETURN', $1, $2, $3, 2, 33.33, 66.66, 'TEST', 1, $4)`,
+           VALUES ('SALES_RETURN', $1, $2, $3, 2, 33.333333, 66.67, 'TEST', 1, $4)`,
           [DATE, r.id, ids.ret, ids.cust],
         );
       }),
@@ -511,7 +511,7 @@ describe('customer sales returns (owner Q9)', () => {
   it('toll stock comes back at zero value with no journal (rule 12)', async () => {
     const original = await dispatchedLot('4', { owner: ids.toll });
     const r = await returnLot(original);
-    expect([r.ownerType, r.ownerCustomerId, r.unitCost]).toEqual(['CUSTOMER', ids.toll, '0.00']);
+    expect([r.ownerType, r.ownerCustomerId, r.unitCost]).toEqual(['CUSTOMER', ids.toll, '0.000000']);
     const { m, entry } = await receiveReturn(r.id, '4', { customerId: ids.toll });
     expect([m.value, m.customerOwned, entry]).toEqual(['0.00', true, null]);
     await expectGlEqualsLedger();
@@ -580,7 +580,7 @@ describe('customer sales returns (owner Q9)', () => {
         await client.query(
           `INSERT INTO inv.stock_movements (movement_type, movement_date, lot_id, from_location_id, to_location_id, qty, unit_cost, value,
                                             ref_doc_type, ref_doc_id, customer_id, reversal_of)
-           VALUES ($1, $2, $3, $4, $5, $6, 33.33, round($6::numeric * 33.33, 2), 'TEST', 1, $7, $8)`,
+           VALUES ($1, $2, $3, $4, $5, $6, 33.333333, round($6::numeric * 33.333333, 2), 'TEST', 1, $7, $8)`,
           [type, DATE, lotId, inbound ? null : (extra.loc ?? ids.loc), inbound ? (extra.loc ?? ids.ret) : null, qty, customer, extra.reversalOf ?? null],
         );
       });
@@ -651,7 +651,7 @@ describe('customer sales returns (owner Q9)', () => {
         inTx(actors.store!.userId, async () => {
           await client.query(
             `INSERT INTO inv.stock_movements (movement_type, movement_date, lot_id, from_location_id, qty, unit_cost, value, ref_doc_type, ref_doc_id, customer_id)
-             VALUES ('DISPATCH', $1, $2, $3, -1, 33.33, -33.33, 'TEST', 1, $4)`,
+             VALUES ('DISPATCH', $1, $2, $3, -1, 33.333333, -33.33, 'TEST', 1, $4)`,
             [DATE, p.fg, ids.loc, customer],
           );
         }),

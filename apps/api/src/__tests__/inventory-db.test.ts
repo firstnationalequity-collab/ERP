@@ -593,14 +593,16 @@ describe('movement valuation (0015)', () => {
   });
 
   it('books finished goods at the exact batch cost; the lot unit cost is that cost ÷ qty', async () => {
-    const fg = await newLot({ item: ids.fg, unitCost: '333.33' }); // 1000.00 ÷ 3
-    await expect(move('OUTPUT', fg, '3', { unitCost: '333.33', value: '1000.02' })).rejects.toThrow(/output value/);
-    await move('OUTPUT', fg, '3', { unitCost: '333.33', value: '1000.00' });
+    const fg = await newLot({ item: ids.fg, unitCost: '333.333333' }); // 1000.00 ÷ 3, 6 decimals (owner 2026-11-25)
+    await expect(move('OUTPUT', fg, '3', { unitCost: '333.333333', value: '1000.01' })).rejects.toThrow(/output value/);
+    await move('OUTPUT', fg, '3', { unitCost: '333.333333', value: '1000.00' });
     await setLot(fg, 'UNDER_TEST', 'APPROVED', 'RELEASED');
     await closeBatch(fg);
-    await move('DISPATCH', fg, '-1', { unitCost: '333.33', value: '-333.33' });
-    await expect(move('DISPATCH', fg, '-2', { unitCost: '333.33', value: '-666.66' })).rejects.toThrow(/valued -666.67/);
-    await move('DISPATCH', fg, '-2', { unitCost: '333.33', value: '-666.67' });
+    await move('DISPATCH', fg, '-1', { unitCost: '333.333333', value: '-333.33' });
+    await move('DISPATCH', fg, '-1', { unitCost: '333.333333', value: '-333.33' });
+    // The last one takes the residual (333.34), not the nominal 333.33.
+    await expect(move('DISPATCH', fg, '-1', { unitCost: '333.333333', value: '-333.33' })).rejects.toThrow(/valued -333.34/);
+    await move('DISPATCH', fg, '-1', { unitCost: '333.333333', value: '-333.34' });
     expect(await ledgerTotals(fg)).toEqual({ qty: '0.0000', value: '0.00' });
   });
 

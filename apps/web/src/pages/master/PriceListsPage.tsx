@@ -18,7 +18,7 @@ import { DocForm, type FieldDef } from '../../components/DocForm';
 import { ReasonModal } from '../../components/ReasonModal';
 import { RefLabel } from '../../components/RefSelect';
 import { StatusTag } from '../../components/StatusTag';
-import { formatDate, formatDecimal } from '../../lib/format';
+import { formatDate, formatRate } from '../../lib/format';
 import { MasterPage } from './MasterPage';
 
 const listFields: FieldDef[] = [
@@ -90,7 +90,7 @@ function PriceListLinesDrawer({ list, onClose }: { list: PriceListDto; onClose()
         columns={[
           { title: 'Item', render: (_, l) => <RefLabel path="/master/items" id={l.itemId} /> },
           { title: 'Unit', render: (_, l) => <RefLabel path="/master/uoms" id={l.uomId} /> },
-          { title: `Unit price (${list.currency})`, align: 'right', render: (_, l) => formatDecimal(l.unitPrice, 2) },
+          { title: `Unit price (${list.currency})`, align: 'right', render: (_, l) => formatRate(l.unitPrice) },
           { title: 'Status', render: (_, l) => <StatusTag status={l.isActive ? 'ACTIVE' : 'INACTIVE'} /> },
           {
             title: '',

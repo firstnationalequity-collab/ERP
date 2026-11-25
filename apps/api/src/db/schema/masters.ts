@@ -215,7 +215,7 @@ export const priceListLines = master.table('price_list_lines', {
   priceListId: bigintString('price_list_id').notNull(),
   itemId: bigintString('item_id').notNull(),
   uomId: bigintString('uom_id').notNull(),
-  unitPrice: numeric('unit_price', { precision: 18, scale: 2 }).notNull(),
+  unitPrice: numeric('unit_price', { precision: 18, scale: 6 }).notNull(),
   isActive: boolean('is_active').notNull().default(true),
   ...auditColumns(),
 });

@@ -26,7 +26,7 @@ import { PageHeader } from '../../components/PageHeader';
 import { ReasonModal } from '../../components/ReasonModal';
 import { RefSelect } from '../../components/RefSelect';
 import { StatusTag } from '../../components/StatusTag';
-import { companyToday, formatDate, formatDecimal, toBusinessDate } from '../../lib/format';
+import { companyToday, formatDate, formatDecimal, formatRate, toBusinessDate } from '../../lib/format';
 
 const prKey = ['purch', 'prs'];
 const poKey = ['purch', 'pos'];
@@ -506,7 +506,7 @@ function PoDrawer({ id, onClose, onEdit, onChanged }: { id: string; onClose(): v
               { title: '#', dataIndex: 'lineNo', width: 50 },
               { title: 'Item', render: (_, l) => `${l.itemCode} — ${l.itemName}` },
               { title: 'Quantity', render: (_, l) => `${formatDecimal(l.qty, 4)} ${l.uomCode}` },
-              { title: 'Unit price', render: (_, l) => formatDecimal(l.unitPrice) },
+              { title: 'Unit price', render: (_, l) => formatRate(l.unitPrice) },
               { title: 'Amount', render: (_, l) => formatDecimal(l.lineAmount) },
               { title: 'Received', render: (_, l) => formatDecimal(l.receivedQty, 4) },
               { title: 'Requisition', render: (_, l) => l.prDocNo ?? '—' },

@@ -43,7 +43,7 @@ import {
   stockItem,
 } from '../../modules/masters/stock-refs.service';
 import * as repo from './inventory.repo';
-import { money, movementValue, quantity } from './valuation';
+import { money, movementValue, quantity, unitRate } from './valuation';
 
 // ---------------------------------------------------------------- lots
 
@@ -157,7 +157,7 @@ export interface NewLot {
   waterPct?: string;
   /** Set for customer-owned (toll) stock: unit cost must be 0 (rule 12). */
   ownerCustomerId?: string;
-  /** Lot-actual cost per base unit, 2 decimals. FG lots: fgUnitCost(provisional output value, qty) (owner Q8). */
+  /** Lot-actual cost per base unit, a rate with up to 6 decimals. FG lots: fgUnitCost(provisional output value, qty) (owner Q8). */
   unitCost: string;
 }
 
@@ -169,7 +169,7 @@ export async function createLot(tx: Tx, actor: Actor, input: NewLot): Promise<Lo
   }
   const map = lotCreationMaps[input.source];
   if (!map) throw new AppError('VALIDATION_FAILED', `Unknown lot source ${String(input.source)}`);
-  assertMoney(input.unitCost, 'Unit cost');
+  assertRate(input.unitCost, 'Unit cost');
   const item = await stockItem(tx, actor.companyId, input.itemId);
   if (item.status !== 'ACTIVE') {
     throw new AppError('VALIDATION_FAILED', `Item ${item.code} is ${item.status}; lots are created only for ACTIVE items`);
@@ -194,7 +194,7 @@ export async function createLot(tx: Tx, actor: Actor, input: NewLot): Promise<Lo
       status: 'QUARANTINE',
       ownerType: input.ownerCustomerId === undefined ? 'OWN' : 'CUSTOMER',
       ownerCustomerId: input.ownerCustomerId ?? null,
-      unitCost: money(input.unitCost),
+      unitCost: unitRate(input.unitCost),
       source: input.source,
     }),
   );
@@ -588,8 +588,8 @@ export async function postValueAdjustment(tx: Tx, actor: Actor, input: ValueAdju
       adjustment: money(adjustment),
     });
   }
-  const unitCost = money(newValue.div(lotQty));
-  if (unitCost !== money(lot.unitCost)) await repo.setLotUnitCost(tx, lot.id, unitCost);
+  const unitCost = unitRate(newValue.div(lotQty));
+  if (unitCost !== unitRate(lot.unitCost)) await repo.setLotUnitCost(tx, lot.id, unitCost);
   return insertRow(tx, actor, { ...lot, unitCost }, {
     movementType: 'VALUE_ADJUSTMENT',
     movementDate: input.date,
@@ -879,6 +879,13 @@ function assertQty(qty: string): void {
 function assertMoney(v: string, label: string): void {
   if (!/^\d{1,16}(\.\d{1,2})?$/.test(v)) {
     throw new AppError('VALIDATION_FAILED', `${label} must be an amount ≥ 0 with at most 2 decimals (got "${v}")`);
+  }
+}
+
+/** A unit rate (unit cost): ≥ 0 with at most 6 decimals (owner 2026-11-25). */
+function assertRate(v: string, label: string): void {
+  if (!/^\d{1,12}(\.\d{1,6})?$/.test(v)) {
+    throw new AppError('VALIDATION_FAILED', `${label} must be a rate ≥ 0 with at most 6 decimals (got "${v}")`);
   }
 }
 

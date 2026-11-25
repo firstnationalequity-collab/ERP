@@ -236,7 +236,7 @@ afterAll(async () => {
 describe('createLot', () => {
   it('creates a QUARANTINE lot through core/transition, by the GRN poster', async () => {
     const l = await lot({ unitCost: '12.5', expiryDate: '2028-01-31' });
-    expect(l).toMatchObject({ status: 'QUARANTINE', unitCost: '12.50', ownerType: 'OWN', expiryDate: '2028-01-31' });
+    expect(l).toMatchObject({ status: 'QUARANTINE', unitCost: '12.500000', ownerType: 'OWN', expiryDate: '2028-01-31' });
     const rows = await raw<{ to_status: string; actor_id: string }>(
       `SELECT to_status, actor_id FROM core.status_history WHERE entity_table = 'inv.lots' AND entity_id = $1`,
       [l.id],
@@ -256,12 +256,12 @@ describe('createLot', () => {
     });
     expect(await raw(`SELECT 1 FROM inv.lots WHERE lot_no = 'NOKEY'`)).toEqual([]);
     const fg = await lot({ source: 'PRODUCTION_OUTPUT', itemId: ids.fg, unitCost: fgUnitCost('1000', '3') }, 'sup');
-    expect(fg.unitCost).toBe('333.33');
+    expect(fg.unitCost).toBe('333.333333');
   });
 
   it('refuses an inactive item, a bad unit cost and a duplicate lot number', async () => {
     await expect(lot({ itemId: ids.draft })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
-    await expect(lot({ unitCost: '1.234' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    await expect(lot({ unitCost: '1.2345678' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' }); // a rate has 6 decimals
     await expect(lot({ unitCost: '-1' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
     await lot({ lotNo: 'DUP-1' });
     await expect(lot({ lotNo: 'DUP-1' })).rejects.toMatchObject({ code: 'ALREADY_EXISTS' });
@@ -271,7 +271,7 @@ describe('createLot', () => {
     await expect(lot({ ownerCustomerId: ids.TOLL1, unitCost: '5.00' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
     await expect(lot({ ownerCustomerId: ids.PLAIN, unitCost: '0' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
     const toll = await lot({ ownerCustomerId: ids.TOLL1, unitCost: '0' });
-    expect(toll).toMatchObject({ ownerType: 'CUSTOMER', ownerCustomerId: ids.TOLL1, unitCost: '0.00' });
+    expect(toll).toMatchObject({ ownerType: 'CUSTOMER', ownerCustomerId: ids.TOLL1, unitCost: '0.000000' });
   });
 });
 
@@ -281,7 +281,7 @@ describe('postMovement', () => {
     const m = await post({ lotId: l.id, qty: '1.2345', refDocType: 'GRN', refDocId: '77' });
     expect(m).toMatchObject({
       movementType: 'RECEIPT', lotId: l.id, itemId: ids.rm, itemCategoryId: ids.category, locationId: ids.loc1,
-      qty: '1.2345', unitCost: '3.33', value: '4.11', customerOwned: false, refDocType: 'GRN', refDocId: '77', reversalOf: null,
+      qty: '1.2345', unitCost: '3.330000', value: '4.11', customerOwned: false, refDocType: 'GRN', refDocId: '77', reversalOf: null,
     });
     expect(await balance(l.id)).toBe('1.2345');
   });
@@ -292,6 +292,28 @@ describe('postMovement', () => {
     const last = await post({ type: 'ISSUE', lotId: id, qty: '0.5' });
     expect([first.qty, first.value, last.value]).toEqual(['-0.5000', '-0.02', '-0.01']);
     expect(await ledger(id)).toEqual({ qty: '0.0000', value: '0.00' });
+  });
+
+  it('a 0.035 PKR label (unit cost = 6-decimal rate, owner 2026-11-25): values round to 2 decimals; the last issue takes the residual; the DB agrees', async () => {
+    const id = await approvedLot('10000', { unitCost: '0.035' });
+    expect(await ledger(id)).toEqual({ qty: '10000.0000', value: '350.00' });
+    const three = await post({ type: 'ISSUE', lotId: id, qty: '3' });
+    const seven = await post({ type: 'ISSUE', lotId: id, qty: '7' });
+    expect([three.unitCost, three.value, seven.value]).toEqual(['0.035000', '-0.11', '-0.25']); // 0.105, 0.245 half-up
+    const last = await post({ type: 'ISSUE', lotId: id, qty: '9990' });
+    expect(last.value).toBe('-349.64'); // residual: 350.00 − 0.11 − 0.25 (nominal 349.65)
+    expect(await ledger(id)).toEqual({ qty: '0.0000', value: '0.00' });
+    // The DB guard values a raw row the same way: 0.035 × 1 = 0.04, not 0.03.
+    const raw = await lot({ unitCost: '0.035' });
+    await expect(
+      inTx(actors.store!.userId, () =>
+        client.query(
+          `INSERT INTO inv.stock_movements (movement_type, movement_date, lot_id, to_location_id, qty, unit_cost, value, ref_doc_type, ref_doc_id)
+           VALUES ('RECEIPT', '2026-11-18', $1, $2, 1, 0.035, 0.03, 'TEST', 1)`,
+          [raw.id, ids.loc1],
+        ).then(() => undefined),
+      ),
+    ).rejects.toThrow(/is valued 0.04, not 0.03/);
   });
 
   it('never takes out more value than the lot holds while stock remains', async () => {

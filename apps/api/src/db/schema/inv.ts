@@ -22,7 +22,7 @@ export const lots = inv.table('lots', {
   ownerType: text('owner_type').$type<StockOwner>().notNull().default('OWN'),
   ownerCustomerId: bigintString('owner_customer_id'),
   /** Lot-actual cost per base unit (decision M2 Q2); always 0 for customer-owned stock (rule 12). */
-  unitCost: numeric('unit_cost', { precision: 18, scale: 2 }).notNull().default('0'),
+  unitCost: numeric('unit_cost', { precision: 18, scale: 6 }).notNull().default('0'),
   /** GRN, PRODUCTION_OUTPUT or SALES_RETURN (0017); never changes. */
   source: text('source').$type<LotSource>().notNull(),
   /** SALES_RETURN lots only: the original lot (0017). */
@@ -42,7 +42,7 @@ export const stockMovements = inv.table('stock_movements', {
   fromLocationId: bigintString('from_location_id'),
   toLocationId: bigintString('to_location_id'),
   qty: numeric('qty', { precision: 18, scale: 4 }).notNull(),
-  unitCost: numeric('unit_cost', { precision: 18, scale: 2 }).notNull(),
+  unitCost: numeric('unit_cost', { precision: 18, scale: 6 }).notNull(),
   value: numeric('value', { precision: 18, scale: 2 }).notNull(),
   refDocType: text('ref_doc_type').notNull(),
   refDocId: bigintString('ref_doc_id').notNull(),

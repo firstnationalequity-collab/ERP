@@ -29,6 +29,12 @@ export const decimalString = (intDigits: number, scale: number, label = 'Value')
     .regex(new RegExp(`^\\d{1,${intDigits}}(\\.\\d{1,${scale}})?$`), `${label}: up to ${intDigits} digits and ${scale} decimals`);
 const positive = (s: z.ZodString, label: string) => s.refine((v) => /[1-9]/.test(v), `${label} must be above zero`);
 
+/**
+ * Unit price or unit cost: a rate NUMERIC(18,6), ≥ 0 (owner 2026-11-25: amounts 2 decimals, unit rates 6),
+ * e.g. a printed label at 0.035 PKR.
+ */
+export const unitRate = (label: string) => decimalString(12, 6, label);
+
 /** Money NUMERIC(18,2); quantity NUMERIC(18,4); rate NUMERIC(9,4); conversion factor NUMERIC(18,6). */
 const money = (label: string) => decimalString(16, 2, label);
 const qty = (label: string) => positive(decimalString(14, 4, label), label);
@@ -461,9 +467,9 @@ export interface PriceListDto extends Stamped {
   lines?: PriceListLineDto[];
 }
 
-export const CreatePriceListLineRequest = z.object({ itemId: id, uomId: id, unitPrice: money('Unit price') }).strict();
+export const CreatePriceListLineRequest = z.object({ itemId: id, uomId: id, unitPrice: unitRate('Unit price') }).strict();
 export type CreatePriceListLineRequest = z.infer<typeof CreatePriceListLineRequest>;
-export const UpdatePriceListLineRequest = z.object({ unitPrice: money('Unit price') }).strict();
+export const UpdatePriceListLineRequest = z.object({ unitPrice: unitRate('Unit price') }).strict();
 export type UpdatePriceListLineRequest = z.infer<typeof UpdatePriceListLineRequest>;
 export interface PriceListLineDto extends Stamped {
   priceListId: string;

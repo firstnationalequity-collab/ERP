@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatDate, formatDateTime, formatDecimal, formatPKR } from './format';
+import { formatDate, formatDateTime, formatDecimal, formatPKR, formatRate } from './format';
 
 describe('display formats (DD-MM-YYYY, Asia/Karachi, PKR)', () => {
   it('shows business dates as DD-MM-YYYY without shifting the day', () => {
@@ -18,5 +18,15 @@ describe('display formats (DD-MM-YYYY, Asia/Karachi, PKR)', () => {
     expect(formatDecimal('12345678901234.5678', 4)).toBe('12,345,678,901,234.5678');
     expect(formatDecimal('-1500')).toBe('-1,500.00');
     expect(formatPKR('561000.0000')).toBe('PKR 561,000.00');
+  });
+});
+
+describe('unit rates (owner 2026-11-25: 6 decimals)', () => {
+  it('shows 2 to 6 decimals, dropping trailing zeros', () => {
+    expect(formatRate('0.035000')).toBe('0.035');
+    expect(formatRate('1250.500000')).toBe('1,250.50');
+    expect(formatRate('333.333333')).toBe('333.333333');
+    expect(formatRate('12')).toBe('12.00');
+    expect(formatRate(null)).toBe('');
   });
 });

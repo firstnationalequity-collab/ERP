@@ -171,7 +171,7 @@ export interface PoLineInput {
   prLineId?: string | null;
 }
 
-/** qty × price, half-up to 2 decimals (the DB CHECK uses the same rounding). */
+/** qty × unit price (a 6-decimal rate), half-up to 2 decimals (the DB CHECK uses the same rounding). */
 export function lineAmount(qty: string, unitPrice: string): string {
   return new Decimal(qty).times(unitPrice).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
 }
@@ -189,7 +189,7 @@ async function prepare(q: Queryable, auth: AuthContext, header: PoHeader, lines:
     lineNo: i + 1,
     itemId: l.itemId,
     qty: new Decimal(l.qty).toFixed(4),
-    unitPrice: new Decimal(l.unitPrice).toFixed(2),
+    unitPrice: new Decimal(l.unitPrice).toFixed(6),
     lineAmount: lineAmount(l.qty, l.unitPrice),
     prLineId: l.prLineId ?? null,
     notes: l.notes?.trim() || null,

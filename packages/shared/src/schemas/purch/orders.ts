@@ -8,7 +8,7 @@ import {
   type PurchaseOrderStatus,
   type PurchaseRequisitionStatus,
 } from '../../enums';
-import { decimalString } from '../master/masters';
+import { decimalString, unitRate } from '../master/masters';
 
 const id = z.string().regex(/^\d+$/, 'Invalid id');
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date: YYYY-MM-DD');
@@ -16,8 +16,8 @@ const optText = (max: number) => z.string().trim().max(max).nullable().optional(
 const reason = z.string().trim().min(3, 'Give a reason (at least 3 characters)').max(500);
 /** Quantity NUMERIC(18,4), above zero. */
 const qty = decimalString(14, 4, 'Quantity').refine((v) => /[1-9]/.test(v), 'Quantity must be above zero');
-/** Unit price NUMERIC(18,2), in the PO currency. */
-const unitPrice = decimalString(16, 2, 'Unit price');
+/** Unit price: a rate NUMERIC(18,6), in the PO currency (owner 2026-11-25). */
+const unitPrice = unitRate('Unit price');
 const currency = z.string().trim().toUpperCase().regex(/^[A-Z]{3}$/, 'Currency: 3-letter ISO code');
 
 // ---------------------------------------------------------------- requisitions (owner Q6: no approval)

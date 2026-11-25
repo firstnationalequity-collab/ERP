@@ -380,7 +380,7 @@ describe('M2 Done when', () => {
       const c = await closeBatchCost(tx, a, { lotId: fg.id, batchCost: '3000.00', date: DATE, refDocType: 'PROD_ORDER', refDocId: order });
       return { ...c, ...(await postStockJournal(tx, a, { movements: [c.adjustment!], narration: 'Batch close: conversion and true-up' })) };
     });
-    expect([close.adjustment!.value, close.lot.unitCost]).toEqual(['414.33', '3.00']);
+    expect([close.adjustment!.value, close.lot.unitCost]).toEqual(['414.33', '3.000000']);
     expect(lineView(close.entry!)).toEqual([['1310', '414.33', '0.00'], ['1320', '0.00', '414.33']]);
     await expectGlEqualsLedger('VALUE_ADJUSTMENT');
 

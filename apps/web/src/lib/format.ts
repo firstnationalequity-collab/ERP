@@ -69,6 +69,16 @@ export function formatDecimal(value: string | null | undefined, decimals = 2): s
   return decimals > 0 ? `${sign}${grouped}.${frac}` : `${sign}${grouped}`;
 }
 
+/**
+ * A unit rate (unit price, unit cost; NUMERIC(18,6)): grouped, at least 2 and up to 6 decimals, trailing zeros
+ * dropped. "0.035000" → "0.035"; "1250.500000" → "1,250.50".
+ */
+export function formatRate(value: string | null | undefined): string {
+  const s = formatDecimal(value, 6);
+  if (!s.includes('.')) return s;
+  return s.replace(/(\.\d{2}\d*?)0+$/, '$1');
+}
+
 export function formatPKR(value: string | null | undefined): string {
   const s = formatDecimal(value, 2);
   return s ? `PKR ${s}` : '';

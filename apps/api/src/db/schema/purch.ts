@@ -54,7 +54,7 @@ export const poLines = purch.table('po_lines', {
   lineNo: integer('line_no').notNull(),
   itemId: bigintString('item_id').notNull(),
   qty: numeric('qty', { precision: 18, scale: 4 }).notNull(),
-  unitPrice: numeric('unit_price', { precision: 18, scale: 2 }).notNull(),
+  unitPrice: numeric('unit_price', { precision: 18, scale: 6 }).notNull(),
   lineAmount: numeric('line_amount', { precision: 18, scale: 2 }).notNull(),
   receivedQty: numeric('received_qty', { precision: 18, scale: 4 }).notNull().default('0'),
   prLineId: bigintString('pr_line_id'),

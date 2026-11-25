@@ -1,11 +1,12 @@
 // Stock valuation: lot-actual cost (architecture §6) with the owner's rounding rules (decision 2026-11-18,
-// "Rounding of stock values", Option A). Pure functions on decimal strings; never JS floats (rule 10).
+// "Rounding of stock values", Option A; unit costs are 6-decimal rates since owner 2026-11-25, 0024).
+// Pure functions on decimal strings; never JS floats (rule 10).
 // The database computes the same values (0015_movement_valuation.sql) and refuses any other.
 //
-//  - value = qty × lot unit cost, rounded half-up to 2 decimals;
+//  - unit cost = a rate with 6 decimals; value = qty × lot unit cost, rounded half-up to 2 decimals;
 //  - last-out: the outbound movement that empties the lot takes the residual (minus the lot's value so far);
 //  - an outbound movement never takes more value than the lot still holds (agent default, PENDING OWNER);
-//  - OUTPUT (finished goods): the exact batch cost; the lot's unit cost = batch cost ÷ qty, rounded;
+//  - OUTPUT (finished goods): the exact batch cost; the lot's unit cost = batch cost ÷ qty, rounded to 6 decimals;
 //  - transfers: out and in at qty × unit cost (net zero for the lot);
 //  - customer-owned (toll) or zero-cost stock: 0 (rule 12).
 import { Decimal } from 'decimal.js';
@@ -26,6 +27,17 @@ export function money(v: Value): string {
   return d.isZero() ? '0.00' : d.toFixed(2);
 }
 
+/** A unit rate (unit cost or unit price) to 6 decimals, half-up. */
+export function roundRate(v: Value): Decimal {
+  return new Dec(v).toDecimalPlaces(6, Decimal.ROUND_HALF_UP);
+}
+
+/** NUMERIC(18,6) text of a unit rate. */
+export function unitRate(v: Value): string {
+  const d = roundRate(v);
+  return d.isZero() ? '0.000000' : d.toFixed(6);
+}
+
 /** NUMERIC(18,4) text. */
 export function quantity(v: Value): string {
   const d = new Dec(v);
@@ -37,11 +49,11 @@ export function nominalValue(qty: Value, unitCost: Value): Decimal {
   return roundMoney(new Dec(qty).abs().times(unitCost));
 }
 
-/** Unit cost of a finished-goods lot: the batch cost ÷ the output quantity, rounded half-up to 2 decimals. */
+/** Unit cost of a finished-goods lot: the batch cost ÷ the output quantity, rounded half-up to 6 decimals. */
 export function fgUnitCost(batchCost: Value, qty: Value): string {
   const q = new Dec(qty);
   if (q.lte(0)) throw new AppError('VALIDATION_FAILED', 'Output quantity must be greater than zero');
-  return money(new Dec(batchCost).div(q));
+  return unitRate(new Dec(batchCost).div(q));
 }
 
 export interface ValuationInput {
@@ -78,8 +90,8 @@ export function movementValue(i: ValuationInput): string {
     if (value.decimalPlaces() > 2 || value.lt(0)) {
       throw new AppError('VALIDATION_FAILED', 'The batch cost is an amount ≥ 0 with at most 2 decimals');
     }
-    if (!roundMoney(value.div(qty)).equals(unitCost)) {
-      throw new AppError('VALIDATION_FAILED', `The lot's unit cost (${money(unitCost)}) must be the batch cost ÷ quantity (${fgUnitCost(value, qty)})`);
+    if (!roundRate(value.div(qty)).equals(unitCost)) {
+      throw new AppError('VALIDATION_FAILED', `The lot's unit cost (${unitRate(unitCost)}) must be the batch cost ÷ quantity (${fgUnitCost(value, qty)})`);
     }
     return money(value);
   }

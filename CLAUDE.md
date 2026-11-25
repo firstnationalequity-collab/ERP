@@ -32,7 +32,7 @@ pnpm monorepo, TypeScript strict everywhere.
 7. Status changes only through explicit action endpoints using `core/transition` with an allowed-moves map; the map holds the permission key for each individual move, and every move writes `core.status_history`.
 8. E-signature actions re-verify the password and store meaning + reason (`core/esign`).
 9. Segregation of duties (creator ≠ approver ≠ receiver) lives in services and returns 403 with an error code.
-10. Money `NUMERIC(18,2)`, quantities `NUMERIC(18,4)`, rates/assay `NUMERIC(9,4)`. Use `decimal.js` in TS. Never JS floats for money or quantity.
+10. Money amounts 2 decimals `NUMERIC(18,2)` (line totals, movement values, journal lines); unit rates 6 decimals `NUMERIC(18,6)` (unit prices, unit costs); quantities `NUMERIC(18,4)`; exchange rates/percentages/assay `NUMERIC(9,4)`. An amount from a rate = round(qty × rate, 2) half-up. Use `decimal.js` in TS. Never JS floats for money or quantity.
 11. Closed fiscal periods reject postings.
 12. Customer-owned (toll) stock: quantity only, zero value, no GL entry.
 

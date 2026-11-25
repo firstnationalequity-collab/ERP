@@ -457,8 +457,19 @@ describe('purchase orders: cancel', () => {
 
 describe('purchase orders: database guards (0023)', () => {
   it('refuses a wrong line amount, a local PO in USD, an import PO without incoterm, and a DRAFT with receipts', async () => {
-    const threeDecimals = await call('buyer', 'post', '/purch/pos', localPo(ids.vendor!, [{ itemId: ids.rm!, qty: '3', unitPrice: '0.335' }]));
-    expect(threeDecimals.status).toBe(400); // unit price NUMERIC(18,2)
+    const sevenDecimals = await call('buyer', 'post', '/purch/pos', localPo(ids.vendor!, [{ itemId: ids.rm!, qty: '3', unitPrice: '0.0350001' }]));
+    expect(sevenDecimals.status).toBe(400); // a unit price is a rate NUMERIC(18,6) (owner 2026-11-25)
+    // A printed label at 0.035 PKR is ordered at its real price; the line amount rounds to 2 decimals, half-up.
+    const labels = (await call('buyer', 'post', '/purch/pos', localPo(ids.vendor!, [
+      { itemId: ids.rm!, qty: '10000', unitPrice: '0.035' },
+      { itemId: ids.rm!, qty: '3', unitPrice: '0.035' },
+    ]))).body;
+    expect(labels.lines.map((l: { unitPrice: string; lineAmount: string }) => [l.unitPrice, l.lineAmount])).toEqual([
+      ['0.035000', '350.00'],
+      ['0.035000', '0.11'], // 0.105 half-up
+    ]);
+    expect(labels.totalAmount).toBe('350.11');
+    await expect(raw(`UPDATE purch.po_lines SET line_amount = 0.10 WHERE po_id = $1 AND line_no = 2`, [labels.id])).rejects.toThrow(/check/i);
     const ok = (await call('buyer', 'post', '/purch/pos', localPo(ids.vendor!, [{ itemId: ids.rm!, qty: '3.3333', unitPrice: '0.35' }]))).body;
     expect(ok.lines[0].lineAmount).toBe('1.17'); // 1.166655 half-up
     await expect(raw(`UPDATE purch.po_lines SET line_amount = 1.16 WHERE po_id = $1`, [ok.id])).rejects.toThrow(/check/i);

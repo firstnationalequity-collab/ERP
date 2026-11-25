@@ -597,10 +597,10 @@ describe('price lists (master.price.manage)', () => {
     const pl = await post('sm', '/master/price-lists', { code: 'TP-2627', name: 'Trade price FY26-27', validFrom: '2026-07-01' });
     expect(pl.body).toMatchObject({ currency: 'PKR', validTo: null, lines: [] });
     const line = await post('sm', `/master/price-lists/${pl.body.id}/lines`, { itemId: ids.fg, uomId: ids.tab, unitPrice: '12.50' });
-    expect(line.body.unitPrice).toBe('12.50');
+    expect(line.body.unitPrice).toBe('12.500000'); // a unit price is a 6-decimal rate (owner 2026-11-25)
     expectError(await post('sm', `/master/price-lists/${pl.body.id}/lines`, { itemId: ids.fg, uomId: ids.tab, unitPrice: '13' }), 409, 'ALREADY_EXISTS');
-    expectError(await post('sm', `/master/price-lists/${pl.body.id}/lines`, { itemId: ids.fg2, uomId: ids.tab, unitPrice: '1.005' }), 400, 'VALIDATION_FAILED');
-    expect((await patch('sm', `/master/price-list-lines/${line.body.id}`, { unitPrice: '12.75' })).body.unitPrice).toBe('12.75');
+    expectError(await post('sm', `/master/price-lists/${pl.body.id}/lines`, { itemId: ids.fg2, uomId: ids.tab, unitPrice: '1.0000005' }), 400, 'VALIDATION_FAILED');
+    expect((await patch('sm', `/master/price-list-lines/${line.body.id}`, { unitPrice: '0.035' })).body.unitPrice).toBe('0.035000');
     expect((await get('ceo', `/master/price-lists/${pl.body.id}`)).body.lines).toHaveLength(1);
   });
 });
