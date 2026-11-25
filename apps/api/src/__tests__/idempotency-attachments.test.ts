@@ -394,7 +394,19 @@ describe('attachments: voiding GMP evidence needs a QA Manager e-signature (owne
     expect(rows).toEqual([{ voided_at: null }]);
   });
 
-  it('voids with the QA Manager countersign (stored on the attachment), or the QA Manager signing their own void', async () => {
+  it('always two people (owner 2026-11-25, answer 3): the QA Manager cannot sign their own void request; nothing is voided', async () => {
+    const own = await gmpFile('gmp-own.pdf');
+    const res = await voidAs('qam', own, { reason: 'Duplicate upload', countersign: sig('i_qam') });
+    expect([res.status, res.body.error.code]).toEqual([403, 'SEGREGATION_OF_DUTIES']);
+    const upper = await voidAs('qam', own, { reason: 'Duplicate upload', countersign: sig('I_QAM') });
+    expect([upper.status, upper.body.error.code]).toEqual([403, 'SEGREGATION_OF_DUTIES']);
+    const { rows } = await client.query(`SELECT voided_at FROM core.attachments WHERE id = $1`, [own]);
+    expect(rows[0].voided_at).toBeNull();
+    const { rows: sigs } = await client.query(`SELECT 1 FROM core.e_signatures WHERE record_table = 'core.attachments' AND record_id = $1`, [own]);
+    expect(sigs).toHaveLength(0);
+  });
+
+  it('voids with the countersign of a different QA Manager (stored on the attachment)', async () => {
     const id = await gmpFile('gmp-countersigned.pdf');
     const res = await voidAs('qao', id, { reason: 'Wrong certificate', countersign: sig('i_qam') });
     expect(res.status).toBe(200);
@@ -404,8 +416,6 @@ describe('attachments: voiding GMP evidence needs a QA Manager e-signature (owne
       [id],
     );
     expect(rows).toEqual([{ signer_username: 'i_qam', meaning: 'APPROVED' }]);
-    const own = await gmpFile('gmp-own.pdf');
-    expect((await voidAs('qam', own, { reason: 'Duplicate upload', countersign: sig('i_qam') })).status).toBe(200);
   });
 
   it('a non-GMP file takes no QA signature', async () => {
@@ -426,6 +436,28 @@ describe('attachments: voiding GMP evidence needs a QA Manager e-signature (owne
       );
       await client.query(`UPDATE core.attachments SET voided_at = now(), voided_by = 1, void_reason = 'Wrong file' WHERE id = $1`, [rows[0]!.id]);
       await expect(client.query('SET CONSTRAINTS ALL IMMEDIATE')).rejects.toThrow(/COUNTERSIGN_REQUIRED/);
+    } finally {
+      await client.query('ROLLBACK');
+    }
+  });
+
+  it('the database refuses a GMP void signed by the person who voids it (answer 3; 0026)', async () => {
+    const { rows: qam } = await client.query<{ id: string }>(`SELECT id FROM core.users WHERE username = 'i_qam'`);
+    const me = qam[0]!.id;
+    await client.query('BEGIN');
+    try {
+      await client.query(`SELECT set_config('app.user_id',$1,true), set_config('app.company_id','1',true)`, [me]);
+      const { rows } = await client.query<{ id: string }>(
+        `INSERT INTO core.attachments (record_table, record_id, file_name, content_type, size_bytes, sha256, storage_driver, storage_key)
+         VALUES ('master.approved_sources', '1', 'coa.pdf', 'application/pdf', 10, repeat('a', 64), 'local', 'gmp-db-sod-key') RETURNING id`,
+      );
+      await client.query(
+        `INSERT INTO core.e_signatures (user_id, signer_username, signer_name, meaning, reason, record_table, record_id)
+         VALUES ($1, 'i_qam', 'QA Manager', 'APPROVED', 'Own void', 'core.attachments', $2)`,
+        [me, rows[0]!.id],
+      );
+      await client.query(`UPDATE core.attachments SET voided_at = now(), voided_by = $1, void_reason = 'Wrong file' WHERE id = $2`, [me, rows[0]!.id]);
+      await expect(client.query('SET CONSTRAINTS ALL IMMEDIATE')).rejects.toThrow(/SEGREGATION_OF_DUTIES/);
     } finally {
       await client.query('ROLLBACK');
     }

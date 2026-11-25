@@ -23,7 +23,12 @@ pnpm monorepo, TypeScript strict everywhere.
 - `packages/shared`: Zod schemas, enums, permission keys — the single source used by API and web.
 
 ## Non-negotiable rules
-1. Only QC approves or rejects material lots. Only QA may place or lift HOLD and release batches/FG lots. QC approves or rejects material lots (RM, PM, API, EXCIPIENT). QA decides finished-goods and return lots: release, re-release or reject. QC results on FG are input to QA's decision. Warehouse Manager may only move a REJECTED lot to DESTROYED or RETURNED, with a QA witness e-signature. No other role, including CEO and admin, can change a lot or batch status.
+1. Lot and batch status:
+   - QC approves or rejects material lots (RM, PM, API, EXCIPIENT).
+   - QA places and lifts HOLD, and releases, re-releases or rejects FG lots, batches and return lots. One exception: a failed QC result on an FG lot moves it to HOLD automatically (QC result key); QA then decides.
+   - Warehouse Manager may only move a REJECTED lot to DESTROYED or RETURNED, with a QA witness e-signature.
+   - Lots are created by the system in their starting status (QUARANTINE at GRN or verified output; HOLD for return lots).
+   - No other role, including CEO and admin, can change a lot or batch status.
 2. Issue/reserve only APPROVED lots; dispatch only RELEASED FG lots. Check in the service AND in the DB.
 3. No negative stock (CHECK constraint on `inv.stock_balances`).
 4. Posted documents are immutable. Corrections are reversal documents. Never UPDATE/DELETE posted rows.
@@ -32,7 +37,7 @@ pnpm monorepo, TypeScript strict everywhere.
 7. Status changes only through explicit action endpoints using `core/transition` with an allowed-moves map; the map holds the permission key for each individual move, and every move writes `core.status_history`.
 8. E-signature actions re-verify the password and store meaning + reason (`core/esign`).
 9. Segregation of duties (creator ≠ approver ≠ receiver) lives in services and returns 403 with an error code.
-10. Money amounts 2 decimals `NUMERIC(18,2)` (line totals, movement values, journal lines); unit rates 6 decimals `NUMERIC(18,6)` (unit prices, unit costs); quantities `NUMERIC(18,4)`; exchange rates/percentages/assay `NUMERIC(9,4)`. An amount from a rate = round(qty × rate, 2) half-up. Use `decimal.js` in TS. Never JS floats for money or quantity.
+10. Numbers: money amounts NUMERIC(18,2); quantities NUMERIC(18,4); unit prices and unit costs NUMERIC(18,6); exchange rates and UoM factors NUMERIC(18,6); percentages and assay NUMERIC(9,4). Use decimal.js in TS. Never JS floats for money, quantity or rates.
 11. Closed fiscal periods reject postings.
 12. Customer-owned (toll) stock: quantity only, zero value, no GL entry.
 
@@ -63,6 +68,10 @@ DB schemas per module: `core`, `master`, `inv`, `sales`, `purch`, `qc`, `prod`, 
 4. Routes, then web pages.
 5. `pnpm typecheck` and `pnpm test` must pass before you say "done".
 6. Tick the finished task in the `docs/progress.md` Handoff and keep that file under 80 lines (move notes that are no longer open to `docs/progress-log.md`). Append one line per task to the end of `docs/progress-log.md` (`DD-MM-YYYY · milestone · what was finished · what is next`). Record any design choice in `docs/decisions.md`.
+7. Commit and push after each task; CI must stay green.
+8. Do one or two tasks per chat. When context gets long, finish the current task, update the Handoff and stop.
+9. After a task that adds screens, update docs/demo/M<n>.md: a click-through script for the owner (demo user, steps, expected result, 3–5 things that must be refused), under 40 lines.
+10. Continue without waiting unless a test fails, the docs don't cover something, or a rule would need to change.
 
 ## Never
 - Never add features outside the current milestone without asking.

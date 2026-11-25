@@ -17,7 +17,7 @@ import { attachments, users } from '../../db/schema/core';
 import { AppError } from '../errors';
 import { txContext, type AuthContext, type RequestMeta } from '../auth/auth.service';
 import { permissionKeysForUser } from '../auth/auth.repo';
-import { recordSignature, verifySignature, verifyWitness, type SignatureProof } from '../esign/esign.service';
+import { recordSignature, verifyWitness, type SignatureProof } from '../esign/esign.service';
 import { storage } from '../storage/storage';
 
 export interface AttachmentTarget {
@@ -237,9 +237,15 @@ export async function download(auth: AuthContext, id: string): Promise<{ meta: A
 /**
  * Void a file with a reason (owner Q5): needs the record type's write key; the file is kept and never deleted.
  * A file on a GMP record also needs a QA Manager e-signature (owner 2026-11-25, answer 1): a holder of
- * qa.attachment.countersign signs with meaning APPROVED (the QA Manager may sign their own void); the signature
- * is stored on the attachment in the same transaction and the DB checks it at commit (0025).
+ * qa.attachment.countersign signs with meaning APPROVED; the signature is stored on the attachment in the same
+ * transaction and the DB checks it at commit (0025). Always two people: the signer is never the requester
+ * (owner 2026-11-25, answer 3; SEGREGATION_OF_DUTIES, DB re-check 0026).
  */
+const gmpVoidSod = () =>
+  new AppError('SEGREGATION_OF_DUTIES', 'Voiding a GMP file needs two people: the QA Manager who signs cannot be the one asking for the void', {
+    rule: 'void requester ≠ QA Manager signer',
+  });
+
 export async function voidAttachment(auth: AuthContext, id: string, input: VoidAttachmentRequest, meta: RequestMeta): Promise<AttachmentDto> {
   const reason = input.reason.trim();
   const target = targets.get(await attachmentRecordTable(auth, id));
@@ -251,10 +257,9 @@ export async function voidAttachment(auth: AuthContext, id: string, input: VoidA
       throw new AppError('COUNTERSIGN_REQUIRED', 'This file is GMP evidence: voiding it needs a QA Manager e-signature', { permission: GMP_VOID_KEY });
     }
     if (cs.meaning !== 'APPROVED') throw new AppError('ESIGN_FAILED', 'The QA Manager signs with the meaning APPROVED');
-    proof =
-      cs.username.trim().toLowerCase() === auth.username.toLowerCase()
-        ? await verifySignature(auth, cs, meta)
-        : await verifyWitness(auth, cs, meta);
+    // Owner 2026-11-25 (answer 3, changed): always two people; the requester never signs their own void.
+    if (cs.username.trim().toLowerCase() === auth.username.toLowerCase()) throw gmpVoidSod();
+    proof = await verifyWitness(auth, cs, meta);
   } else if (input.countersign) {
     throw new AppError('VALIDATION_FAILED', 'This file is not GMP evidence; it is voided without a QA e-signature', { field: 'countersign' });
   }

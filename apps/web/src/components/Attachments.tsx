@@ -109,7 +109,7 @@ export function AttachmentsPanel({ recordTable, recordId, canUpload, gmp = false
         open={gmp && voiding !== null}
         title={`Void ${voiding?.fileName ?? ''}`}
         meaning="APPROVED"
-        summary="This file is GMP evidence. It is kept and stays downloadable, marked void with your reason; a QA Manager signs the void. This cannot be undone."
+        summary="This file is GMP evidence. It is kept and stays downloadable, marked void with your reason; a different person, a QA Manager, signs the void here. This cannot be undone."
         ownSignature={false}
         countersign="required"
         okText="Void"
