@@ -9,9 +9,11 @@ import {
   CreateCostCenterRequest,
   CreatePostingRuleRequest,
   DeactivateRequest,
+  ExchangeRateQuery,
   FinListQuery,
   JournalListQuery,
   MasterActionRequest,
+  SetExchangeRateRequest,
   UpdateAccountRequest,
   UpdateCostCenterRequest,
   UpdatePostingRuleRequest,
@@ -22,6 +24,7 @@ import { asyncHandler, authOf } from '../../core/auth/middleware';
 import type { ActiveFlagTable } from './finance.repo';
 import * as journals from './journals.service';
 import * as svc from './masters.service';
+import * as rates from './rates.service';
 
 const IdParam = z.object({ id: z.string().regex(/^\d+$/, 'Invalid id') });
 const idOf = (req: Request) => IdParam.parse(req.params).id;
@@ -93,3 +96,12 @@ r.get('/journals', VIEW_JOURNALS, asyncHandler(async (req, res) => {
   res.json(await journals.listJournals(authOf(req), JournalListQuery.parse(req.query)));
 }));
 r.get('/journals/:id', VIEW_JOURNALS, asyncHandler(async (req, res) => { res.json(await journals.getJournal(authOf(req), idOf(req))); }));
+
+// ---------------------------------------------------------------- exchange rates (owner 2026-11-25, Q4)
+// Read by Finance and Procurement; kept by the Finance Manager (fin.rate.manage).
+r.get('/exchange-rates', requireAnyPermission('fin.view', 'purch.view'), asyncHandler(async (req, res) => {
+  res.json(await rates.listRates(authOf(req), ExchangeRateQuery.parse(req.query)));
+}));
+r.post('/exchange-rates', requirePermission('fin.rate.manage'), asyncHandler(async (req, res) => {
+  res.json(await rates.setRate(authOf(req), SetExchangeRateRequest.parse(req.body)));
+}));

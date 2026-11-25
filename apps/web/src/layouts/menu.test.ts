@@ -18,7 +18,14 @@ describe('permission-driven sidebar', () => {
   });
 
   it('shows the CEO (view keys only) the audit trail and fiscal periods, no admin pages', () => {
-    expect(keys(['core.audit.view', 'fin.view', 'dash.ceo.view'])).toEqual(['home', 'journals', 'accounts', 'posting-rules', 'cost-centers', 'periods', 'audit']);
+    expect(keys(['core.audit.view', 'fin.view', 'dash.ceo.view'])).toEqual(['home', 'journals', 'accounts', 'posting-rules', 'cost-centers', 'exchange-rates', 'periods', 'audit']);
+  });
+
+  it('shows purch.view holders requisitions, purchase orders and exchange rates, not journals', () => {
+    const k = keys(['purch.view']);
+    expect(k).toEqual(expect.arrayContaining(['requisitions', 'purchase-orders', 'exchange-rates']));
+    expect(k).not.toContain('journals');
+    expect(keys(['master.view'])).not.toContain('purchase-orders');
   });
 
   it('shows master.view holders every master screen and the finance masters, but not journals (fin.view)', () => {

@@ -6,7 +6,7 @@ Current milestone: **M3 — Procurement** (M2 done, tag `m2`)
 | --- | --- | --- | --- | --- |
 | M1 Foundation | Done | 17-11-2026 | 18-11-2026 | All 12 tasks, rules-review fixes A–F, first-QA-Manager bootstrap; CI run #13 green on `04ef009`; tag `m1` |
 | M2 Masters & engines | Done | 18-11-2026 | 19-11-2026 | All 10 tasks; rules-review fixes (disposal witness 0020, deactivation guards 0021); owner answers 19-11 recorded; CI green; tag `m2` |
-| M3 Procurement | In progress | 25-11-2026 | | Task 1 done (0022); tasks 2–6 open |
+| M3 Procurement | In progress | 25-11-2026 | | Tasks 1–2 done (0022, 0023); tasks 3–6 open |
 | M4 QC | Not started | | | |
 | M5 Sales | Not started | | | |
 | M6 Production | Not started | | | |
@@ -18,11 +18,11 @@ Current milestone: **M3 — Procurement** (M2 done, tag `m2`)
 
 ## Handoff (25-11-2026, M3 in progress)
 
-**State:** M3 started 25-11-2026. Plan approved by the owner with answers Q1–Q6 and extra changes (decisions.md rows dated 2026-11-25; build-plan M3 bullets carry them). We work on `main`, one commit per task, pushed. API tests need the Docker DB (`docker compose up -d`). 560 tests green (520 API, 24 web, 16 shared).
+**State:** M3 started 25-11-2026. Plan approved by the owner with answers Q1–Q6 and extra changes (decisions.md rows dated 2026-11-25; build-plan M3 bullets carry them). We work on `main`, one commit per task, pushed. API tests need the Docker DB (`docker compose up -d`). 582 tests green (541 API, 25 web, 16 shared). Local dev DB migrated to 0023 and seeded (Finance Manager has `fin.rate.manage`, PR series).
 
 **M3 tasks** (chunks agreed with the owner: 1–2 in the first chat, 3–4 and 5–6 in new chats):
 - [x] 1. Owner decisions from M2 (0022): periods close/reopen in order (`PERIOD_OUT_OF_ORDER`), reopen needs a Finance Manager e-signature (APPROVED); one user never holds an admin role and an action role (service + DB; dev DB checked: no violators); attachments void with reason (`POST /core/attachment-files/:id/void`, file kept, voided files do not count as evidence).
-- [ ] 2. PR → PO with approval matrix, AVL block, daily rate table.
+- [x] 2. PR → PO (0023): requisitions (no approval), POs local/import with approval matrix (`PO` doc type, PKR value at Finance’s rate on the PO date), AVL block (service + DB on submit and approve), creator/submitter approve no step (new `assertMayApprove` hook in the approvals engine), cancel before receipt; daily rate table `fin.exchange_rates` (`fin.rate.manage`, `rateOn()` for other modules, RATE_MISSING); web: Requisitions, Purchase orders, Exchange rates.
 - [ ] 3. GRN to quarantine, labels, QC sample request stub.
 - [ ] 4. Landed cost (incl. IMPORT_TAX event, advance tax account).
 - [ ] 5. Vendor invoice (3-way match, MATCH_EXCEPTION, CHARGES type, FX), payment with WHT, vendor ledger, AP ageing.
@@ -31,6 +31,12 @@ Current milestone: **M3 — Procurement** (M2 done, tag `m2`)
 **Open questions for the owner** (agent defaults, decisions.md 2026-11-25, "PENDING OWNER"):
 1. Who may void an attachment: the holder of the record type's write key (the key that uploads it)?
 2. Inactive roles count for the admin/action rule (so reactivating a role cannot bypass it)?
+3. PO exchange rate: taken from Finance’s table on the PO date at submit (not typed by the buyer); exact date only?
+4. A requisition line ordered on a PO stays there; cancelling the PO does not release it (raise a new requisition)?
+5. PO unit price NUMERIC(18,2) per base unit (money rule): fine for very cheap items, or do they need 4 decimals?
+6. PO header rules: local = PKR, import = currency + incoterm, foreign vendor = import only, no future dates, no BULK/FG, no tax on the PO (tax on the invoice)?
+
+**Next (new chat): tasks 3–4.** Task 3 adds the receipt moves to `PurchaseOrderMoves` (APPROVED → PARTIALLY_RECEIVED → RECEIVED, CLOSED) under `purch.grn.post`; GRN updates `po_lines.received_qty` (0023 already allows only that column after DRAFT). GRN converts at `rateOn(…, grnDate)`; AVL check at posting is per item + vendor + manufacturer (`purch-refs.service` needs a manufacturer variant).
 
 **Rules the code already relies on (M3+):**
 - A module posts stock in ONE `withTransaction`: `postMovement` (engines/inventory) then `postStockJournal` (engines/posting). Corrections: `reverseMovements` then `reverseStockJournal`. Transfers post no journal. Toll rows post nothing.

@@ -6,7 +6,7 @@ export interface MenuEntry {
   key: string;
   label: string;
   path: string;
-  group?: 'Masters' | 'Finance' | 'Compliance' | 'Administration';
+  group?: 'Procurement' | 'Masters' | 'Finance' | 'Compliance' | 'Administration';
   /** Visible when the user holds ANY of these; omitted = everyone signed in. */
   anyOf?: PermissionKey[];
 }
@@ -14,6 +14,8 @@ export interface MenuEntry {
 export const MENU: MenuEntry[] = [
   { key: 'home', label: 'Home', path: '/' },
   { key: 'inbox', label: 'My approvals', path: '/approvals', anyOf: ['core.approval.inbox'] },
+  { key: 'requisitions', label: 'Requisitions', path: '/purch/requisitions', group: 'Procurement', anyOf: ['purch.view'] },
+  { key: 'purchase-orders', label: 'Purchase orders', path: '/purch/orders', group: 'Procurement', anyOf: ['purch.view'] },
   { key: 'items', label: 'Items', path: '/master/items', group: 'Masters', anyOf: ['master.view'] },
   { key: 'formulas', label: 'Master formulas', path: '/master/formulas', group: 'Masters', anyOf: ['master.view'] },
   { key: 'products', label: 'Products', path: '/master/products', group: 'Masters', anyOf: ['master.view'] },
@@ -31,6 +33,7 @@ export const MENU: MenuEntry[] = [
   { key: 'accounts', label: 'Chart of accounts', path: '/fin/accounts', group: 'Finance', anyOf: ['fin.view', 'master.view'] },
   { key: 'posting-rules', label: 'Posting rules', path: '/fin/posting-rules', group: 'Finance', anyOf: ['fin.view', 'master.view'] },
   { key: 'cost-centers', label: 'Cost centres', path: '/fin/cost-centers', group: 'Finance', anyOf: ['fin.view', 'master.view'] },
+  { key: 'exchange-rates', label: 'Exchange rates', path: '/fin/exchange-rates', group: 'Finance', anyOf: ['fin.view', 'purch.view'] },
   { key: 'periods', label: 'Fiscal periods', path: '/fiscal-periods', group: 'Finance', anyOf: ['core.period.manage', 'core.period.close', 'fin.view'] },
   { key: 'audit', label: 'Audit trail', path: '/audit', group: 'Compliance', anyOf: ['core.audit.view'] },
   { key: 'users', label: 'Users', path: '/admin/users', group: 'Administration', anyOf: ['core.user.manage'] },

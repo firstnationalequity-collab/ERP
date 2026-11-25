@@ -78,3 +78,15 @@ export const journalLines = fin.table('journal_lines', {
   narration: text('narration'),
   ...auditColumns(),
 });
+
+// ---- 0023_procurement_pr_po.sql: daily exchange rates (owner 2026-11-25, Q4), PKR per 1 unit
+
+export const exchangeRates = fin.table('exchange_rates', {
+  id: identityId(),
+  companyId: companyId(),
+  currency: text('currency').notNull(),
+  rateDate: date('rate_date', { mode: 'string' }).notNull(),
+  rate: numeric('rate', { precision: 9, scale: 4 }).notNull(),
+  source: text('source').notNull(),
+  ...auditColumns(),
+});

@@ -190,7 +190,9 @@ Simple masters (UoM, categories, tax codes, warehouses, locations, accounts, cos
 
 **Sales order:** DRAFT → CONFIRMED (credit check passes) or ON\_CREDIT\_HOLD → CONFIRMED (Finance Manager) → PARTIALLY\_DISPATCHED → DISPATCHED → CLOSED. CANCELLED only while nothing is dispatched. Invoicing and payment are tracked as amounts (invoiced, paid) on the order, not extra statuses.
 
-**Purchase order:** DRAFT → PENDING\_APPROVAL → APPROVED → PARTIALLY\_RECEIVED → RECEIVED → CLOSED; CANCELLED only before any receipt.
+**Purchase order:** DRAFT → PENDING\_APPROVAL → APPROVED → PARTIALLY\_RECEIVED → RECEIVED → CLOSED; CANCELLED only before any receipt. A rejected approval returns it to DRAFT; the creator and the submitter approve no step (0023).
+
+**Purchase requisition** (owner 2026-11-25, Q6): DRAFT → SUBMITTED → CONVERTED (every line on a PO) or CANCELLED (nothing ordered); no approval.
 
 **All posting documents** (GRN, issue, delivery, invoice, receipt, payment, journal): DRAFT → POSTED, or POSTED → REVERSED by a new reversing document. A POSTED row is never updated except to mark it reversed.
 
@@ -304,6 +306,7 @@ Each module below lists its screens and the rules its services must enforce; end
 
 - Screens: purchase requisitions, purchase orders (local and import), PO approval, GRN (from PO, by scan), landed cost entry and allocation, vendor invoice with 3-way match, payment proposal and approval, vendor ledger and ageing.
 - Rules: PO line for a GMP material bought from vendors (RM, PM, API, EXCIPIENT; `AvlItemTypes`) requires an APPROVED approved-source row for vendor + item; GRN quantity cannot exceed PO open quantity + tolerance (setting, default 2%); GRN captures manufacturer batch, mfg, expiry and retest dates (required for API); invoice match tolerance on price and quantity is a setting; WHT section and rate per vendor.
+- Exchange rates (owner 2026-11-25, Q4): `fin.exchange_rates`, one rate per currency and day (PKR per 1 unit, NUMERIC(9,4), with its source), kept by the Finance Manager (`fin.rate.manage`), audited. A document uses the rate of its own date and copies it; no rate → RATE\_MISSING. The PO takes it at submit to choose the approval band (indicative); the GRN and the invoice convert at their own dates.
 
 ### 7.6 QC
 

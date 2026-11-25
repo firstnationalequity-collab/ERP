@@ -27,6 +27,7 @@ const userIds: Record<string, string> = {};
 const events: { kind: 'approved' | 'rejected'; docId: string; by: string; reason?: string }[] = [];
 let failNextApproval = false;
 // AVL uses the real masters handler (registered when the app loads); these tests only start AVL approvals.
+// PO also has a real handler (procurement, M3); these engine tests replace it with the stand-in (test env only).
 for (const docType of ['PO', 'QUOTATION_DISCOUNT', 'STOCK_ADJUSTMENT', 'BATCH_CLOSE', 'TEST_DOC', 'MATRIX_DEMO']) {
   registerApprovalHandler(docType, {
     async onApproved(_tx, approval, actor) {
@@ -39,7 +40,7 @@ for (const docType of ['PO', 'QUOTATION_DISCOUNT', 'STOCK_ADJUSTMENT', 'BATCH_CL
     async onRejected(_tx, approval, actor, reason) {
       events.push({ kind: 'rejected', docId: approval.docId, by: actor.userId, reason });
     },
-  });
+  }, { replaceInTests: true });
 }
 
 let docCounter = 0;
@@ -611,5 +612,12 @@ describe('approval rules refusal paths (rules review E)', () => {
     await client.query('COMMIT');
     const inactive = await put(rows[0]!.id);
     expect(inactive.status).toBe(404);
+  });
+});
+
+describe('handler registry', () => {
+  it('refuses a second handler for a doc type unless a test replaces it on purpose', () => {
+    const noop = { onApproved: async () => undefined, onRejected: async () => undefined };
+    expect(() => registerApprovalHandler('PO', noop)).toThrow(/already registered/);
   });
 });

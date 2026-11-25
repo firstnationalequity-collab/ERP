@@ -28,6 +28,7 @@ import {
 } from '@albert/shared';
 import { db, withTransaction, type Queryable, type Tx } from '../../db/client';
 import { AppError } from '../errors';
+import { env } from '../../config/env';
 import { txContext, type AuthContext, type RequestMeta } from '../auth/auth.service';
 import { recordSignature, verifySignature, verifyWitness } from '../esign/esign.service';
 import * as authRepo from '../auth/auth.repo';
@@ -70,13 +71,20 @@ export interface ApprovalHandler {
   onApproved(tx: Tx, approval: ApprovalRow, actor: AuthContext): Promise<void>;
   /** A step was rejected. Move the document back (e.g. PO → DRAFT). Runs in the same transaction. */
   onRejected(tx: Tx, approval: ApprovalRow, actor: AuthContext, reason: string): Promise<void>;
+  /**
+   * Optional: refuse this actor before any step is approved (e.g. PO creator ≠ approver, rule 9).
+   * Runs for every step, so a two-step approval never has the document creator on any step.
+   */
+  assertMayApprove?(tx: Tx, approval: ApprovalRow, actor: AuthContext): Promise<void>;
 }
 
 const handlers = new Map<string, ApprovalHandler>();
 
 /** Each module registers one handler per doc type at start-up. */
-export function registerApprovalHandler(docType: string, handler: ApprovalHandler): void {
-  if (handlers.has(docType)) throw new Error(`Approval handler for ${docType} is already registered`);
+export function registerApprovalHandler(docType: string, handler: ApprovalHandler, opts: { replaceInTests?: boolean } = {}): void {
+  // Engine tests swap a real module handler (e.g. PO) for a stand-in; never allowed outside NODE_ENV=test.
+  const replace = opts.replaceInTests === true && env.NODE_ENV === 'test';
+  if (handlers.has(docType) && !replace) throw new Error(`Approval handler for ${docType} is already registered`);
   handlers.set(docType, handler);
 }
 
@@ -259,6 +267,7 @@ export async function approve(auth: AuthContext, approvalId: string, input: Appr
   const proof = await verifySignature(auth, input.signature, meta);
   await withTransaction(txContext(auth, `approve: ${input.signature.reason}`), async (tx) => {
     const { approval, steps, step } = await stepForUser(tx, auth, approvalId);
+    await handlerFor(approval.docType).assertMayApprove?.(tx, approval, auth);
     const signature = await recordSignature(tx, proof, { table: 'core.approval_steps', id: step.id }, ['APPROVED']);
     await repo.markStepActed(tx, step.id, auth.userId, signature.id);
     await transition(tx, ApprovalStepMoves, { entityId: step.id, to: 'APPROVED', actor: auth, signature });

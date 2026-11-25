@@ -111,6 +111,17 @@ export const PurchaseOrderStatus = [
 ] as const;
 export type PurchaseOrderStatus = (typeof PurchaseOrderStatus)[number];
 
+/** Purchase requisition (owner 2026-11-25, Q6): no approval; value approval happens on the PO. */
+export const PurchaseRequisitionStatus = ['DRAFT', 'SUBMITTED', 'CONVERTED', 'CANCELLED'] as const;
+export type PurchaseRequisitionStatus = (typeof PurchaseRequisitionStatus)[number];
+
+/** A LOCAL PO is in PKR; an IMPORT PO names its currency and incoterm (0023). */
+export const PurchaseOrderType = ['LOCAL', 'IMPORT'] as const;
+export type PurchaseOrderType = (typeof PurchaseOrderType)[number];
+
+export const Incoterm = ['EXW', 'FCA', 'FAS', 'FOB', 'CFR', 'CIF', 'CPT', 'CIP', 'DAP', 'DPU', 'DDP'] as const;
+export type Incoterm = (typeof Incoterm)[number];
+
 /** GRN, issue, delivery, invoice, receipt, payment, journal. */
 export const PostingStatus = ['DRAFT', 'POSTED', 'REVERSED'] as const;
 export type PostingStatus = (typeof PostingStatus)[number];

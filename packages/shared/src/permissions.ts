@@ -118,6 +118,7 @@ export const Permissions = {
   'fin.master.manage': action('Chart of accounts, cost centres, tax codes, posting rules'),
   'fin.approval_rules.countersign': action('Countersign changes to the approval matrix (Finance Manager)'),
   'fin.bank.reconcile': action('Bank reconciliation'),
+  'fin.rate.manage': action('Maintain daily exchange rates (Finance Manager; owner 2026-11-25, Q4)'),
   'fin.costing.view': view('Batch cost and margin'),
   'fin.report.view': view('Financial statements and ledgers'),
 

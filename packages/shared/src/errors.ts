@@ -52,6 +52,11 @@ export const ErrorCodes = [
   /** A lot emptied by a disposal was not closed (DESTROYED / RETURNED) in the same transaction (0020). */
   'LOT_NOT_CLOSED',
   'VENDOR_NOT_APPROVED',
+  /** A GMP material (AvlItemTypes) without an APPROVED approved source for the vendor (+ manufacturer at GRN) (0023). */
+  'AVL_NOT_APPROVED',
+  'VENDOR_NOT_ACTIVE',
+  /** No Finance exchange rate for the currency on the document date (owner 2026-11-25, Q4). */
+  'RATE_MISSING',
   'CREDIT_LIMIT_EXCEEDED',
   'OPEN_DEVIATION',
   'DUPLICATE_REQUEST',
