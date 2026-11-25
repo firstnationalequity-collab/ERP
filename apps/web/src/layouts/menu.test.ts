@@ -23,7 +23,7 @@ describe('permission-driven sidebar', () => {
 
   it('shows purch.view holders requisitions, purchase orders and exchange rates, not journals', () => {
     const k = keys(['purch.view']);
-    expect(k).toEqual(expect.arrayContaining(['requisitions', 'purchase-orders', 'exchange-rates']));
+    expect(k).toEqual(expect.arrayContaining(['requisitions', 'purchase-orders', 'grns', 'exchange-rates']));
     expect(k).not.toContain('journals');
     expect(keys(['master.view'])).not.toContain('purchase-orders');
   });

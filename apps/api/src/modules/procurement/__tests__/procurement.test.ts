@@ -510,10 +510,23 @@ describe('purchase orders: cancel', () => {
   });
 
   it('refuses cancelling a PO that has receipts (service and database)', async () => {
-    const po = (await call('buyer', 'post', '/purch/pos', localPo(ids.vendor!, [{ itemId: ids.rm!, qty: '10', unitPrice: '10' }]))).body;
+    const po = (await call('buyer', 'post', '/purch/pos', localPo(ids.vendor!, [{ itemId: ids.spare!, qty: '10', unitPrice: '10' }]))).body;
     await call('buyer', 'post', `/purch/pos/${po.id}/submit`);
     await call('pm', 'post', `/core/approvals/${(await approvalOf(po.id)).id}/approve`, sign('APPROVED'));
-    await raw(`UPDATE purch.po_lines SET received_qty = 4 WHERE po_id = $1`, [po.id]); // as a GRN will (task 3)
+    // A real receipt (task 3 GRN): period, location, then the Storekeeper posts 4 of 10.
+    const loc = await inTx('1', async () => {
+      const wh = await one(`INSERT INTO master.warehouses (code, name) VALUES ('PRW', 'PO test store') RETURNING id`);
+      return one(`INSERT INTO master.locations (warehouse_id, code, name) VALUES ($1, 'Q1', 'Quarantine') RETURNING id`, [wh]);
+    });
+    await inTx(users.fm!, async () => {
+      const p = await one(
+        `INSERT INTO core.fiscal_periods (fiscal_year, period_no, name, start_date, end_date, status) VALUES ('2026-27', 5, 'Nov-2026', '2026-11-01', '2026-11-30', 'OPEN') RETURNING id`,
+      );
+      await history('core.fiscal_periods', p, null, 'OPEN', users.fm!);
+    });
+    const grn = await call('store', 'post', '/purch/grns', { poId: po.id, grnDate: PO_DATE, locationId: loc, lines: [{ poLineId: po.lines[0].id, qty: '4' }] });
+    expect(grn.status).toBe(201);
+    expect((await call('store', 'post', `/purch/grns/${grn.body.id}/post`).set('Idempotency-Key', 'pr-test-grn-1')).status).toBe(200);
     const res = await call('buyer', 'post', `/purch/pos/${po.id}/cancel`, { reason: 'Stop the rest' });
     expect(res.status).toBe(409);
     await expect(

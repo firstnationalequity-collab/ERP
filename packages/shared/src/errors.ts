@@ -57,6 +57,8 @@ export const ErrorCodes = [
   'VENDOR_NOT_ACTIVE',
   /** No Finance exchange rate for the currency on the document date (owner 2026-11-25, Q4). */
   'RATE_MISSING',
+  /** A GRN would receive more than the PO line's open quantity plus the over-receipt tolerance (§7.5; 0027). */
+  'OVER_RECEIPT',
   'CREDIT_LIMIT_EXCEEDED',
   'OPEN_DEVIATION',
   'DUPLICATE_REQUEST',

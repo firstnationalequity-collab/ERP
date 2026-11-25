@@ -24,6 +24,9 @@ import { seedFinance, type FinanceSeedReport } from './finance';
 export const DEFAULT_SERIES = [
   { docType: 'PO', name: 'Purchase order', prefix: 'PO', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
   { docType: 'PR', name: 'Purchase requisition', prefix: 'PR', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
+  { docType: 'GRN', name: 'Goods received note', prefix: 'GRN', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
+  // Material lot numbers given at GRN posting (M3 task 3; format: agent default, PENDING OWNER), e.g. ML26-00001.
+  { docType: 'MATERIAL_LOT', name: 'Material lot number', prefix: 'ML', pattern: '{PREFIX}{YY}-{SEQ:5}', reset: 'CALENDAR_YEAR' },
   { docType: 'BATCH', name: 'Batch number', prefix: 'AP', pattern: '{PREFIX}{YY}-{SEQ:4}', reset: 'CALENDAR_YEAR' },
   { docType: 'JV', name: 'Manual journal voucher', prefix: 'JV', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
   { docType: 'SJ', name: 'System journal', prefix: 'SJ', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },

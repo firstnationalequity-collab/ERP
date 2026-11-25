@@ -1,7 +1,7 @@
 // Queries behind purch-refs.service.ts (master data procurement needs). No business rules here.
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { Queryable } from '../../db/client';
-import { approvedSources, items, uoms, vendors } from '../../db/schema/masters';
+import { approvedSources, items, locations, uoms, vendors, warehouses } from '../../db/schema/masters';
 
 export async function vendorsByIds(q: Queryable, companyId: string, ids: string[]) {
   if (ids.length === 0) return [];
@@ -35,4 +35,44 @@ export async function itemsWithApprovedSource(q: Queryable, companyId: string, v
       ),
     );
   return rows.map((r) => r.itemId);
+}
+
+const sourceColumns = {
+  id: approvedSources.id,
+  vendorId: approvedSources.vendorId,
+  itemId: approvedSources.itemId,
+  manufacturer: approvedSources.manufacturer,
+  manufacturingSite: approvedSources.manufacturingSite,
+  status: approvedSources.status,
+};
+
+export async function sourcesByIds(q: Queryable, companyId: string, ids: string[]) {
+  if (ids.length === 0) return [];
+  return q.select(sourceColumns).from(approvedSources).where(and(eq(approvedSources.companyId, companyId), inArray(approvedSources.id, ids)));
+}
+
+/** APPROVED sources of these items for this vendor. */
+export async function approvedSourcesFor(q: Queryable, companyId: string, vendorId: string, itemIds: string[]) {
+  if (itemIds.length === 0) return [];
+  return q
+    .select(sourceColumns)
+    .from(approvedSources)
+    .where(
+      and(
+        eq(approvedSources.companyId, companyId),
+        eq(approvedSources.vendorId, vendorId),
+        inArray(approvedSources.itemId, itemIds),
+        eq(approvedSources.status, 'APPROVED'),
+      ),
+    )
+    .orderBy(asc(approvedSources.manufacturer), asc(approvedSources.manufacturingSite));
+}
+
+export async function locationsByIds(q: Queryable, companyId: string, ids: string[]) {
+  if (ids.length === 0) return [];
+  return q
+    .select({ id: locations.id, code: locations.code, name: locations.name, warehouseCode: warehouses.code, isActive: locations.isActive })
+    .from(locations)
+    .innerJoin(warehouses, eq(warehouses.id, locations.warehouseId))
+    .where(and(eq(locations.companyId, companyId), inArray(locations.id, ids)));
 }

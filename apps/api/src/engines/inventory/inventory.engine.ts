@@ -250,6 +250,11 @@ export async function createReturnLot(tx: Tx, actor: Actor, input: NewReturnLot)
   return lot;
 }
 
+/** Read-only, for document screens: the lots with these ids (missing ids are left out). */
+export async function lotsByIds(q: Queryable, companyId: string, lotIds: string[]): Promise<Map<string, Lot>> {
+  return new Map((await repo.findLots(q, companyId, [...new Set(lotIds)])).map((l) => [l.id, l]));
+}
+
 export async function getLot(q: Queryable, companyId: string, lotId: string): Promise<Lot> {
   const lot = await repo.findLot(q, companyId, lotId);
   if (!lot) throw new AppError('NOT_FOUND', `Lot ${lotId} not found`);

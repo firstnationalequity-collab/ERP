@@ -27,7 +27,7 @@ import {
   type StockMovementType,
   type ValueAdjustmentReason,
 } from '@albert/shared';
-import type { Tx } from '../../db/client';
+import type { Queryable, Tx } from '../../db/client';
 import { AppError, fromDbError } from '../../core/errors';
 import { nextDocNo } from '../../core/settings/numbering.service';
 import { defineTransitions, recordInitialStatus, transition, type Actor, type TransitionMap } from '../../core/transition/transition';
@@ -188,6 +188,16 @@ export interface StockPosting {
 }
 
 // ---------------------------------------------------------------- journals
+
+/** Read-only, for document screens: the journals that name this source document (id, number, status). */
+export async function journalsOfSource(
+  q: Queryable,
+  companyId: string,
+  sourceType: string,
+  sourceId: string,
+): Promise<{ id: string; docNo: string; status: PostingStatus; event: PostingEvent | null }[]> {
+  return (await repo.entriesOfSource(q, companyId, sourceType, sourceId)).map((e) => ({ id: e.id, docNo: e.docNo, status: e.status, event: e.event }));
+}
 
 /** Posts a system journal for a business event. The actor must hold the event's key (JournalPostingKeys). */
 export async function postJournal(tx: Tx, actor: Actor, input: JournalInput): Promise<JournalEntry> {

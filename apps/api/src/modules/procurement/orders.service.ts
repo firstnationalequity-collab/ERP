@@ -4,7 +4,7 @@
 //   AVL block: a GMP material (AvlItemTypes) needs an APPROVED approved source for the vendor; checked when
 //   lines are saved, at submit and at approval (service + DB).
 //   Segregation (rule 9): the PO creator and the submitter approve no step (SEGREGATION_OF_DUTIES).
-// Receipt moves (PARTIALLY_RECEIVED, RECEIVED, CLOSED) come with the GRN (task 3).
+// Receipt moves (PARTIALLY_RECEIVED, RECEIVED) are made by the GRN posting (grns.service.ts); CLOSED comes with task 5.
 import { Decimal } from 'decimal.js';
 import {
   PurchaseOrderStatus,
@@ -43,6 +43,10 @@ export const PurchaseOrderMoves = defineTransitions<PurchaseOrderStatus>({
     { from: 'DRAFT', to: 'CANCELLED', permission: 'purch.po.manage', reasonRequired: true },
     { from: 'PENDING_APPROVAL', to: 'CANCELLED', permission: 'purch.po.manage', reasonRequired: true },
     { from: 'APPROVED', to: 'CANCELLED', permission: 'purch.po.manage', reasonRequired: true },
+    // Receipt moves, made by the GRN posting (task 3; 0027 checks them against the received quantities).
+    { from: 'APPROVED', to: 'PARTIALLY_RECEIVED', permission: 'purch.grn.post' },
+    { from: 'APPROVED', to: 'RECEIVED', permission: 'purch.grn.post' },
+    { from: 'PARTIALLY_RECEIVED', to: 'RECEIVED', permission: 'purch.grn.post' },
   ],
 });
 

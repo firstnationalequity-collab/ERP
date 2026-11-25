@@ -15,3 +15,4 @@ export * from './schemas/fin/masters';
 export * from './schemas/fin/journals';
 export * from './schemas/fin/rates';
 export * from './schemas/purch/orders';
+export * from './schemas/purch/grns';

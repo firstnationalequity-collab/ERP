@@ -15,4 +15,14 @@ registerSetting({
   defaultValue: false,
 });
 
-export const allowBulkFgPurchase = (q: Queryable, companyId: string) => getSetting<boolean>(q, companyId, ALLOW_BULK_FG_PURCHASE);
+/** Architecture §7.5: a GRN may receive up to the ordered quantity + this percent. Mirrored by SQL purch.over_receipt_pct (0027). */
+export const OVER_RECEIPT_PCT = 'purch.grn.over_receipt_pct';
+registerSetting({
+  key: OVER_RECEIPT_PCT,
+  description: 'Over-receipt tolerance on a GRN, percent of the ordered quantity (0–10)',
+  schema: z.number().min(0).max(10),
+  defaultValue: 2,
+});
+export const overReceiptPct = (q: Queryable, companyId: string) => getSetting<number>(q, companyId, OVER_RECEIPT_PCT);
+
+export const allowBulkFgPurchase =(q: Queryable, companyId: string) => getSetting<boolean>(q, companyId, ALLOW_BULK_FG_PURCHASE);

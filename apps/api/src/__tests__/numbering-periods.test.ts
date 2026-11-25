@@ -143,12 +143,12 @@ describe('number series admin (core.settings.manage)', () => {
 
   it('refuses a pattern that would repeat numbers', async () => {
     const res = await as('admin').post('/number-series', {
-      docType: 'GRN',
-      name: 'Goods receipt',
-      prefix: 'GRN',
+      docType: 'GATE_PASS',
+      name: 'Gate pass',
+      prefix: 'GPS',
       pattern: '{PREFIX}-{SEQ:5}',
       reset: 'FISCAL_YEAR',
-      reason: 'Set up GRN',
+      reason: 'Set up gate passes',
     });
     expect(res.status).toBe(400);
     expect(JSON.stringify(res.body)).toMatch(/must contain \{FY\}/);
@@ -156,12 +156,12 @@ describe('number series admin (core.settings.manage)', () => {
 
   it('creates and edits a series, refusing an edit that breaks the pattern/reset pair, with the reason audited', async () => {
     const created = await as('admin').post('/number-series', {
-      docType: 'GRN',
-      name: 'Goods receipt',
-      prefix: 'GRN',
+      docType: 'GATE_PASS',
+      name: 'Gate pass',
+      prefix: 'GPS',
       pattern: '{PREFIX}-{FY}-{SEQ:5}',
       reset: 'FISCAL_YEAR',
-      reason: 'Set up GRN',
+      reason: 'Set up gate passes',
     });
     expect(created.status).toBe(201);
     const id = created.body.id as string;
@@ -170,9 +170,9 @@ describe('number series admin (core.settings.manage)', () => {
     expect(bad.status).toBe(400);
     expect(bad.body.error.code).toBe('VALIDATION_FAILED');
 
-    const ok = await as('admin').patch(`/number-series/${id}`, { prefix: 'GR', reason: 'Shorter prefix' });
+    const ok = await as('admin').patch(`/number-series/${id}`, { prefix: 'GP', reason: 'Shorter prefix' });
     expect(ok.status).toBe(200);
-    expect(ok.body.preview).toMatch(/^GR-\d{4}-00001$/);
+    expect(ok.body.preview).toMatch(/^GP-\d{4}-00001$/);
     const audit = await client.query(
       `SELECT reason FROM core.audit_log WHERE table_name = 'core.number_series' AND record_id = $1 AND action = 'UPDATE'`,
       [id],
@@ -180,7 +180,7 @@ describe('number series admin (core.settings.manage)', () => {
     expect(audit.rows).toEqual([{ reason: 'Shorter prefix' }]);
 
     const dup = await as('admin').post('/number-series', {
-      docType: 'GRN',
+      docType: 'GATE_PASS',
       name: 'Again',
       prefix: 'G',
       pattern: '{PREFIX}-{FY}-{SEQ:5}',

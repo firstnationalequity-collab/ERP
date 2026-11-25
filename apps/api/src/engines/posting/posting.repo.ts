@@ -70,3 +70,12 @@ export async function reloadEntry(q: Queryable, id: string): Promise<EntryRow> {
   if (!row) throw new Error(`journal entry ${id} vanished`);
   return row;
 }
+
+/** Journal entries naming a source document (newest last). */
+export async function entriesOfSource(q: Queryable, companyId: string, sourceType: string, sourceId: string): Promise<EntryRow[]> {
+  return q
+    .select()
+    .from(journalEntries)
+    .where(and(eq(journalEntries.companyId, companyId), eq(journalEntries.sourceType, sourceType), eq(journalEntries.sourceId, sourceId)))
+    .orderBy(asc(journalEntries.id));
+}

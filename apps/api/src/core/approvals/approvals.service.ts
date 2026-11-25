@@ -315,6 +315,11 @@ export async function latestApprovalIds(q: Queryable, companyId: string, docTabl
   return repo.latestApprovalIds(q, companyId, docTable, docIds);
 }
 
+/** For segregation checks in modules (e.g. GRN receiver ≠ PO approver): who approved a step of the document. */
+export async function approversOf(q: Queryable, companyId: string, docTable: string, docId: string): Promise<string[]> {
+  return repo.approverIds(q, companyId, docTable, docId);
+}
+
 export async function getApproval(auth: AuthContext, approvalId: string): Promise<ApprovalDto> {
   const approval = await repo.findApproval(db, auth.companyId, approvalId);
   if (!approval) throw new AppError('NOT_FOUND', 'Approval not found');

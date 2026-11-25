@@ -126,6 +126,10 @@ export type Incoterm = (typeof Incoterm)[number];
 export const PostingStatus = ['DRAFT', 'POSTED', 'REVERSED'] as const;
 export type PostingStatus = (typeof PostingStatus)[number];
 
+/** QC sample request (M3 stub, owner 2026-11-25 Q1: created OPEN with each GRN lot; M4 adds the sampling moves). */
+export const SampleRequestStatus = ['OPEN'] as const;
+export type SampleRequestStatus = (typeof SampleRequestStatus)[number];
+
 export const DeviationClass = ['MINOR', 'MAJOR', 'CRITICAL'] as const;
 export type DeviationClass = (typeof DeviationClass)[number];
 

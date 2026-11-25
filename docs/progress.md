@@ -6,7 +6,7 @@ Current milestone: **M3 — Procurement** (M2 done, tag `m2`)
 | --- | --- | --- | --- | --- |
 | M1 Foundation | Done | 17-11-2026 | 18-11-2026 | All 12 tasks, rules-review fixes A–F, first-QA-Manager bootstrap; CI run #13 green on `04ef009`; tag `m1` |
 | M2 Masters & engines | Done | 18-11-2026 | 19-11-2026 | All 10 tasks; rules-review fixes (disposal witness 0020, deactivation guards 0021); owner answers 19-11 recorded; CI green; tag `m2` |
-| M3 Procurement | In progress | 25-11-2026 | | Tasks 1–2c done (0022–0025); 3–6 open |
+| M3 Procurement | In progress | 25-11-2026 | | Tasks 1–3 done (0022–0027); 4–6 open |
 | M4 QC | Not started | | | |
 | M5 Sales | Not started | | | |
 | M6 Production | Not started | | | |
@@ -18,19 +18,23 @@ Current milestone: **M3 — Procurement** (M2 done, tag `m2`)
 
 ## Handoff (25-11-2026, M3 in progress)
 
-**State:** M3 started 25-11-2026. Plan approved by the owner with answers Q1–Q6 and extra changes (decisions.md rows dated 2026-11-25; build-plan M3 bullets carry them). We work on `main`, one commit per task, pushed. API tests need the Docker DB (`docker compose up -d`). 595 tests green (553 API, 26 web, 16 shared). Owner answered the six task-1/2 questions on 25-11 (decisions.md rows "M3 owner answers 1–6").
+**State:** M3 started 25-11-2026. We work on `main`, one commit per task, pushed. API tests need the Docker DB (`docker compose up -d`). 610 tests green (568 API, 26 web, 16 shared). CLAUDE.md rules 1 and 10 reworded and workflow steps 7–10 added by the owner (25-11): commit + push per task, one or two tasks per chat, `docs/demo/M<n>.md` after screen tasks.
 
-**M3 tasks** (chunks agreed with the owner: 1–2 in the first chat; 2b, 2c, 3 in the second; 4, then 5–6 in new chats):
-- [x] 1. Owner decisions from M2 (0022): periods close/reopen in order (`PERIOD_OUT_OF_ORDER`), reopen needs a Finance Manager e-signature (APPROVED); one user never holds an admin role and an action role (service + DB; dev DB checked: no violators); attachments void with reason (`POST /core/attachment-files/:id/void`, file kept, voided files do not count as evidence).
-- [x] 2. PR → PO (0023): requisitions (no approval), POs local/import with approval matrix (`PO` doc type, PKR value at Finance’s rate on the PO date), AVL block (service + DB on submit and approve), creator/submitter approve no step (new `assertMayApprove` hook in the approvals engine), cancel before receipt; daily rate table `fin.exchange_rates` (`fin.rate.manage`, `rateOn()` for other modules, RATE_MISSING); web: Requisitions, Purchase orders, Exchange rates.
-- [x] 2b. Unit rates 6 decimals (owner answer 5; 0024): lot/movement unit cost, PO and price-list unit price NUMERIC(18,6); amounts stay 2 decimals; derived unit costs (FG output, value adjustment) round to 6 in engine + DB guards; CLAUDE.md rule 10; shared `unitRate`, web `formatRate`; 0.035 PKR label tests (valuation, engine + DB guard, PO).
-- [x] 2c. Owner answers 1, 3, 4, 6 (0025): GMP attachment void needs a QA Manager e-signature; rate = latest on/before date within `fin.rate.max_age_days` (3); PO cancel frees requisition lines; setting `purch.allow_bulk_fg_purchase` (false). New key `qa.attachment.countersign` (QA Manager); targets flag `gmp` = SQL `core.gmp_attachment_tables()`; `rateOn()` now returns `{ rate, rateDate }`; PO has `exchange_rate_date`; `po_lines.released_pr_line_id`; web: GMP void dialog with QA countersign, rate date and "freed" requisition on the PO.
-- [ ] 3. GRN to quarantine, labels, QC sample request stub.
-- [ ] 4. Landed cost (incl. IMPORT_TAX event, advance tax account).
-- [ ] 5. Vendor invoice (3-way match, MATCH_EXCEPTION, CHARGES type, FX), payment with WHT, vendor ledger, AP ageing.
+**M3 tasks** (details of done tasks: `docs/progress-log.md`, decisions.md rows dated 2026-11-25):
+- [x] 1, 2, 2b, 2c, 2d. Owner decisions from M2 (0022); PR → PO with approval matrix, AVL block, rate table (0023); unit rates 6 decimals (0024); owner answers (0025); rules 1/10 + two-person GMP void (0026).
+- [x] 3. GRN (0027): scan PO → DRAFT → post: lots in QUARANTINE (`ML26-00001`), RECEIPT at PO price × GRN-date rate, GRN_RECEIPT journal, QC sample request (stub `modules/qc`), PO PARTIALLY_RECEIVED / RECEIVED; tolerance `purch.grn.over_receipt_pct` (2) → OVER_RECEIPT; AVL source at posting; receiver ≠ PO creator / approver; labels PDF (pdfmake + bwip-js). Web: Procurement → Goods received (GRN). Demo: `docs/demo/M3.md`.
+- [ ] 4. Landed cost (owner split 25-11): charge types (capitalise flag, own account), then extend GRN posting so known charges entered beforehand roll into the lot cost (DRAFT charges on the GRN, `purch.landed_cost.manage`; Q2); later bills → VALUE_ADJUSTMENT LANDED_COST; IMPORT_TAX event, advance tax account.
+- [ ] 5. Vendor invoice (3-way match, MATCH_EXCEPTION, CHARGES type, FX), payment with WHT, vendor ledger, AP ageing; PO → CLOSED.
 - [ ] 6. Segregation sweep, end-to-end Done-when test, /check-rules, docs.
 
-**Next (new chat): task 3 GRN, then stop** (task 4 in another chat). Write `docs/demo/M3.md` with task 3 (it adds screens). Not installed yet: `bwip-js` (labels) and `pdfmake` (architecture §2). Task 3 adds the receipt moves to `PurchaseOrderMoves` (APPROVED → PARTIALLY_RECEIVED → RECEIVED, CLOSED) under `purch.grn.post`; GRN updates `po_lines.received_qty` (0023 already allows only that column after DRAFT). GRN converts at `rateOn(…, grnDate)` and stores rate + rate date; tolerance setting (default 2%, §7.5); API needs mfr batch, mfg, expiry, retest; known landed charges entered with the GRN (owner Q2) touch task 4, so agree the split before building; AVL check at posting is per item + vendor + manufacturer (`purch-refs.service` needs a manufacturer variant).
+**Next (new chat): task 4 landed cost, then stop.** GRN posting is `postGrn` in `modules/procurement/grns.service.ts`: one `postStockJournal` per GRN; the lot unit cost is set at `createLot`, so known charges must be allocated before `createLot` (or add a LANDED_COST value adjustment in the same transaction). Rule-10 mismatch to settle with the owner first (below).
+
+**Open questions for the owner:**
+1. Rule 10 now says exchange rates NUMERIC(18,6), but `fin.exchange_rates.rate`, `purch.purchase_orders.exchange_rate`, `core.approvals.exchange_rate` (and the shared `exchangeRate` Zod: 4 decimals; architecture §5/§7.5) are NUMERIC(9,4). Not changed. The new GRN column is (18,6). Widen the three to (18,6)?
+2. Material lot number format `ML26-00001` (agent default).
+3. GRN refuses expired / retest-due material and mfg after the GRN date (agent default).
+4. SPARE / CONSUMABLE lots also go to QUARANTINE with a QC sample request (as architecture §4 says): keep, or let non-GMP items skip QC?
+5. GRN reversal (wrong receipt, lot untouched) and cancelling a DRAFT GRN are not built: wanted?
 
 **Rules the code already relies on (M3+):**
 - A module posts stock in ONE `withTransaction`: `postMovement` (engines/inventory) then `postStockJournal` (engines/posting). Corrections: `reverseMovements` then `reverseStockJournal`. Transfers post no journal. Toll rows post nothing.
@@ -44,6 +48,4 @@ Current milestone: **M3 — Procurement** (M2 done, tag `m2`)
 - Landed cost (owner Q21): architecture §6 "Landed cost" and build-plan M3. Do not reuse `ROUNDING_SWEEP` for it.
 - Roles: `pnpm db:seed` adds keys from `docs/roles.md` that roles are missing. If it stops with `RoleBundleDriftError`, ask the owner per key and never remove keys yourself.
 
-**Open questions for the owner:** none.
-
-**Local dev DB:** migrated to 0025 and seeded (QA Manager holds `qa.attachment.countersign`). It has the `demo.<role>` users (password = `DEV_DEMO_PASSWORD` in `.env`) and FY 2026-27 periods OPEN. `demo.qa_manager` holds the QA countersign.
+**Local dev DB:** migrated to 0027 and seeded (series GRN and MATERIAL_LOT added; QA Manager holds `qa.attachment.countersign`). It has the `demo.<role>` users (password = `DEV_DEMO_PASSWORD` in `.env`) and FY 2026-27 periods OPEN. `demo.qa_manager` holds the QA countersign.

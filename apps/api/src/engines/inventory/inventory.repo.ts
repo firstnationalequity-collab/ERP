@@ -201,3 +201,8 @@ export async function fefoLots(
     )
     .orderBy(sql`${lots.expiryDate} ASC NULLS LAST`, asc(lots.id));
 }
+
+export async function findLots(q: Queryable, companyId: string, ids: string[]): Promise<LotRow[]> {
+  if (ids.length === 0) return [];
+  return q.select().from(lots).where(and(eq(lots.companyId, companyId), inArray(lots.id, ids)));
+}

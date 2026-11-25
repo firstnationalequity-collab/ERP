@@ -219,3 +219,21 @@ export async function recentApprovalsOf(q: Queryable, companyId: string, docTabl
     .where(and(eq(approvals.companyId, companyId), eq(approvals.docTable, docTable), eq(approvals.docId, docId)))
     .orderBy(desc(approvals.id));
 }
+
+/** Users who approved a step of an APPROVED approval of this document. */
+export async function approverIds(q: Queryable, companyId: string, docTable: string, docId: string): Promise<string[]> {
+  const rows = await q
+    .selectDistinct({ userId: approvalSteps.actedBy })
+    .from(approvalSteps)
+    .innerJoin(approvals, eq(approvals.id, approvalSteps.approvalId))
+    .where(
+      and(
+        eq(approvals.companyId, companyId),
+        eq(approvals.docTable, docTable),
+        eq(approvals.docId, docId),
+        eq(approvals.status, 'APPROVED'),
+        eq(approvalSteps.status, 'APPROVED'),
+      ),
+    );
+  return rows.flatMap((r) => (r.userId ? [r.userId] : []));
+}

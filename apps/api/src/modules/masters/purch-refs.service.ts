@@ -81,3 +81,59 @@ export async function assertAvlApproved(q: Queryable, companyId: string, vendor:
     );
   }
 }
+
+// ---------------------------------------------------------------- GRN (M3 task 3)
+
+export interface PurchSourceRef {
+  id: string;
+  vendorId: string;
+  itemId: string;
+  manufacturer: string;
+  manufacturingSite: string;
+  status: string;
+}
+
+export async function purchSources(q: Queryable, companyId: string, ids: string[]): Promise<Map<string, PurchSourceRef>> {
+  const rows = await repo.sourcesByIds(q, companyId, [...new Set(ids)]);
+  return new Map(rows.map((r) => [r.id, r]));
+}
+
+/** The APPROVED sources (manufacturer + site) a GRN may name for these items from this vendor. */
+export async function approvedSourcesFor(q: Queryable, companyId: string, vendorId: string, itemIds: string[]): Promise<PurchSourceRef[]> {
+  return repo.approvedSourcesFor(q, companyId, vendorId, [...new Set(itemIds)]);
+}
+
+/**
+ * AVL at receipt (owner 2026-11-25): a GMP material (AvlItemTypes) is received only from an APPROVED source for this
+ * item + vendor, which names the manufacturer and site (AVL_NOT_APPROVED). Returns the source, or null for other items.
+ * The database re-checks it when the GRN posts (0027).
+ */
+export async function assertReceiptSource(
+  q: Queryable,
+  companyId: string,
+  input: { vendor: PurchVendorRef; item: PurchItemRef; approvedSourceId: string | null },
+): Promise<PurchSourceRef | null> {
+  if (!AvlItemTypes.includes(input.item.type)) return null;
+  const source = input.approvedSourceId ? (await purchSources(q, companyId, [input.approvedSourceId])).get(input.approvedSourceId) : undefined;
+  if (!source || source.vendorId !== input.vendor.id || source.itemId !== input.item.id || source.status !== 'APPROVED') {
+    throw new AppError(
+      'AVL_NOT_APPROVED',
+      `${input.item.code} (${input.item.type}) is received only from an APPROVED source of ${input.vendor.code}: pick the manufacturer and site`,
+      { vendorId: input.vendor.id, itemId: input.item.id, approvedSourceId: input.approvedSourceId, status: source?.status ?? null },
+    );
+  }
+  return source;
+}
+
+export interface PurchLocationRef {
+  id: string;
+  code: string;
+  name: string;
+  warehouseCode: string;
+  isActive: boolean;
+}
+
+export async function purchLocations(q: Queryable, companyId: string, ids: string[]): Promise<Map<string, PurchLocationRef>> {
+  const rows = await repo.locationsByIds(q, companyId, [...new Set(ids)]);
+  return new Map(rows.map((r) => [r.id, r]));
+}
