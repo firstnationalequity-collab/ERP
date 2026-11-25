@@ -271,6 +271,10 @@ export const attachments = core.table('attachments', {
   storageDriver: text('storage_driver').$type<StorageDriver>().notNull(),
   storageKey: text('storage_key').notNull(),
   description: text('description'),
+  // 0022: void with reason (owner Q5); the file is kept and never deleted
+  voidedAt: tstz('voided_at'),
+  voidedBy: bigintString('voided_by'),
+  voidReason: text('void_reason'),
   ...auditColumns(),
 });
 

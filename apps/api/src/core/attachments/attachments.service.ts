@@ -1,13 +1,16 @@
 // Attachments against any record (docs/architecture.md §5, §7.1; decision Q17).
 // Each module declares which of its tables accept attachments and with which permission keys
-// (registerAttachmentTarget). Files are insert-only; the SHA-256 is re-checked on every download.
+// (registerAttachmentTarget). Files are never deleted; a file can be voided once, with a reason (owner Q5,
+// 2026-11-19; 0022), and stays downloadable. The SHA-256 is re-checked on every download.
 import { createHash } from 'node:crypto';
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import {
   ATTACHMENT_MAX_BYTES,
   ATTACHMENT_TYPES,
   type AttachmentDto,
   type PermissionKey,
+  type VoidAttachmentRequest,
 } from '@albert/shared';
 import { db, withTransaction, type Queryable } from '../../db/client';
 import { attachments, users } from '../../db/schema/core';
@@ -72,7 +75,10 @@ function extensionOf(name: string): string {
   return i > 0 ? name.slice(i + 1).toLowerCase() : '';
 }
 
-function toDto(row: typeof attachments.$inferSelect, uploader: string): AttachmentDto {
+const voider = alias(users, 'voider');
+const rowColumns = { a: attachments, uploader: users.fullName, voidedByName: voider.fullName };
+
+function toDto(row: typeof attachments.$inferSelect, uploader: string, voidedByName: string | null): AttachmentDto {
   return {
     id: row.id,
     recordTable: row.recordTable,
@@ -84,6 +90,10 @@ function toDto(row: typeof attachments.$inferSelect, uploader: string): Attachme
     description: row.description,
     uploadedBy: uploader,
     uploadedAt: row.createdAt.toISOString(),
+    voided:
+      row.voidedAt && row.voidReason
+        ? { by: voidedByName ?? '', at: row.voidedAt.toISOString(), reason: row.voidReason }
+        : null,
   };
 }
 
@@ -139,24 +149,26 @@ export async function upload(auth: AuthContext, input: UploadInput): Promise<Att
 
 async function listByIds(auth: AuthContext, ids: string[]): Promise<AttachmentDto[]> {
   const rows = await db
-    .select({ a: attachments, uploader: users.fullName })
+    .select(rowColumns)
     .from(attachments)
     .innerJoin(users, eq(users.id, attachments.createdBy))
+    .leftJoin(voider, eq(voider.id, attachments.voidedBy))
     .where(and(eq(attachments.companyId, auth.companyId), inArray(attachments.id, ids)));
-  return rows.map((r) => toDto(r.a, r.uploader));
+  return rows.map((r) => toDto(r.a, r.uploader, r.voidedByName));
 }
 
 export async function list(auth: AuthContext, recordTable: string, recordId: string): Promise<AttachmentDto[]> {
   await checkAccess(auth, recordTable, recordId, 'read');
   const rows = await db
-    .select({ a: attachments, uploader: users.fullName })
+    .select(rowColumns)
     .from(attachments)
     .innerJoin(users, eq(users.id, attachments.createdBy))
+    .leftJoin(voider, eq(voider.id, attachments.voidedBy))
     .where(
       and(eq(attachments.companyId, auth.companyId), eq(attachments.recordTable, recordTable), eq(attachments.recordId, recordId)),
     )
     .orderBy(asc(attachments.id));
-  return rows.map((r) => toDto(r.a, r.uploader));
+  return rows.map((r) => toDto(r.a, r.uploader, r.voidedByName));
 }
 
 /**
@@ -169,21 +181,29 @@ export async function listForDocument(auth: AuthContext, recordTable: string, re
   return list(auth, recordTable, recordId);
 }
 
-/** How many files a record has (for module rules such as "AVL approval needs evidence"). */
+/** How many files a record has, voided files not counted (for module rules such as "AVL approval needs evidence"). */
 export async function countForDocument(q: Queryable, companyId: string, recordTable: string, recordId: string): Promise<number> {
   const rows = await q
     .select({ id: attachments.id })
     .from(attachments)
-    .where(and(eq(attachments.companyId, companyId), eq(attachments.recordTable, recordTable), eq(attachments.recordId, recordId)));
+    .where(
+      and(
+        eq(attachments.companyId, companyId),
+        eq(attachments.recordTable, recordTable),
+        eq(attachments.recordId, recordId),
+        isNull(attachments.voidedAt),
+      ),
+    );
   return rows.length;
 }
 
 /** Read a file, refusing it if it no longer matches the SHA-256 recorded at upload. */
 export async function download(auth: AuthContext, id: string): Promise<{ meta: AttachmentDto; bytes: Buffer }> {
   const [row] = await db
-    .select({ a: attachments, uploader: users.fullName })
+    .select(rowColumns)
     .from(attachments)
     .innerJoin(users, eq(users.id, attachments.createdBy))
+    .leftJoin(voider, eq(voider.id, attachments.voidedBy))
     .where(and(eq(attachments.companyId, auth.companyId), eq(attachments.id, id)));
   if (!row) throw new AppError('NOT_FOUND', 'Attachment not found');
   await checkAccess(auth, row.a.recordTable, row.a.recordId, 'read');
@@ -196,5 +216,27 @@ export async function download(auth: AuthContext, id: string): Promise<{ meta: A
   if (createHash('sha256').update(bytes).digest('hex') !== row.a.sha256) {
     throw new AppError('FILE_INTEGRITY_FAILED', 'The stored file does not match its recorded checksum');
   }
-  return { meta: toDto(row.a, row.uploader), bytes };
+  return { meta: toDto(row.a, row.uploader, row.voidedByName), bytes };
+}
+
+/** Void a file with a reason (owner Q5): needs the record type's write key; the file is kept and never deleted. */
+export async function voidAttachment(auth: AuthContext, id: string, input: VoidAttachmentRequest): Promise<AttachmentDto> {
+  const reason = input.reason.trim();
+  await withTransaction(txContext(auth, `void attachment: ${reason}`), async (tx) => {
+    const [row] = await tx
+      .select()
+      .from(attachments)
+      .where(and(eq(attachments.companyId, auth.companyId), eq(attachments.id, id)))
+      .for('update');
+    if (!row) throw new AppError('NOT_FOUND', 'Attachment not found');
+    await checkAccess(auth, row.recordTable, row.recordId, 'write');
+    if (row.voidedAt) throw new AppError('INVALID_TRANSITION', 'This attachment is already void');
+    await tx
+      .update(attachments)
+      .set({ voidedAt: new Date(), voidedBy: auth.userId, voidReason: reason })
+      .where(eq(attachments.id, id));
+  });
+  const [dto] = await listByIds(auth, [id]);
+  if (!dto) throw new AppError('NOT_FOUND', 'Attachment not found');
+  return dto;
 }

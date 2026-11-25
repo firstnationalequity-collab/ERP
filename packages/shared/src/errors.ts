@@ -26,6 +26,8 @@ export const ErrorCodes = [
   'ESIGN_FAILED',
   'PERIOD_CLOSED',
   'PERIOD_NOT_DEFINED',
+  /** Periods close in order (earliest OPEN first) and reopen in order (latest CLOSED first) (owner Q2/Q3, 0022). */
+  'PERIOD_OUT_OF_ORDER',
   'JOURNAL_UNBALANCED',
   'TAX_RATE_NOT_CONFIRMED',
   'NUMBER_SERIES_MISSING',

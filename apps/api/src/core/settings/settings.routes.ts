@@ -6,10 +6,11 @@ import {
   CreateNumberSeriesRequest,
   FiscalPeriodQuery,
   PeriodActionRequest,
+  PeriodReopenRequest,
   UpdateNumberSeriesRequest,
 } from '@albert/shared';
 import { requireAnyPermission, requirePermission } from '../rbac/require-permission';
-import { asyncHandler, authOf } from '../auth/middleware';
+import { asyncHandler, authOf, requestMeta } from '../auth/middleware';
 import * as numbering from './numbering.service';
 import * as periods from './periods.service';
 
@@ -79,6 +80,6 @@ settingsRouter.post(
   requirePermission('core.period.close'),
   asyncHandler(async (req, res) => {
     const { id } = IdParam.parse(req.params);
-    res.json(await periods.reopenPeriod(authOf(req), id, PeriodActionRequest.parse(req.body).reason));
+    res.json(await periods.reopenPeriod(authOf(req), id, PeriodReopenRequest.parse(req.body), requestMeta(req)));
   }),
 );

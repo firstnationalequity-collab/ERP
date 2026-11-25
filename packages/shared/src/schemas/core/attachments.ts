@@ -1,4 +1,5 @@
 // Attachments (docs/architecture.md §5, §7.1; decision Q17). Upload = raw file body + headers.
+import { z } from 'zod';
 
 export const ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
 
@@ -27,4 +28,9 @@ export interface AttachmentDto {
   description: string | null;
   uploadedBy: string;
   uploadedAt: string;
+  /** Void with reason (owner Q5, 2026-11-19; 0022): the file is kept and still downloadable, shown as void. */
+  voided: { by: string; at: string; reason: string } | null;
 }
+
+export const VoidAttachmentRequest = z.object({ reason: z.string().trim().min(3, 'Give a reason (at least 3 characters)').max(500) }).strict();
+export type VoidAttachmentRequest = z.infer<typeof VoidAttachmentRequest>;

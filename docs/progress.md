@@ -6,7 +6,7 @@ Current milestone: **M3 — Procurement** (M2 done, tag `m2`)
 | --- | --- | --- | --- | --- |
 | M1 Foundation | Done | 17-11-2026 | 18-11-2026 | All 12 tasks, rules-review fixes A–F, first-QA-Manager bootstrap; CI run #13 green on `04ef009`; tag `m1` |
 | M2 Masters & engines | Done | 18-11-2026 | 19-11-2026 | All 10 tasks; rules-review fixes (disposal witness 0020, deactivation guards 0021); owner answers 19-11 recorded; CI green; tag `m2` |
-| M3 Procurement | Not started | | | |
+| M3 Procurement | In progress | 25-11-2026 | | Task 1 done (0022); tasks 2–6 open |
 | M4 QC | Not started | | | |
 | M5 Sales | Not started | | | |
 | M6 Production | Not started | | | |
@@ -16,15 +16,21 @@ Current milestone: **M3 — Procurement** (M2 done, tag `m2`)
 | M10 Hardening & staging | Not started | | | |
 | M11 UAT & go-live | Not started | | | |
 
-## Handoff (19-11-2026, M2 done, M3 next)
+## Handoff (25-11-2026, M3 in progress)
 
-**State:** M2 is done and tagged `m2`: 551 tests green (511 API, 24 web, 16 shared), CI green. API tests need the Docker DB (`docker compose up -d`). We work on `main` with one commit per task. The M2 task table, Done-when evidence and answered questions are in `docs/progress-log.md` ("M2 close-out archive"): grep it, never read it whole.
+**State:** M3 started 25-11-2026. Plan approved by the owner with answers Q1–Q6 and extra changes (decisions.md rows dated 2026-11-25; build-plan M3 bullets carry them). We work on `main`, one commit per task, pushed. API tests need the Docker DB (`docker compose up -d`). 560 tests green (520 API, 24 web, 16 shared).
 
-**Next: M3 Procurement** (build-plan M3; start with `/milestone M3` in a new chat).
-- First task: the owner decisions carried in from M2 (build-plan M3, first line): period reopen with Finance Manager e-signature + reason, periods closed and reopened in order (Q2, Q3); no user with both an admin role and an action role (Q4); attachments "void with reason" (Q5). These change M1 core code, so read decisions.md 2026-11-19 first.
-- Landed cost is fully decided (Q21): architecture §6 "Landed cost".
-- Build on the PLACEHOLDER chart and tax codes (Q6). WHT posting stays blocked until Finance confirms each rate.
-- Task 9 screens have never been clicked through in a browser; the owner should try them. The web bundle is about 1.6 MB (antd); code splitting is M10 work.
+**M3 tasks** (chunks agreed with the owner: 1–2 in the first chat, 3–4 and 5–6 in new chats):
+- [x] 1. Owner decisions from M2 (0022): periods close/reopen in order (`PERIOD_OUT_OF_ORDER`), reopen needs a Finance Manager e-signature (APPROVED); one user never holds an admin role and an action role (service + DB; dev DB checked: no violators); attachments void with reason (`POST /core/attachment-files/:id/void`, file kept, voided files do not count as evidence).
+- [ ] 2. PR → PO with approval matrix, AVL block, daily rate table.
+- [ ] 3. GRN to quarantine, labels, QC sample request stub.
+- [ ] 4. Landed cost (incl. IMPORT_TAX event, advance tax account).
+- [ ] 5. Vendor invoice (3-way match, MATCH_EXCEPTION, CHARGES type, FX), payment with WHT, vendor ledger, AP ageing.
+- [ ] 6. Segregation sweep, end-to-end Done-when test, /check-rules, docs.
+
+**Open questions for the owner** (agent defaults, decisions.md 2026-11-25, "PENDING OWNER"):
+1. Who may void an attachment: the holder of the record type's write key (the key that uploads it)?
+2. Inactive roles count for the admin/action rule (so reactivating a role cannot bypass it)?
 
 **Rules the code already relies on (M3+):**
 - A module posts stock in ONE `withTransaction`: `postMovement` (engines/inventory) then `postStockJournal` (engines/posting). Corrections: `reverseMovements` then `reverseStockJournal`. Transfers post no journal. Toll rows post nothing.

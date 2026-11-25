@@ -9,7 +9,7 @@ Design context: `docs/architecture.md` §3 and §4.
 
 | Class | Meaning | Guard |
 | --- | --- | --- |
-| admin | Manage users, roles, settings | A role holding any admin key may hold only admin and view keys (never an action key) |
+| admin | Manage users, roles, settings | A role holding any admin key may hold only admin and view keys (never an action key); and a user holding such a role holds no role with an action key (owner 2026-11-19, Q4; 0022) |
 | view | Read-only access to a module | CEO holds every view key and nothing else |
 | action | Creates, changes, approves or posts business data | Never on an admin role. Changes to a role holding a QA-controlled key (`qaControlled` in `permissions.ts`: every `qc.*` / `qa.*` action key, `master.avl.approve`, `master.formula.approve`, `master.item.approve` and any future key that approves a GMP record) need a QA Manager e-signature |
 

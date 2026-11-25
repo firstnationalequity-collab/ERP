@@ -69,6 +69,31 @@ function assertNoAdminActionMix(keys: PermissionKey[]): void {
   }
 }
 
+/**
+ * Owner Q4 (2026-11-19): one user may not hold both a role with an admin key and a role with an action key
+ * (the role-level rule, applied per user). `roleIds` = every role the user would hold. 0022 re-checks it.
+ */
+async function assertUserNoAdminActionMix(
+  tx: Tx,
+  username: string,
+  roleIds: string[],
+  /** A role whose keys are about to change: check with its new keys. */
+  pending?: { roleId: string; keys: PermissionKey[] },
+): Promise<void> {
+  if (roleIds.length === 0) return;
+  const keyMap = await repo.keysOfRoles(tx, roleIds);
+  if (pending) keyMap.set(pending.roleId, pending.keys);
+  const adminRoles = roleIds.filter((id) => (keyMap.get(id) ?? []).some((k) => Permissions[k].class === 'ADMIN'));
+  const actionRoles = roleIds.filter((id) => (keyMap.get(id) ?? []).some((k) => Permissions[k].class === 'ACTION'));
+  if (adminRoles.length > 0 && actionRoles.length > 0) {
+    throw new AppError('ROLE_ADMIN_CONFLICT', `${username} cannot hold both an admin role and an action role`, {
+      user: username,
+      adminRoleIds: adminRoles,
+      actionRoleIds: actionRoles,
+    });
+  }
+}
+
 async function assertUserManagerRemains(tx: Tx, companyId: string): Promise<void> {
   if ((await repo.countActiveUserManagers(tx, companyId)) === 0) {
     throw new AppError('LAST_ADMIN', 'This change would leave nobody able to manage users');
@@ -223,7 +248,7 @@ export async function setUserRoles(
   const proof = await verifyCountersign(auth, input.countersign, meta);
 
   await withTransaction(txContext(auth, input.reason), async (tx) => {
-    await loadUser(tx, auth, userId, true);
+    const user = await loadUser(tx, auth, userId, true);
     const wanted = [...new Set(input.roleIds)];
     const found = await repo.findRoles(tx, auth.companyId, wanted);
     if (found.length !== wanted.length) {
@@ -235,6 +260,7 @@ export async function setUserRoles(
     const added = wanted.filter((id) => !current.includes(id));
     const removed = current.filter((id) => !wanted.includes(id));
     if (added.length === 0 && removed.length === 0) return;
+    await assertUserNoAdminActionMix(tx, user.username, wanted);
 
     const keyMap = await repo.keysOfRoles(tx, [...added, ...removed]);
     const touchesQuality = [...added, ...removed].some((id) => hasQualityKey(keyMap.get(id) ?? []));
@@ -340,6 +366,11 @@ export async function setRolePermissions(
     const needed = hasQualityKey(current) || hasQualityKey(keys);
     const countersignId = await applyCountersign(tx, proof, needed, { table: 'core.roles', id: roleId }, holders);
     await setAuditReason(tx, auditReason(input.reason, countersignId));
+    // A role gaining an admin (or action) key must not give any holder both kinds (owner Q4).
+    for (const holder of holders) {
+      const row = await repo.findUser(tx, auth.companyId, holder, false);
+      await assertUserNoAdminActionMix(tx, row?.username ?? holder, await repo.roleIdsOfUser(tx, holder), { roleId, keys });
+    }
     await replaceRoleKeys(tx, roleId, current, keys);
     await assertUserManagerRemains(tx, auth.companyId);
   });

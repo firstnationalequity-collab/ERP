@@ -3,7 +3,7 @@
 // URL-encoded file name in X-File-Name. Permission per record type comes from the module's registration.
 import express, { Router, type RequestHandler } from 'express';
 import { z } from 'zod';
-import { ATTACHMENT_FILE_NAME_HEADER, ATTACHMENT_MAX_BYTES } from '@albert/shared';
+import { ATTACHMENT_FILE_NAME_HEADER, ATTACHMENT_MAX_BYTES, VoidAttachmentRequest } from '@albert/shared';
 import { AppError } from '../errors';
 import { asyncHandler, authOf } from '../auth/middleware';
 import { requirePermission } from '../rbac/require-permission';
@@ -92,5 +92,14 @@ attachmentsRouter.get(
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(meta.fileName)}`);
     res.setHeader('X-Content-SHA256', meta.sha256);
     res.end(bytes);
+  }),
+);
+
+// Void with reason (owner Q5, 2026-11-19): the record type's write key; the file is kept and still served.
+attachmentsRouter.post(
+  '/attachment-files/:id/void',
+  requireAttachmentAccess('write'),
+  asyncHandler(async (req, res) => {
+    res.json(await attachments.voidAttachment(authOf(req), IdParam.parse(req.params).id, VoidAttachmentRequest.parse(req.body)));
   }),
 );

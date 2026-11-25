@@ -8,13 +8,13 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../app';
 import { databaseUrl, env } from '../config/env';
-import { withTransaction } from '../db/client';
+import { db, withTransaction } from '../db/client';
 import { runSeed } from '../db/seed/run';
 import { AppError, errorHandler } from '../core/errors';
 import { authenticate } from '../core/auth/middleware';
 import { authenticateToken, txContext } from '../core/auth/auth.service';
 import { idempotent, purgeExpiredIdempotencyKeys, requestHash } from '../core/idempotency/idempotency';
-import { registerAttachmentTarget } from '../core/attachments/attachments.service';
+import { countForDocument, registerAttachmentTarget } from '../core/attachments/attachments.service';
 import { LocalDiskStorage } from '../core/storage/storage';
 import { registerApprovalHandler, startApproval } from '../core/approvals/approvals.service';
 import { createTestUser, TEST_PASSWORD } from '../test/factories';
@@ -292,11 +292,76 @@ describe('attachments', () => {
     expect(dl.body.error.code).toBe('FILE_INTEGRITY_FAILED');
   });
 
-  it('keeps attachment records insert-only and audited', async () => {
+  it('never edits or deletes attachment records (only a void is allowed) and audits them', async () => {
     await expect(client.query(`UPDATE core.attachments SET file_name = 'x.pdf'`)).rejects.toThrow(/APPEND_ONLY/);
     await expect(client.query(`DELETE FROM core.attachments`)).rejects.toThrow(/APPEND_ONLY/);
     const { rows } = await client.query(`SELECT count(*)::int AS n FROM core.audit_log WHERE table_name = 'core.attachments'`);
     expect(rows[0].n).toBeGreaterThan(0);
+  });
+});
+
+describe('attachments: void with reason (owner Q5, 2026-11-19; 0022)', () => {
+  const voidAs = (who: string, id: string, body: object) =>
+    request(app).post(`/api/v1/core/attachment-files/${id}/void`).set('Authorization', `Bearer ${tokens[who]}`).send(body);
+
+  it('voids a file with a reason: kept, still downloadable, shown as void, audited, not counted as evidence', async () => {
+    const up = await upload('a', '/attachments/test.records/1', PDF, 'application/pdf', 'wrong lot.pdf');
+    const before = await countForDocument(db, '1', 'test.records', '1');
+
+    const res = await voidAs('b', up.body.id, { reason: 'Uploaded against the wrong lot' });
+    expect(res.status).toBe(200);
+    expect(res.body.voided).toMatchObject({ reason: 'Uploaded against the wrong lot' });
+    expect(res.body.voided.at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+    const list = await request(app).get('/api/v1/core/attachments/test.records/1').set('Authorization', `Bearer ${tokens.qcm}`);
+    expect(list.body.find((a: { id: string }) => a.id === up.body.id).voided.reason).toBe('Uploaded against the wrong lot');
+    const dl = await request(app).get(`/api/v1/core/attachment-files/${up.body.id}`).set('Authorization', `Bearer ${tokens.qcm}`);
+    expect(dl.status).toBe(200);
+
+    const after = await countForDocument(db, '1', 'test.records', '1');
+    expect(after).toBe(before - 1);
+
+    const { rows } = await client.query(
+      `SELECT a.reason, a.changed_by, u.username FROM core.audit_log a JOIN core.users u ON u.id = a.changed_by
+        WHERE a.table_name = 'core.attachments' AND a.record_id = $1 AND a.action = 'UPDATE'`,
+      [up.body.id],
+    );
+    expect(rows).toEqual([expect.objectContaining({ reason: 'void attachment: Uploaded against the wrong lot', username: 'i_b' })]);
+  });
+
+  it('refuses a void without a reason, by a user without the write key, twice, or of an unknown file', async () => {
+    const up = await upload('a', '/attachments/test.records/2', PDF, 'application/pdf', 'void-refusals.pdf');
+    expect((await voidAs('a', up.body.id, {})).status).toBe(400);
+    expect((await voidAs('a', up.body.id, { reason: 'x' })).status).toBe(400);
+    expect((await voidAs('qcm', up.body.id, { reason: 'Not my file type' })).status).toBe(403);
+    expect((await voidAs('a', '999999', { reason: 'Missing file' })).status).toBe(404);
+    expect((await voidAs('a', up.body.id, { reason: 'Duplicate upload' })).status).toBe(200);
+    const again = await voidAs('a', up.body.id, { reason: 'Duplicate upload again' });
+    expect(again.status).toBe(409);
+    expect(again.body.error.code).toBe('INVALID_TRANSITION');
+  });
+
+  it('in the database: a voided row never changes again (no un-void), and a void cannot touch other columns', async () => {
+    const up = await upload('a', '/attachments/test.records/2', PDF, 'application/pdf', 'void-db.pdf');
+    const raw = async (statement: string) => {
+      await client.query('BEGIN');
+      try {
+        await client.query(`SELECT set_config('app.user_id','1',true), set_config('app.company_id','1',true)`);
+        await client.query(statement, [up.body.id]);
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      }
+    };
+    await expect(raw(`UPDATE core.attachments SET voided_at = now(), voided_by = 1, void_reason = 'Wrong', file_name = 'y.pdf' WHERE id = $1`)).rejects.toThrow(
+      /APPEND_ONLY/,
+    );
+    await raw(`UPDATE core.attachments SET voided_at = now(), voided_by = 1, void_reason = 'Wrong file' WHERE id = $1`);
+    await expect(raw(`UPDATE core.attachments SET voided_at = NULL, voided_by = NULL, void_reason = NULL WHERE id = $1`)).rejects.toThrow(
+      /APPEND_ONLY/,
+    );
+    await expect(raw(`DELETE FROM core.attachments WHERE id = $1`)).rejects.toThrow(/APPEND_ONLY/);
   });
 });
 

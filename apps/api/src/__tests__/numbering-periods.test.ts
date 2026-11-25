@@ -217,7 +217,7 @@ describe('fiscal years and periods', () => {
     expect((await as('admin').get('/fiscal-periods')).status).toBe(403);
   });
 
-  it('closes a period with a reason, refuses closing twice, and reopens with a reason', async () => {
+  it('closes a period with a reason, refuses closing twice, and reopens with the Finance Manager e-signature (owner Q2)', async () => {
     const id = await periodId('Jul-2026');
     expect((await as('fm').post(`/fiscal-periods/${id}/close`, {})).status).toBe(400);
     expect((await as('ceo').post(`/fiscal-periods/${id}/close`, { reason: 'Month end' })).status).toBe(403);
@@ -229,16 +229,35 @@ describe('fiscal years and periods', () => {
     expect(again.status).toBe(409);
     expect(again.body.error.code).toBe('INVALID_TRANSITION');
 
-    const reopened = await as('fm').post(`/fiscal-periods/${id}/reopen`, { reason: 'Late supplier invoice' });
+    // A reason alone is no longer enough; the signature must be valid and mean APPROVED.
+    expect((await as('fm').post(`/fiscal-periods/${id}/reopen`, { reason: 'Late supplier invoice' })).status).toBe(400);
+    const wrongMeaning = await as('fm').post(`/fiscal-periods/${id}/reopen`, {
+      signature: { password: TEST_PASSWORD, meaning: 'REVIEWED', reason: 'Late supplier invoice' },
+    });
+    expect(wrongMeaning.status).toBe(400);
+    const wrongPassword = await as('fm').post(`/fiscal-periods/${id}/reopen`, {
+      signature: { password: 'not-the-password', meaning: 'APPROVED', reason: 'Late supplier invoice' },
+    });
+    expect(wrongPassword.status).toBe(403);
+    expect(wrongPassword.body.error.code).toBe('ESIGN_FAILED');
+    expect(
+      (await as('ceo').post(`/fiscal-periods/${id}/reopen`, { signature: { password: TEST_PASSWORD, meaning: 'APPROVED', reason: 'Late supplier invoice' } })).status,
+    ).toBe(403);
+
+    const reopened = await as('fm').post(`/fiscal-periods/${id}/reopen`, {
+      signature: { password: TEST_PASSWORD, meaning: 'APPROVED', reason: 'Late supplier invoice' },
+    });
+    expect(reopened.status).toBe(200);
     expect(reopened.body.status).toBe('OPEN');
     const { rows } = await client.query(
-      `SELECT from_status, to_status, reason FROM core.status_history
-        WHERE entity_table = 'core.fiscal_periods' AND entity_id = $1 AND from_status IS NOT NULL ORDER BY id`,
+      `SELECT h.from_status, h.to_status, h.reason, s.meaning
+         FROM core.status_history h LEFT JOIN core.e_signatures s ON s.id = h.esign_id
+        WHERE h.entity_table = 'core.fiscal_periods' AND h.entity_id = $1 AND h.from_status IS NOT NULL ORDER BY h.id`,
       [id],
     );
     expect(rows).toEqual([
-      { from_status: 'OPEN', to_status: 'CLOSED', reason: 'July month end' },
-      { from_status: 'CLOSED', to_status: 'OPEN', reason: 'Late supplier invoice' },
+      { from_status: 'OPEN', to_status: 'CLOSED', reason: 'July month end', meaning: null },
+      { from_status: 'CLOSED', to_status: 'OPEN', reason: 'Late supplier invoice', meaning: 'APPROVED' },
     ]);
   });
 
@@ -248,9 +267,49 @@ describe('fiscal years and periods', () => {
       /FORBIDDEN/,
     );
     await expect(asSystem((c) => c.query(`DELETE FROM core.fiscal_periods WHERE id = $1`, [id]))).rejects.toThrow(/APPEND_ONLY/);
-    await expect(asSystem((c) => c.query(`UPDATE core.fiscal_periods SET status = 'CLOSED' WHERE id = $1`, [id]))).rejects.toThrow(
+    const jul = await periodId('Jul-2026'); // the earliest OPEN period, so only the missing history row stops it
+    await expect(asSystem((c) => c.query(`UPDATE core.fiscal_periods SET status = 'CLOSED' WHERE id = $1`, [jul]))).rejects.toThrow(
       /INVALID_TRANSITION/,
     );
+  });
+
+  it('closes periods in order and reopens them in order (owner Q3), in the service and in the database', async () => {
+    const [jul, aug] = [await periodId('Jul-2026'), await periodId('Aug-2026')];
+    const sign = { signature: { password: TEST_PASSWORD, meaning: 'APPROVED', reason: 'Correction needed' } };
+
+    const early = await as('fm').post(`/fiscal-periods/${aug}/close`, { reason: 'August first' });
+    expect(early.status).toBe(409);
+    expect(early.body.error).toMatchObject({ code: 'PERIOD_OUT_OF_ORDER', details: { blocking: 'Jul-2026' } });
+
+    expect((await as('fm').post(`/fiscal-periods/${jul}/close`, { reason: 'July month end' })).status).toBe(200);
+    expect((await as('fm').post(`/fiscal-periods/${aug}/close`, { reason: 'August month end' })).status).toBe(200);
+
+    const reopenJul = await as('fm').post(`/fiscal-periods/${jul}/reopen`, sign);
+    expect(reopenJul.status).toBe(409);
+    expect(reopenJul.body.error).toMatchObject({ code: 'PERIOD_OUT_OF_ORDER', details: { blocking: 'Aug-2026' } });
+
+    expect((await as('fm').post(`/fiscal-periods/${aug}/reopen`, sign)).body.status).toBe('OPEN');
+    expect((await as('fm').post(`/fiscal-periods/${aug}/close`, { reason: 'August month end' })).status).toBe(200);
+
+    // Database backstop: a raw move with its history row is still refused out of order.
+    const fmId = (await client.query<{ id: string }>(`SELECT id FROM core.users WHERE username = 'p_fm'`)).rows[0]!.id;
+    const rawMove = (id: string, from: string, to: string) =>
+      asSystem(async (c) => {
+        await c.query(
+          `INSERT INTO core.status_history (entity_table, entity_id, from_status, to_status, actor_id, reason)
+           VALUES ('core.fiscal_periods', $1, $2, $3, $4, 'raw')`,
+          [id, from, to, fmId],
+        );
+        await c.query(`UPDATE core.fiscal_periods SET status = $2 WHERE id = $1`, [id, to]);
+      });
+    await expect(rawMove(jul, 'CLOSED', 'OPEN')).rejects.toThrow(/PERIOD_OUT_OF_ORDER/);
+    const oct = await periodId('Oct-2026');
+    await expect(rawMove(oct, 'OPEN', 'CLOSED')).rejects.toThrow(/PERIOD_OUT_OF_ORDER/);
+
+    // A new period is never created before a CLOSED one: FY 2025-26 ends in June 2026, before July.
+    const before = await as('fm').post('/fiscal-years', { startYear: 2025 });
+    expect(before.status).toBe(409);
+    expect(before.body.error.code).toBe('PERIOD_OUT_OF_ORDER');
   });
 });
 
@@ -258,7 +317,7 @@ describe('rule 11: a closed period accepts no postings', () => {
   it('assertPeriodOpen: open passes, closed is PERIOD_CLOSED, no period is PERIOD_NOT_DEFINED', async () => {
     const sep = await periodId('Sep-2026');
     const fm = await authenticateToken((await login({ username: 'p_fm', password: TEST_PASSWORD }, { ip: null, userAgent: null })).accessToken);
-    await closePeriod(fm, sep, 'September closed');
+    await closePeriod(fm, sep, 'September closed'); // Jul and Aug were closed above (periods close in order)
 
     await expect(withTransaction(systemContext(), (tx) => assertPeriodOpen(tx, '2026-10-15'))).resolves.toBeUndefined();
     await expect(withTransaction(systemContext(), (tx) => assertPeriodOpen(tx, '2026-09-15'))).rejects.toThrow(/PERIOD_CLOSED/);
@@ -287,6 +346,7 @@ describe('rule 11: a closed period accepts no postings', () => {
     await asSystem((c) => c.query(`INSERT INTO core.t_post (status, doc_date) VALUES ('POSTED', '2026-11-05')`));
     const nov = await periodId('Nov-2026');
     const fm = await authenticateToken((await login({ username: 'p_fm', password: TEST_PASSWORD }, { ip: null, userAgent: null })).accessToken);
+    await closePeriod(fm, await periodId('Oct-2026'), 'October closed'); // in order (owner Q3)
     await closePeriod(fm, nov, 'November closed');
     await asSystem((c) => c.query(`UPDATE core.t_post SET status = 'REVERSED' WHERE doc_date = '2026-11-05'`));
     await asSystem((c) => c.query(`INSERT INTO core.t_post (status, doc_date) VALUES ('POSTED', '2026-12-01')`));

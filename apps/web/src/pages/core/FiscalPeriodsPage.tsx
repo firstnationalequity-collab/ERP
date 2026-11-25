@@ -1,11 +1,14 @@
-// Fiscal periods (rule 11): monthly, July–June. Create a year (core.period.manage); close / reopen with a
-// reason (core.period.close). A closed period refuses every posting dated in it.
+// Fiscal periods (rule 11): monthly, July–June. Create a year (core.period.manage); close with a reason and
+// reopen with the Finance Manager e-signature (core.period.close; owner Q2). Periods close and reopen in order
+// (owner Q3): only the earliest open period shows Close, only the latest closed one shows Reopen.
+// A closed period refuses every posting dated in it.
 import { useMemo, useState } from 'react';
 import { App, Button, Form, Input, InputNumber, Modal, Select, Space, Table } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { fiscalYearOf, fiscalYearStarting, type FiscalPeriodDto } from '@albert/shared';
 import { api, errorText } from '../../api/client';
 import { useAuth } from '../../auth/AuthContext';
+import { ESignModal } from '../../components/ESignModal';
 import { PageHeader } from '../../components/PageHeader';
 import { StatusTag } from '../../components/StatusTag';
 import { companyToday, formatDate } from '../../lib/format';
@@ -21,6 +24,10 @@ export function FiscalPeriodsPage() {
   const shown = year ?? (years.includes(current) ? current : years[0]);
   const [creating, setCreating] = useState(false);
   const [acting, setActing] = useState<{ period: FiscalPeriodDto; to: 'close' | 'reopen' } | null>(null);
+  // Periods close and reopen in order (owner Q3): find the one period of each kind that can move.
+  const sorted = useMemo(() => [...(periods.data ?? [])].sort((a, b) => a.startDate.localeCompare(b.startDate)), [periods.data]);
+  const closable = sorted.find((p) => p.status === 'OPEN')?.id;
+  const reopenable = [...sorted].reverse().find((p) => p.status === 'CLOSED')?.id;
 
   return (
     <>
@@ -50,7 +57,7 @@ export function FiscalPeriodsPage() {
           {
             title: '',
             render: (_, p) =>
-              can('core.period.close') && (
+              can('core.period.close') && (p.id === closable || p.id === reopenable) && (
                 <Button type="link" danger={p.status === 'OPEN'} onClick={() => setActing({ period: p, to: p.status === 'OPEN' ? 'close' : 'reopen' })}>
                   {p.status === 'OPEN' ? 'Close' : 'Reopen'}
                 </Button>
@@ -68,18 +75,33 @@ export function FiscalPeriodsPage() {
           }}
         />
       )}
-      {acting && (
+      {acting?.to === 'close' && (
         <ReasonModal
-          title={`${acting.to === 'close' ? 'Close' : 'Reopen'} ${acting.period.name}`}
-          note={acting.to === 'close' ? 'No posting dated in this period will be accepted after closing.' : 'Postings into this period will be accepted again.'}
+          title={`Close ${acting.period.name}`}
+          note="No posting dated in this period will be accepted after closing."
           onClose={() => setActing(null)}
           onSubmit={async (reason) => {
-            await api(`/core/fiscal-periods/${acting.period.id}/${acting.to}`, { method: 'POST', body: { reason } });
-            void message.success(`${acting.period.name} ${acting.to === 'close' ? 'closed' : 'reopened'}`);
+            await api(`/core/fiscal-periods/${acting.period.id}/close`, { method: 'POST', body: { reason } });
+            void message.success(`${acting.period.name} closed`);
             await qc.invalidateQueries({ queryKey: ['fiscal-periods'] });
           }}
         />
       )}
+      <ESignModal
+        open={acting?.to === 'reopen'}
+        title={`Reopen ${acting?.period.name ?? ''}`}
+        meaning="APPROVED"
+        summary="Reopening changes reported figures: postings into this period will be accepted again. Your e-signature and reason are recorded."
+        okText="Reopen"
+        onCancel={() => setActing(null)}
+        onSubmit={async (r) => {
+          if (!acting) return;
+          await api(`/core/fiscal-periods/${acting.period.id}/reopen`, { method: 'POST', body: { signature: r.signature } });
+          void message.success(`${acting.period.name} reopened`);
+          setActing(null);
+          await qc.invalidateQueries({ queryKey: ['fiscal-periods'] });
+        }}
+      />
     </>
   );
 }

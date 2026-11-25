@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { numberPatternErrors } from '../../fiscal';
 import { NumberSeriesReset } from '../../enums';
 import type { FiscalPeriodStatus } from '../../enums';
+import { ESignRequest } from './esign';
 
 const reason = z.string().trim().min(3, 'Give a reason (at least 3 characters)').max(500);
 
@@ -57,6 +58,10 @@ export type CreateFiscalYearRequest = z.infer<typeof CreateFiscalYearRequest>;
 
 export const PeriodActionRequest = z.object({ reason }).strict();
 export type PeriodActionRequest = z.infer<typeof PeriodActionRequest>;
+
+/** Reopening a period: the Finance Manager's own e-signature (meaning APPROVED) carries the reason (owner Q2, 2026-11-19). */
+export const PeriodReopenRequest = z.object({ signature: ESignRequest }).strict();
+export type PeriodReopenRequest = z.infer<typeof PeriodReopenRequest>;
 
 export const FiscalPeriodQuery = z.object({ fiscalYear: z.string().regex(/^\d{4}-\d{2}$/).optional() });
 export type FiscalPeriodQuery = z.infer<typeof FiscalPeriodQuery>;

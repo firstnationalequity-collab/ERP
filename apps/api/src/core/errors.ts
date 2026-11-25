@@ -22,6 +22,7 @@ const statusFor: Partial<Record<ErrorCode, number>> = {
   NOT_FOUND: 404,
   ALREADY_EXISTS: 409,
   INVALID_TRANSITION: 409,
+  PERIOD_OUT_OF_ORDER: 409,
   RECORD_LOCKED: 409,
   IN_USE: 409,
   DUPLICATE_REQUEST: 409,

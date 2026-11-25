@@ -516,3 +516,67 @@ describe('QA-controlled keys by classification, not prefix (decisions "QA-contro
     expect(res.body.needsCountersign).toBe(false);
   });
 });
+
+describe('one user never holds both an admin role and an action role (owner Q4, 2026-11-19; 0022)', () => {
+  const rawAsSystem = async (statement: string, params: unknown[]) => {
+    await client.query('BEGIN');
+    try {
+      await client.query(`SELECT set_config('app.user_id','1',true), set_config('app.company_id','1',true)`);
+      await client.query(statement, params);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    }
+  };
+
+  it('refuses giving one user System Admin and an action role together, and changes nothing', async () => {
+    const id = await createTestUser({ username: 'a_mix1' });
+    const res = await as('admin').put(`/users/${id}/roles`, { roleIds: [roleIds.SYSTEM_ADMIN, roleIds.PLANNER], reason: 'Both hats' });
+    expect(res.status).toBe(422);
+    expect(res.body.error).toMatchObject({ code: 'ROLE_ADMIN_CONFLICT', details: { user: 'a_mix1' } });
+    expect(await rolesOf(id)).toEqual([]);
+  });
+
+  it('refuses adding an admin role to a user who already holds an action role', async () => {
+    expect(await rolesOf(ids.planner!)).toEqual(['PLANNER']);
+    const res = await as('admin').put(`/users/${ids.planner}/roles`, { roleIds: [roleIds.PLANNER, roleIds.SYSTEM_ADMIN], reason: 'Cover for IT' });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('ROLE_ADMIN_CONFLICT');
+    expect(await rolesOf(ids.planner!)).toEqual(['PLANNER']);
+  });
+
+  it('allows an admin role together with a view-only role', async () => {
+    const id = await createTestUser({ username: 'a_mix2' });
+    const res = await as('admin').put(`/users/${id}/roles`, { roleIds: [roleIds.SYSTEM_ADMIN, roleIds.CEO], reason: 'Admin who reads reports' });
+    expect(res.status).toBe(200);
+    expect(await rolesOf(id)).toEqual(['CEO', 'SYSTEM_ADMIN']);
+  });
+
+  it('refuses adding an action key to a view-only role that an admin user holds', async () => {
+    const created = await as('admin').post('/roles', { code: 'STOCK_READER', name: 'Stock reader', keys: ['inv.stock.view'], reason: 'Read stock' });
+    expect(created.status).toBe(201);
+    const id = await createTestUser({ username: 'a_mix3', roleCodes: ['SYSTEM_ADMIN', 'STOCK_READER'] });
+    const res = await as('admin2').put(`/roles/${created.body.id}/permissions`, { keys: ['inv.stock.view', 'inv.movement.post'], reason: 'Let readers move stock' });
+    expect(res.status).toBe(422);
+    expect(res.body.error).toMatchObject({ code: 'ROLE_ADMIN_CONFLICT', details: { user: 'a_mix3' } });
+    const { rows } = await client.query(
+      `SELECT p.key FROM core.role_permissions rp JOIN core.permissions p ON p.id = rp.permission_id WHERE rp.role_id = $1`,
+      [created.body.id],
+    );
+    expect(rows).toEqual([{ key: 'inv.stock.view' }]);
+    expect(await rolesOf(id)).toEqual(['STOCK_READER', 'SYSTEM_ADMIN']);
+  });
+
+  it('is enforced by the database too: a raw role assignment or role key insert is refused', async () => {
+    await expect(
+      rawAsSystem(`INSERT INTO core.user_roles (user_id, role_id) VALUES ($1, $2)`, [ids.planner, roleIds.SYSTEM_ADMIN]),
+    ).rejects.toThrow(/ROLE_ADMIN_CONFLICT/);
+    await expect(
+      rawAsSystem(
+        `INSERT INTO core.role_permissions (role_id, permission_id) SELECT $1, id FROM core.permissions WHERE key = 'inv.movement.post'`,
+        [roleIds.CEO],
+      ),
+    ).rejects.toThrow(/ROLE_ADMIN_CONFLICT/); // a_mix2 holds CEO and System Admin
+  });
+});
