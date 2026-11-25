@@ -22,6 +22,9 @@ export interface PurchItemRef {
   type: ItemType;
   status: ItemStatus;
   uomCode: string;
+  shelfLifeDays: number | null;
+  /** False: GRN lots start APPROVED with no QC sample request (owner 2026-11-25; 0028). */
+  qcRequired: boolean;
 }
 
 export async function purchVendors(q: Queryable, companyId: string, ids: string[]): Promise<Map<string, PurchVendorRef>> {

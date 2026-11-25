@@ -14,7 +14,16 @@ export async function vendorsByIds(q: Queryable, companyId: string, ids: string[
 export async function itemsByIds(q: Queryable, companyId: string, ids: string[]) {
   if (ids.length === 0) return [];
   return q
-    .select({ id: items.id, code: items.code, name: items.name, type: items.type, status: items.status, uomCode: uoms.code })
+    .select({
+      id: items.id,
+      code: items.code,
+      name: items.name,
+      type: items.type,
+      status: items.status,
+      uomCode: uoms.code,
+      shelfLifeDays: items.shelfLifeDays,
+      qcRequired: items.qcRequired,
+    })
     .from(items)
     .innerJoin(uoms, eq(uoms.id, items.baseUomId))
     .where(and(eq(items.companyId, companyId), inArray(items.id, ids)));

@@ -58,6 +58,8 @@ export const items = master.table('items', {
   shelfLifeDays: integer('shelf_life_days'),
   retestDays: integer('retest_days'),
   isControlled: boolean('is_controlled').notNull().default(false),
+  // Owner 2026-11-25 (0028): defaults by type in the insert trigger; after DRAFT a change needs a QA countersign.
+  qcRequired: boolean('qc_required').notNull(),
   storageZone: text('storage_zone').$type<StorageZone>().notNull().default('AMBIENT'),
   /** Changed only through core/transition (0011). */
   status: text('status').$type<ItemStatus>().notNull(),

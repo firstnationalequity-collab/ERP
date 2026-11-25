@@ -59,6 +59,10 @@ export const ErrorCodes = [
   'RATE_MISSING',
   /** A GRN would receive more than the PO line's open quantity plus the over-receipt tolerance (§7.5; 0027). */
   'OVER_RECEIPT',
+  /** Remaining shelf life on the GRN date below setting purch.grn.min_shelf_life_pct (owner 2026-11-25; 0028). */
+  'SHELF_LIFE_TOO_SHORT',
+  /** A GRN reversal refused: a lot was sampled, moved, reserved or changed status (owner 2026-11-25; 0028). */
+  'GRN_LOTS_IN_USE',
   'CREDIT_LIMIT_EXCEEDED',
   'OPEN_DEVIATION',
   'DUPLICATE_REQUEST',

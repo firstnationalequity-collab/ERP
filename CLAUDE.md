@@ -27,7 +27,7 @@ pnpm monorepo, TypeScript strict everywhere.
    - QC approves or rejects material lots (RM, PM, API, EXCIPIENT).
    - QA places and lifts HOLD, and releases, re-releases or rejects FG lots, batches and return lots. One exception: a failed QC result on an FG lot moves it to HOLD automatically (QC result key); QA then decides.
    - Warehouse Manager may only move a REJECTED lot to DESTROYED or RETURNED, with a QA witness e-signature.
-   - Lots are created by the system in their starting status (QUARANTINE at GRN or verified output; HOLD for return lots).
+   - Lots are created by the system in their starting status: lots are created in QUARANTINE, or APPROVED when the item does not require QC (item `qc_required`, at GRN); HOLD for return lots.
    - No other role, including CEO and admin, can change a lot or batch status.
 2. Issue/reserve only APPROVED lots; dispatch only RELEASED FG lots. Check in the service AND in the DB.
 3. No negative stock (CHECK constraint on `inv.stock_balances`).

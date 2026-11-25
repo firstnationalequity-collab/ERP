@@ -206,3 +206,50 @@ export async function findLots(q: Queryable, companyId: string, ids: string[]): 
   if (ids.length === 0) return [];
   return q.select().from(lots).where(and(eq(lots.companyId, companyId), inArray(lots.id, ids)));
 }
+
+/** The original (not reversal) movements a document posted, oldest first. */
+export async function movementsOfDocument(q: Queryable, companyId: string, refDocType: string, refDocId: string): Promise<MovementRow[]> {
+  return q
+    .select()
+    .from(stockMovements)
+    .where(
+      and(
+        eq(stockMovements.companyId, companyId),
+        eq(stockMovements.refDocType, refDocType),
+        eq(stockMovements.refDocId, refDocId),
+        sql`${stockMovements.reversalOf} IS NULL`,
+      ),
+    )
+    .orderBy(asc(stockMovements.id));
+}
+
+/**
+ * Per lot: movements other than the document's own (and their reversals) and rounding sweeps, status changes after
+ * creation, and reservations ever made. Mirrors SQL purch.grn_lot_untouched (0028).
+ */
+export async function lotTouches(
+  q: Queryable,
+  lotIds: string[],
+  refDocType: string,
+  refDocId: string,
+): Promise<{ lotId: string; lotNo: string; otherMovements: number; statusChanges: number; reservations: number }[]> {
+  if (lotIds.length === 0) return [];
+  const ids = sql.join(lotIds.map((id) => sql`${id}::bigint`), sql`, `);
+  const res = await q.execute<{ lot_id: string; lot_no: string; other_movements: string; status_changes: string; reservations: string }>(sql`
+    SELECT l.id::text AS lot_id, l.lot_no,
+           (SELECT count(*) FROM inv.stock_movements m
+             WHERE m.lot_id = l.id AND m.movement_type <> 'ROUNDING_SWEEP'
+               AND NOT (m.ref_doc_type = ${refDocType} AND m.ref_doc_id = ${refDocId}::bigint
+                        AND m.movement_type = 'RECEIPT'))::text AS other_movements,
+           (SELECT count(*) - 1 FROM core.status_history h
+             WHERE h.entity_table = 'inv.lots' AND h.entity_id = l.id::text)::text AS status_changes,
+           (SELECT count(*) FROM inv.stock_reservations r WHERE r.lot_id = l.id)::text AS reservations
+      FROM inv.lots l WHERE l.id IN (${ids}) ORDER BY l.id`);
+  return res.rows.map((r) => ({
+    lotId: r.lot_id,
+    lotNo: r.lot_no,
+    otherMovements: Number(r.other_movements),
+    statusChanges: Number(r.status_changes),
+    reservations: Number(r.reservations),
+  }));
+}

@@ -86,7 +86,7 @@ export const exchangeRates = fin.table('exchange_rates', {
   companyId: companyId(),
   currency: text('currency').notNull(),
   rateDate: date('rate_date', { mode: 'string' }).notNull(),
-  rate: numeric('rate', { precision: 9, scale: 4 }).notNull(),
+  rate: numeric('rate', { precision: 18, scale: 6 }).notNull(),
   source: text('source').notNull(),
   ...auditColumns(),
 });

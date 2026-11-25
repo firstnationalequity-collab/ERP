@@ -6,6 +6,8 @@
 //    deactivated it. Deactivation and reactivation need a reason.
 //  - After DRAFT, changing a GMP item's shelf life, retest period, storage zone or controlled flag needs, in the
 //    same request, a countersign by another person holding master.item.approve.
+//  - After DRAFT, changing qc_required of ANY item needs the same QA countersign (owner 2026-11-25, answer 4; 0028).
+//    It starts true for RM, PM, API, EXCIPIENT and false for the others, unless the creator says otherwise.
 //  - Code, type and base UoM never change (DB guard too).
 // Only ACTIVE items may be used by other masters and documents (is_active = status ACTIVE).
 import { eq } from 'drizzle-orm';
@@ -13,6 +15,8 @@ import {
   GmpItemSensitiveFields,
   GmpItemTypes,
   ItemStatus,
+  QcItemSensitiveFields,
+  qcRequiredDefault,
   type CreateItemRequest,
   type ItemDto,
   type ItemType,
@@ -94,7 +98,7 @@ export async function createItem(auth: AuthContext, input: CreateItemRequest): P
     await assertReference(tx, 'master.item_categories', auth.companyId, input.categoryId, 'Item category');
     await assertReference(tx, 'master.uoms', auth.companyId, input.baseUomId, 'Base unit of measure');
     if (input.taxCodeId) await assertItemTaxCode(tx, auth.companyId, input.taxCodeId);
-    const created = await repo.insertItem(tx, { ...input, status: 'DRAFT' });
+    const created = await repo.insertItem(tx, { ...input, qcRequired: input.qcRequired ?? qcRequiredDefault(input.type), status: 'DRAFT' });
     await recordInitialStatus(tx, OtherItemMoves, { entityId: created.id, to: 'DRAFT', actor: auth });
     return created;
   });
@@ -116,14 +120,16 @@ export async function updateItem(auth: AuthContext, id: string, input: UpdateIte
     if (shelf != null && retest != null && retest > shelf) {
       throw new AppError('VALIDATION_FAILED', 'Retest period cannot exceed shelf life', { field: 'retestDays' });
     }
+    const changed = (f: (typeof GmpItemSensitiveFields)[number] | (typeof QcItemSensitiveFields)[number]) =>
+      f in changes && (changes[f] ?? null) !== (item[f] ?? null);
     const sensitive =
-      item.status !== 'DRAFT' && isGmpItemType(item.type)
-        ? GmpItemSensitiveFields.filter((f) => f in changes && (changes[f] ?? null) !== (item[f] ?? null))
-        : [];
+      item.status === 'DRAFT'
+        ? []
+        : [...(isGmpItemType(item.type) ? GmpItemSensitiveFields.filter(changed) : []), ...QcItemSensitiveFields.filter(changed)];
     await repo.updateItem(tx, id, changes);
     if (sensitive.length > 0) {
       await applyCountersign(tx, proof, { table: 'master.items', id }, ITEM_APPROVE_KEY,
-        `Changing ${sensitive.join(', ')} of a GMP item needs a QA countersign (${ITEM_APPROVE_KEY})`, [...sensitive]);
+        `Changing ${sensitive.join(', ')} of this item needs a QA countersign (${ITEM_APPROVE_KEY})`, [...sensitive]);
     }
   });
   return getItem(auth, id);

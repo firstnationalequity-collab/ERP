@@ -13,6 +13,12 @@ export const GmpItemTypes: readonly ItemType[] = ['RM', 'PM', 'API', 'EXCIPIENT'
 
 /** GMP materials bought from vendors: approved sources (AVL) are kept for these, and PO lines need one. */
 export const AvlItemTypes: readonly ItemType[] = ['RM', 'PM', 'API', 'EXCIPIENT'];
+/**
+ * Owner 2026-11-25 (answer 4): an item's qc_required starts true for these types, false for the others. A GRN lot of
+ * an item with qc_required = false is created APPROVED with no QC sample request. Changing it needs QA (0028).
+ */
+export const QcRequiredByDefaultTypes: readonly ItemType[] = ['RM', 'PM', 'API', 'EXCIPIENT'];
+export const qcRequiredDefault = (type: ItemType): boolean => QcRequiredByDefaultTypes.includes(type);
 
 /** Item lifecycle: created DRAFT; ACTIVE items are usable in documents. */
 export const ItemStatus = ['DRAFT', 'ACTIVE', 'INACTIVE'] as const;
@@ -126,8 +132,15 @@ export type Incoterm = (typeof Incoterm)[number];
 export const PostingStatus = ['DRAFT', 'POSTED', 'REVERSED'] as const;
 export type PostingStatus = (typeof PostingStatus)[number];
 
-/** QC sample request (M3 stub, owner 2026-11-25 Q1: created OPEN with each GRN lot; M4 adds the sampling moves). */
-export const SampleRequestStatus = ['OPEN'] as const;
+/** GRN (0027, 0028): DRAFT → POSTED; DRAFT → CANCELLED (reason); POSTED → REVERSED (lots untouched; owner 2026-11-25). */
+export const GrnStatus = ['DRAFT', 'POSTED', 'CANCELLED', 'REVERSED'] as const;
+export type GrnStatus = (typeof GrnStatus)[number];
+
+/**
+ * QC sample request (M3 stub, owner 2026-11-25 Q1: created OPEN with each GRN lot; M4 adds the sampling moves).
+ * CANCELLED: its GRN was reversed before any sample was taken (owner 2026-11-25, answer 5; 0028).
+ */
+export const SampleRequestStatus = ['OPEN', 'CANCELLED'] as const;
 export type SampleRequestStatus = (typeof SampleRequestStatus)[number];
 
 export const DeviationClass = ['MINOR', 'MAJOR', 'CRITICAL'] as const;

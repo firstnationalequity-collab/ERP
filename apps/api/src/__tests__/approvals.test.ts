@@ -137,7 +137,7 @@ describe('band selection on the seeded PO matrix (PKR, placeholder limits)', () 
       `SELECT amount, currency, exchange_rate, measured_amount, measured_percent FROM core.approvals WHERE id = $1`,
       [approvalId],
     );
-    expect(rows[0]).toEqual({ amount: '2000.00', currency: 'USD', exchange_rate: '280.5000', measured_amount: '561000.00', measured_percent: null });
+    expect(rows[0]).toEqual({ amount: '2000.00', currency: 'USD', exchange_rate: '280.500000', measured_amount: '561000.00', measured_percent: null });
   });
 
   it('uses exact decimals at the boundary: USD 1,782.53 × 280.5000 = 499,999.67 → Purchase Manager', async () => {
@@ -562,7 +562,7 @@ describe('money NUMERIC(18,2), percents NUMERIC(9,4) (rule 10, rules review D)',
       { table_name: 'approval_rules', column_name: 'upper_amount', numeric_precision: 18, numeric_scale: 2 },
       { table_name: 'approval_rules', column_name: 'upper_percent', numeric_precision: 9, numeric_scale: 4 },
       { table_name: 'approvals', column_name: 'amount', numeric_precision: 18, numeric_scale: 2 },
-      { table_name: 'approvals', column_name: 'exchange_rate', numeric_precision: 9, numeric_scale: 4 },
+      { table_name: 'approvals', column_name: 'exchange_rate', numeric_precision: 18, numeric_scale: 6 },
       { table_name: 'approvals', column_name: 'measured_amount', numeric_precision: 18, numeric_scale: 2 },
       { table_name: 'approvals', column_name: 'measured_percent', numeric_precision: 9, numeric_scale: 4 },
     ]);

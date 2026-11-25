@@ -1,4 +1,4 @@
-// M3 task 3: GRN from PO → lots in QUARANTINE, receipt movement + GRN_RECEIPT journal, QC sample request, PO
+// M3 task 3 + owner answers 2026-11-25 (0028: rates, qc_required, shelf life, cancel, reversal). GRN from PO → lots in QUARANTINE, receipt movement + GRN_RECEIPT journal, QC sample request, PO
 // received; labels. Happy paths and every refusal, through the real HTTP endpoints, plus the 0027 database guards.
 import pg from 'pg';
 import request from 'supertest';
@@ -7,6 +7,10 @@ import { createApp } from '../../../app';
 import { databaseUrl } from '../../../config/env';
 import { runSeed } from '../../../db/seed/run';
 import { createTestUser, TEST_PASSWORD } from '../../../test/factories';
+import { systemContext, withTransaction } from '../../../db/client';
+import { permissionKeysForUser } from '../../../core/auth/auth.repo';
+import type { Actor } from '../../../core/transition/transition';
+import { reserve, transfer } from '../../../engines/inventory';
 
 const app = createApp();
 const client = new pg.Client({ connectionString: databaseUrl });
@@ -185,7 +189,7 @@ describe('GRN: scan the PO', () => {
 });
 
 describe('GRN posting (happy path, local PO)', () => {
-  it('posts lots in QUARANTINE, receipt movements, a balanced GRN_RECEIPT journal, sample requests; the PO is partly then fully received', async () => {
+  it('posts lots in QUARANTINE (APPROVED for an item without QC), receipt movements, a balanced GRN_RECEIPT journal, sample requests; the PO is partly then fully received', async () => {
     const po = await approvedPo([
       { itemId: ids.rm!, qty: '100', unitPrice: '50.125' },
       { itemId: ids.spare!, qty: '3', unitPrice: '1200' },
@@ -208,7 +212,8 @@ describe('GRN posting (happy path, local PO)', () => {
     expect(g).toMatchObject({ status: 'POSTED', exchangeRate: '1.000000', exchangeRateDate: GRN_DATE, postedBy: users.store });
     expect(g.lines[0]).toMatchObject({ unitCost: '50.125000', valuePkr: '3007.50', lotStatus: 'QUARANTINE', sampleRequest: { status: 'OPEN' } });
     expect(g.lines[0].lotNo).toMatch(/^ML26-\d{5}$/);
-    expect(g.lines[1]).toMatchObject({ unitCost: '1200.000000', valuePkr: '3600.00', lotStatus: 'QUARANTINE' });
+    // Owner 2026-11-25 (answer 4): a spare needs no QC — its lot starts APPROVED with no sample request.
+    expect(g.lines[1]).toMatchObject({ unitCost: '1200.000000', valuePkr: '3600.00', lotStatus: 'APPROVED', sampleRequest: null });
     expect(g.totalPkr).toBe('6607.50');
     expect(g.journalDocNo).toMatch(/^SJ-/);
 
@@ -432,5 +437,252 @@ describe('GRN database guards (0027)', () => {
         );
       }),
     ).rejects.toThrow(/unit cost must be|no matching GRN lot/);
+  });
+});
+
+// ---------------------------------------------------------------- owner answers 2026-11-25 (0028)
+
+const reverse = (who: string, grnId: string, body: object = sign('APPROVED')) =>
+  call(who, 'post', `/purch/grns/${grnId}/reverse`, body).set('Idempotency-Key', `grn-rev-${++keyNo}`);
+const setShelfPct = (pct: number) =>
+  raw(`INSERT INTO core.settings (key, value) VALUES ('purch.grn.min_shelf_life_pct', $1::jsonb)
+       ON CONFLICT (company_id, key) DO UPDATE SET value = EXCLUDED.value`, [JSON.stringify(pct)]);
+const countersignBy = (who: string) => ({ countersign: { username: `grn_${who}`, password: TEST_PASSWORD, meaning: 'APPROVED', reason: 'QC need reviewed' } });
+
+async function actorOf(who: string): Promise<Actor> {
+  const keys = await withTransaction(systemContext('test'), (tx) => permissionKeysForUser(tx, users[who]!));
+  return { userId: users[who]!, companyId: '1', permissions: new Set(keys) };
+}
+
+/** A posted GRN receiving the given PO lines in full; returns the GRN dto. */
+async function postedGrn(po: { id: string; lineIds: string[] }, lines: object[]) {
+  const draft = await call('store', 'post', '/purch/grns', grnBody(po.id, lines));
+  expect(draft.status).toBe(201);
+  const res = await post('store', draft.body.id);
+  expect(res.status).toBe(200);
+  return res.body;
+}
+
+describe('exchange rates NUMERIC(18,6) (owner 2026-11-25, answer 1)', () => {
+  it('stores 6 decimals in the rate table, the PO and the approval record; the GRN converts at the full rate', async () => {
+    expect((await call('fm', 'post', '/fin/exchange-rates', { currency: 'USD', rateDate: GRN_DATE, rate: '281.123456', source: 'SBP' })).status).toBe(200);
+    const po = await approvedPo([{ itemId: ids.api!, qty: '2', unitPrice: '100' }], { vendorId: ids.usdVendor, currency: 'USD' });
+    const { rows } = await client.query(
+      `SELECT p.exchange_rate AS po, a.exchange_rate AS approval FROM purch.purchase_orders p
+         JOIN core.approvals a ON a.doc_table = 'purch.purchase_orders' AND a.doc_id = p.id::text WHERE p.id = $1`,
+      [po.id],
+    );
+    expect(rows[0]).toEqual({ po: '280.000000', approval: '280.000000' });
+    const g = await postedGrn(po, [{ poLineId: po.lineIds[0], qty: '2', approvedSourceId: ids.usdApiSource, ...apiDates }]);
+    expect(g).toMatchObject({ exchangeRate: '281.123456' });
+    expect(g.lines[0]).toMatchObject({ unitCost: '28112.345600', valuePkr: '56224.69' });
+  });
+});
+
+describe('item qc_required (owner 2026-11-25, answer 4)', () => {
+  it('defaults by type: true for RM, PM, API, EXCIPIENT; false for the others', async () => {
+    const mk = (code: string, type: string) =>
+      call('wm', 'post', '/master/items', { code, name: code, type, categoryId: ids.category, baseUomId: ids.uom });
+    expect((await mk('QCD-RM', 'RM')).body.qcRequired).toBe(true);
+    expect((await mk('QCD-EXC', 'EXCIPIENT')).body.qcRequired).toBe(true);
+    expect((await mk('QCD-SP', 'SPARE')).body.qcRequired).toBe(false);
+    expect((await mk('QCD-CON', 'CONSUMABLE')).body.qcRequired).toBe(false);
+    expect((await mk('QCD-RM2', 'RM')).body.qcRequired).toBe(true);
+  });
+
+  it('after DRAFT, changing it needs a QA countersign by another person, for any item type (service and database)', async () => {
+    const rm = await item('RM-QCF', 'RM');
+    const url = `/master/items/${rm}`;
+    const none = await call('wm', 'patch', url, { qcRequired: false });
+    expect([none.status, none.body.error.code]).toEqual([403, 'COUNTERSIGN_REQUIRED']);
+    const notQa = await call('wm', 'patch', url, { qcRequired: false, ...countersignBy('pm') });
+    expect([notQa.status, notQa.body.error.code]).toEqual([403, 'FORBIDDEN']);
+    const ok = await call('wm', 'patch', url, { qcRequired: false, ...countersignBy('qa') });
+    expect([ok.status, ok.body.qcRequired]).toEqual([200, false]);
+    // A spare (non-GMP) too.
+    const sp = await item('SP-QCF', 'SPARE');
+    expect((await call('wm', 'patch', `/master/items/${sp}`, { qcRequired: true })).body.error.code).toBe('COUNTERSIGN_REQUIRED');
+    // Database backstop: no APPROVED e-signature by a master.item.approve holder in the transaction.
+    await expect(raw(`UPDATE master.items SET qc_required = true WHERE id = $1`, [rm], users.wm)).rejects.toThrow(/COUNTERSIGN_REQUIRED/);
+  });
+
+  it('a GRN lot of an item without QC starts APPROVED with no sample request; with QC: QUARANTINE + request', async () => {
+    const rm = await item('RM-NOQC', 'RM');
+    const src = await approvedSource(ids.vendor!, rm);
+    expect((await call('wm', 'patch', `/master/items/${rm}`, { qcRequired: false, ...countersignBy('qa') })).status).toBe(200);
+    const po = await approvedPo([
+      { itemId: rm, qty: '4', unitPrice: '10' },
+      { itemId: ids.rm!, qty: '4', unitPrice: '10' },
+    ]);
+    const g = await postedGrn(po, [
+      { poLineId: po.lineIds[0], qty: '4', approvedSourceId: src },
+      rmLine(po.lineIds[1]!, '4'),
+    ]);
+    expect(g.lines[0]).toMatchObject({ lotStatus: 'APPROVED', sampleRequest: null });
+    expect(g.lines[1]).toMatchObject({ lotStatus: 'QUARANTINE', sampleRequest: { status: 'OPEN' } });
+    expect(await count(`SELECT count(*) AS n FROM core.status_history WHERE entity_table = 'inv.lots' AND entity_id = $1 AND from_status IS NULL AND to_status = 'APPROVED' AND actor_id = $2`, [g.lines[0].lotId, users.store])).toBe(1);
+    // The database refuses an APPROVED lot for an item that needs QC.
+    await expect(
+      inTx(users.store!, async () => {
+        const lot = await one(`INSERT INTO inv.lots (item_id, lot_no, status, unit_cost, source) VALUES ($1, 'X-QC-1', 'APPROVED', 1, 'GRN') RETURNING id`, [ids.rm]);
+        await history('inv.lots', lot, null, 'APPROVED', users.store!);
+      }),
+    ).rejects.toThrow(/created in QUARANTINE/);
+  });
+});
+
+describe('GRN remaining shelf life (owner 2026-11-25, answer 3)', () => {
+  it('is off by default; at 50% refuses short-dated material on save and at posting; uses the item shelf life without a mfg date', async () => {
+    const po = await approvedPo([{ itemId: ids.rm!, qty: '50', unitPrice: '1' }]);
+    const short = { mfgDate: '2026-01-01', expiryDate: '2027-01-01' }; // 38 of 365 days left on 24-11-2026
+    const long = { mfgDate: '2026-11-01', expiryDate: '2028-11-24' };
+    const draft = await call('store', 'post', '/purch/grns', grnBody(po.id, [rmLine(po.lineIds[0]!, '5', short)]));
+    expect(draft.status).toBe(201); // setting 0 = off
+    try {
+      await setShelfPct(50);
+      const refused = await call('store', 'post', '/purch/grns', grnBody(po.id, [rmLine(po.lineIds[0]!, '5', short)]));
+      expect([refused.status, refused.body.error.code]).toEqual([422, 'SHELF_LIFE_TOO_SHORT']);
+      expect(refused.body.error.details).toMatchObject({ daysLeft: 38, totalDays: 365, minPct: 50 });
+      // The draft saved while the setting was off is refused at posting.
+      expect((await post('store', draft.body.id)).body.error.code).toBe('SHELF_LIFE_TOO_SHORT');
+      expect((await call('store', 'post', '/purch/grns', grnBody(po.id, [rmLine(po.lineIds[0]!, '5', long)]))).status).toBe(201);
+      // No mfg date: the item's shelf life is the total; without one, the mfg date is asked for.
+      const noMfg = await call('store', 'post', '/purch/grns', grnBody(po.id, [rmLine(po.lineIds[0]!, '5', { expiryDate: '2027-06-01' })]));
+      expect([noMfg.status, noMfg.body.error.details.field]).toEqual([400, 'mfgDate']);
+      await raw(`UPDATE master.items SET shelf_life_days = 365 WHERE id = $1`, [ids.spare], users.pm);
+      const spPo = await approvedPo([{ itemId: ids.spare!, qty: '5', unitPrice: '1' }]);
+      const spShort = await call('store', 'post', '/purch/grns', grnBody(spPo.id, [{ poLineId: spPo.lineIds[0], qty: '1', expiryDate: '2027-01-24' }]));
+      expect([spShort.status, spShort.body.error.details]).toEqual([422, expect.objectContaining({ daysLeft: 61, totalDays: 365 })]);
+      expect((await call('store', 'post', '/purch/grns', grnBody(spPo.id, [{ poLineId: spPo.lineIds[0], qty: '1', expiryDate: '2027-11-24' }]))).status).toBe(201);
+      // Database backstop on the line.
+      await expect(raw(`UPDATE purch.grn_lines SET mfg_date = '2026-01-01', expiry_date = '2027-01-01' WHERE grn_id = $1`, [draft.body.id], users.store)).rejects.toThrow(/SHELF_LIFE_TOO_SHORT/);
+    } finally {
+      await setShelfPct(0);
+      await raw(`UPDATE master.items SET shelf_life_days = NULL WHERE id = $1`, [ids.spare], users.pm);
+    }
+  });
+});
+
+describe('GRN cancel (owner 2026-11-25, answer 5)', () => {
+  it('cancels a DRAFT with a reason (purch.grn.post); refuses without a reason, without the key, and once posted', async () => {
+    const po = await approvedPo([{ itemId: ids.spare!, qty: '5', unitPrice: '10' }]);
+    const draft = await call('store', 'post', '/purch/grns', grnBody(po.id, [{ poLineId: po.lineIds[0], qty: '2' }]));
+    const url = `/purch/grns/${draft.body.id}/cancel`;
+    expect((await call('store', 'post', url, {})).status).toBe(400);
+    expect((await call('buyer', 'post', url, { reason: 'Wrong PO scanned' })).status).toBe(403);
+    const ok = await call('store', 'post', url, { reason: 'Wrong PO scanned' });
+    expect([ok.status, ok.body.status, ok.body.totalPkr]).toEqual([200, 'CANCELLED', null]);
+    expect(await count(`SELECT count(*) AS n FROM core.status_history WHERE entity_table = 'purch.grns' AND entity_id = $1 AND to_status = 'CANCELLED' AND reason = 'Wrong PO scanned'`, [draft.body.id])).toBe(1);
+    expect((await post('store', draft.body.id)).body.error.code).toBe('RECORD_LOCKED');
+    expect((await call('store', 'post', url, { reason: 'again' })).status).toBe(409);
+    const g = await postedGrn(po, [{ poLineId: po.lineIds[0], qty: '1' }]);
+    const posted = await call('store', 'post', `/purch/grns/${g.id}/cancel`, { reason: 'Too late' });
+    expect([posted.status, posted.body.error.code]).toEqual([409, 'INVALID_TRANSITION']);
+  });
+});
+
+describe('GRN reversal (owner 2026-11-25, answer 5)', () => {
+  it('reverses an untouched GRN in one transaction: stock, journal, sample requests, PO quantities and status', async () => {
+    const po = await approvedPo([
+      { itemId: ids.rm!, qty: '10', unitPrice: '12.5' },
+      { itemId: ids.spare!, qty: '2', unitPrice: '100' },
+    ]);
+    const g = await postedGrn(po, [rmLine(po.lineIds[0]!, '10'), { poLineId: po.lineIds[1], qty: '2' }]);
+    expect((await call('store', 'get', `/purch/pos/${po.id}`)).body.status).toBe('RECEIVED');
+
+    const res = await reverse('wm', g.id, { signature: { password: TEST_PASSWORD, meaning: 'APPROVED', reason: 'Delivered to the wrong site' } });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ status: 'REVERSED', journalDocNo: g.journalDocNo, totalPkr: '325.00' });
+    expect(res.body.reversalJournalDocNo).toMatch(/^SJ-/);
+    expect(res.body.lines.map((l: { lotStatus: string; sampleRequest: unknown }) => [l.lotStatus, l.sampleRequest])).toEqual([
+      ['QUARANTINE', expect.objectContaining({ status: 'CANCELLED' })],
+      ['APPROVED', null],
+    ]);
+    // Stock and GL back to zero for this GRN; the lots are kept.
+    const { rows: led } = await client.query(
+      `SELECT sum(qty)::text AS qty, sum(value)::text AS value FROM inv.stock_movements WHERE ref_doc_type = 'GRN' AND ref_doc_id = $1`, [g.id]);
+    expect(led[0]).toEqual({ qty: '0.0000', value: '0.00' });
+    const { rows: gl } = await client.query(
+      `SELECT sum(l.debit)::text AS dr, sum(l.credit)::text AS cr, array_agg(DISTINCT e.status ORDER BY e.status) AS st
+         FROM fin.journal_entries e JOIN fin.journal_lines l ON l.entry_id = e.id WHERE e.source_type = 'GRN' AND e.source_id = $1`, [g.id]);
+    expect(gl[0]).toEqual({ dr: '650.00', cr: '650.00', st: ['POSTED', 'REVERSED'] });
+    expect(await count(`SELECT count(*) AS n FROM inv.lots WHERE id = ANY($1::bigint[])`, [g.lines.map((l: { lotId: string }) => l.lotId)])).toBe(2);
+    // E-signature on the move; PO back to APPROVED with nothing received.
+    expect(await count(`SELECT count(*) AS n FROM core.status_history WHERE entity_table = 'purch.grns' AND entity_id = $1 AND to_status = 'REVERSED' AND esign_id IS NOT NULL AND actor_id = $2`, [g.id, users.wm])).toBe(1);
+    const after = (await call('store', 'get', `/purch/pos/${po.id}`)).body;
+    expect(after.status).toBe('APPROVED');
+    expect(after.lines.map((l: { receivedQty: string }) => l.receivedQty)).toEqual(['0.0000', '0.0000']);
+    // The goods can be received again.
+    await postedGrn(po, [rmLine(po.lineIds[0]!, '10')]);
+    expect((await call('store', 'get', `/purch/pos/${po.id}`)).body.status).toBe('PARTIALLY_RECEIVED');
+  });
+
+  it('puts a RECEIVED PO back to PARTIALLY_RECEIVED when an earlier GRN stays', async () => {
+    const po = await approvedPo([{ itemId: ids.spare!, qty: '10', unitPrice: '1' }]);
+    await postedGrn(po, [{ poLineId: po.lineIds[0], qty: '6' }]);
+    const g2 = await postedGrn(po, [{ poLineId: po.lineIds[0], qty: '4' }]);
+    expect((await reverse('wm', g2.id)).status).toBe(200);
+    const after = (await call('store', 'get', `/purch/pos/${po.id}`)).body;
+    expect([after.status, after.lines[0].receivedQty]).toEqual(['PARTIALLY_RECEIVED', '6.0000']);
+  });
+
+  it('refuses: without purch.grn.reverse, without Idempotency-Key, a bad signature, a DRAFT, a second reversal', async () => {
+    const po = await approvedPo([{ itemId: ids.spare!, qty: '5', unitPrice: '1' }]);
+    const g = await postedGrn(po, [{ poLineId: po.lineIds[0], qty: '3' }]);
+    expect((await reverse('store', g.id)).status).toBe(403);
+    expect((await call('wm', 'post', `/purch/grns/${g.id}/reverse`, sign('APPROVED'))).status).toBe(400);
+    expect((await reverse('wm', g.id, { signature: { password: 'wrong-password', meaning: 'APPROVED', reason: 'Wrong' } })).body.error.code).toBe('ESIGN_FAILED');
+    expect((await reverse('wm', g.id, sign('REJECTED'))).status).toBe(400);
+    expect((await reverse('wm', g.id, { signature: { password: TEST_PASSWORD, meaning: 'APPROVED' } })).status).toBe(400); // no reason
+    const draft = await call('store', 'post', '/purch/grns', grnBody(po.id, [{ poLineId: po.lineIds[0], qty: '1' }]));
+    expect([(await reverse('wm', draft.body.id)).status]).toEqual([409]);
+    expect((await reverse('wm', g.id)).status).toBe(200);
+    const again = await reverse('wm', g.id);
+    expect([again.status, again.body.error.code]).toEqual([409, 'INVALID_TRANSITION']);
+  });
+
+  it('refuses with GRN_LOTS_IN_USE once a lot has moved or been reserved (the route is QC rejection + return to vendor)', async () => {
+    const loc2 = await inTx('1', () =>
+      one(`INSERT INTO master.locations (warehouse_id, code, name) SELECT warehouse_id, 'REV2', 'Second bay' FROM master.locations WHERE id = $1 RETURNING id`, [ids.loc]),
+    );
+    const wm = await actorOf('wm');
+    // Moved: a transfer out of the receiving location.
+    const po = await approvedPo([{ itemId: ids.rm!, qty: '5', unitPrice: '2' }]);
+    const g = await postedGrn(po, [rmLine(po.lineIds[0]!, '5')]);
+    await withTransaction({ userId: wm.userId, companyId: '1' }, (tx) =>
+      transfer(tx, wm, { lotId: g.lines[0].lotId, fromLocationId: ids.loc!, toLocationId: loc2, qty: '1', date: GRN_DATE, refDocType: 'TRANSFER', refDocId: '901' }),
+    );
+    const moved = await reverse('wm', g.id);
+    expect([moved.status, moved.body.error.code]).toEqual([422, 'GRN_LOTS_IN_USE']);
+    expect(moved.body.error.details.lots[0]).toMatchObject({ lotNo: g.lines[0].lotNo, touches: ['2 other movement(s)'] });
+    // Reserved: an APPROVED lot of an item without QC.
+    const spPo = await approvedPo([{ itemId: ids.spare!, qty: '5', unitPrice: '2' }]);
+    const sg = await postedGrn(spPo, [{ poLineId: spPo.lineIds[0], qty: '5' }]);
+    await withTransaction({ userId: wm.userId, companyId: '1' }, (tx) =>
+      reserve(tx, wm, { lotId: sg.lines[0].lotId, qty: '1', refDocType: 'PROD_ORDER', refDocId: '902' }),
+    );
+    const reserved = await reverse('wm', sg.id);
+    expect([reserved.status, reserved.body.error.code]).toEqual([422, 'GRN_LOTS_IN_USE']);
+    // Nothing changed.
+    expect((await call('store', 'get', `/purch/grns/${g.id}`)).body.status).toBe('POSTED');
+  });
+
+  it('database guards: REVERSED needs mirrored receipts and cancelled requests; a request is cancelled only with its GRN reversed', async () => {
+    const po = await approvedPo([{ itemId: ids.rm!, qty: '2', unitPrice: '2' }]);
+    const g = await postedGrn(po, [rmLine(po.lineIds[0]!, '2')]);
+    await expect(
+      inTx(users.wm!, async () => {
+        await history('purch.grns', g.id, 'POSTED', 'REVERSED', users.wm!);
+        await client.query(`UPDATE purch.grns SET status = 'REVERSED' WHERE id = $1`, [g.id]);
+      }),
+    ).rejects.toThrow(/receipt is not reversed/);
+    const sr = g.lines[0].sampleRequest.id as string;
+    await expect(
+      inTx(users.wm!, async () => {
+        await history('qc.sample_requests', sr, 'OPEN', 'CANCELLED', users.wm!);
+        await client.query(`UPDATE qc.sample_requests SET status = 'CANCELLED' WHERE id = $1`, [sr]);
+      }),
+    ).rejects.toThrow(/cancelled only by reversing its GRN/);
+    await expect(raw(`UPDATE purch.grns SET status = 'CANCELLED' WHERE id = $1`, [g.id], users.wm)).rejects.toThrow(/INVALID_TRANSITION/);
   });
 });

@@ -219,7 +219,7 @@ export const approvals = core.table('approvals', {
   measure: text('measure').$type<ApprovalMeasure>().notNull(),
   amount: numeric('amount', { precision: 18, scale: 2 }),
   currency: text('currency'),
-  exchangeRate: numeric('exchange_rate', { precision: 9, scale: 4 }),
+  exchangeRate: numeric('exchange_rate', { precision: 18, scale: 6 }),
   measuredAmount: numeric('measured_amount', { precision: 18, scale: 2 }),
   measuredPercent: numeric('measured_percent', { precision: 9, scale: 4 }),
   requestedBy: bigintString('requested_by').notNull(),

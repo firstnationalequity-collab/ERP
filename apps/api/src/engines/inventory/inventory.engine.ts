@@ -1,6 +1,7 @@
 // engines/inventory — every stock change goes through here (CLAUDE.md "Code layout"; architecture §4–§6).
 //
-//  - createLot():          a new lot in QUARANTINE, through core/transition (rule 7).
+//  - createLot():          a new lot in QUARANTINE (APPROVED: a GRN lot of an item that needs no QC, owner
+//                          2026-11-25, 0028), through core/transition (rule 7).
 //  - createReturnLot():    a customer-return lot in HOLD, linked to the original lot, "<lot>-R<n>" (owner Q9).
 //  - postValueAdjustment(): value-only VALUE_ADJUSTMENT row; resets the lot's unit cost (owner Q8; 0017).
 //  - closeBatchCost():     at batch close, the adjustment that brings an FG lot to the batch cost; marks the
@@ -64,7 +65,14 @@ export const LotCreationKeys = {
   SALES_RETURN: 'fg.delivery.manage',
 } as const satisfies Record<LotSource, PermissionKey>;
 
-const initialLotStatus = (source: LotSource): LotStatus => (source === 'SALES_RETURN' ? 'HOLD' : 'QUARANTINE');
+/**
+ * The status a lot starts in (rule 1; owner 2026-11-25, answer 4; 0028 inv.initial_lot_status): customer returns
+ * HOLD; a GRN lot of an item with qc_required = false APPROVED; every other lot QUARANTINE.
+ */
+export function initialLotStatus(source: LotSource, qcRequired: boolean): LotStatus {
+  if (source === 'SALES_RETURN') return 'HOLD';
+  return source === 'GRN' && !qcRequired ? 'APPROVED' : 'QUARANTINE';
+}
 
 const lotCreationMaps = Object.fromEntries(
   Object.entries(LotCreationKeys).map(([source, key]) => [
@@ -72,7 +80,9 @@ const lotCreationMaps = Object.fromEntries(
     defineTransitions<LotStatus>({
       entityTable: LOT_TABLE,
       statuses: LotStatus,
-      moves: [{ from: null, to: initialLotStatus(source as LotSource), permission: key }],
+      moves: [
+        ...new Set([initialLotStatus(source as LotSource, true), initialLotStatus(source as LotSource, false)]),
+      ].map((to) => ({ from: null, to, permission: key })),
     }),
   ]),
 ) as Record<LotSource, TransitionMap<LotStatus>>;
@@ -191,14 +201,14 @@ export async function createLot(tx: Tx, actor: Actor, input: NewLot): Promise<Lo
       retestDate: input.retestDate ?? null,
       assayPct: input.assayPct ?? null,
       waterPct: input.waterPct ?? null,
-      status: 'QUARANTINE',
+      status: initialLotStatus(input.source, item.qcRequired),
       ownerType: input.ownerCustomerId === undefined ? 'OWN' : 'CUSTOMER',
       ownerCustomerId: input.ownerCustomerId ?? null,
       unitCost: unitRate(input.unitCost),
       source: input.source,
     }),
   );
-  await recordInitialStatus(tx, map, { entityId: lot.id, to: 'QUARANTINE', actor });
+  await recordInitialStatus(tx, map, { entityId: lot.id, to: lot.status, actor });
   return lot;
 }
 
@@ -347,7 +357,11 @@ export async function postMovement(tx: Tx, actor: Actor, input: MovementInput): 
     );
   }
   const lot = await lockLotOrFail(tx, actor.companyId, input.lotId);
-  assertLotAllows(input.type, lot);
+  const startStatus =
+    input.type === 'RECEIPT' || input.type === 'OUTPUT'
+      ? initialLotStatus(lot.source, (await stockItem(tx, actor.companyId, lot.itemId)).qcRequired)
+      : undefined;
+  assertLotAllows(input.type, lot, startStatus);
   const disposal = isDisposal(input.type);
   if (disposal && !input.witness) {
     throw new AppError('WITNESS_REQUIRED', `A ${input.type} needs a QA witness e-signature (${DISPOSAL_WITNESS_KEY})`, { permission: DISPOSAL_WITNESS_KEY });
@@ -915,7 +929,7 @@ async function lockLotOrFail(tx: Tx, companyId: string, lotId: string): Promise<
 const InboundSource: Partial<Record<StockMovementType, LotSource>> = { RECEIPT: 'GRN', OUTPUT: 'PRODUCTION_OUTPUT', SALES_RETURN: 'SALES_RETURN' };
 
 /** The lot status table (architecture §4) and rule 2, checked before the database checks them again. */
-function assertLotAllows(type: StockMovementType, lot: repo.LotRow): void {
+function assertLotAllows(type: StockMovementType, lot: repo.LotRow, startStatus?: LotStatus): void {
   const details = { lotId: lot.id, lotNo: lot.lotNo, status: lot.status, movementType: type };
   if (lot.status === 'DESTROYED' || lot.status === 'RETURNED') {
     throw new AppError('INVALID_TRANSITION', `Lot ${lot.lotNo} is ${lot.status}; it never moves again`, details);
@@ -945,8 +959,9 @@ function assertLotAllows(type: StockMovementType, lot: repo.LotRow): void {
   if (type === 'DISPATCH' && lot.source === 'PRODUCTION_OUTPUT' && !lot.batchClosedAt) {
     throw new AppError('BATCH_NOT_CLOSED', `Lot ${lot.lotNo}'s batch is not closed; it is dispatched after batch close`, details);
   }
-  if ((type === 'RECEIPT' || type === 'OUTPUT') && lot.status !== 'QUARANTINE') {
-    throw new AppError('VALIDATION_FAILED', `Received and produced stock enters a QUARANTINE lot (lot ${lot.lotNo} is ${lot.status})`, details);
+  // Owner 2026-11-25 (answer 4): into the lot's starting status — QUARANTINE, or APPROVED for an item without QC.
+  if ((type === 'RECEIPT' || type === 'OUTPUT') && lot.status !== (startStatus ?? 'QUARANTINE')) {
+    throw new AppError('VALIDATION_FAILED', `Received and produced stock enters its lot in the starting status ${startStatus ?? 'QUARANTINE'} (lot ${lot.lotNo} is ${lot.status})`, details);
   }
 }
 
@@ -1058,4 +1073,34 @@ async function insertRow(
     reversalOf: m.reversalOf,
     witness,
   };
+}
+
+// ---------------------------------------------------------------- document reads (corrections)
+
+/** The original movements a document posted (reversals left out), e.g. to reverse a GRN. */
+export async function movementsOfDocument(q: Queryable, companyId: string, doc: DocumentRef): Promise<repo.MovementRow[]> {
+  return repo.movementsOfDocument(q, companyId, doc.refDocType, doc.refDocId);
+}
+
+export interface LotTouch {
+  lotId: string;
+  lotNo: string;
+  /** What touched the lot since the document received it; empty = untouched. */
+  touches: string[];
+}
+
+/**
+ * Has anything but `doc`'s own RECEIPT (and its reversal, and rounding sweeps) moved these lots, changed their
+ * status after creation, or reserved them? Used before reversing a receipt (owner 2026-11-25, answer 5).
+ */
+export async function lotsTouchedSinceReceipt(q: Queryable, doc: DocumentRef, lotIds: string[]): Promise<LotTouch[]> {
+  return (await repo.lotTouches(q, [...new Set(lotIds)], doc.refDocType, doc.refDocId)).map((t) => ({
+    lotId: t.lotId,
+    lotNo: t.lotNo,
+    touches: [
+      ...(t.otherMovements > 0 ? [`${t.otherMovements} other movement(s)`] : []),
+      ...(t.statusChanges > 0 ? [`${t.statusChanges} status change(s)`] : []),
+      ...(t.reservations > 0 ? [`${t.reservations} reservation(s)`] : []),
+    ],
+  }));
 }

@@ -253,7 +253,7 @@ describe('stock ledger and balances', () => {
       expect(await balance(lot)).toBe('250.5000');
     });
     await setLot(lot, 'UNDER_TEST', 'APPROVED');
-    await expect(move('RECEIPT', lot, '1')).rejects.toThrow(/QUARANTINE lot/);
+    await expect(move('RECEIPT', lot, '1')).rejects.toThrow(/starting status \(QUARANTINE/);
   });
 
   it('issues only APPROVED lots (rule 2: LOT_NOT_APPROVED)', async () => {

@@ -11,10 +11,12 @@ export async function insertSampleRequest(tx: Tx, values: { lotId: string; refDo
   return row;
 }
 
-export async function byLots(q: Queryable, companyId: string, lotIds: string[]): Promise<SampleRequestRow[]> {
+export async function byLots(q: Queryable, companyId: string, lotIds: string[], lock = false): Promise<SampleRequestRow[]> {
   if (lotIds.length === 0) return [];
-  return q
+  const query = q
     .select()
     .from(sampleRequests)
-    .where(and(eq(sampleRequests.companyId, companyId), inArray(sampleRequests.lotId, lotIds)));
+    .where(and(eq(sampleRequests.companyId, companyId), inArray(sampleRequests.lotId, lotIds)))
+    .orderBy(sampleRequests.id);
+  return lock ? query.for('update') : query;
 }

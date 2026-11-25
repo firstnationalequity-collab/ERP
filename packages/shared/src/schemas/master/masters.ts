@@ -137,6 +137,8 @@ const itemFields = {
   retestDays: days.nullable().optional(),
   isControlled: z.boolean().optional(),
   storageZone: z.enum(StorageZone).optional(),
+  /** Default by type (qcRequiredDefault). After DRAFT a change needs a QA countersign (owner 2026-11-25; 0028). */
+  qcRequired: z.boolean().optional(),
 };
 const retestWithinShelfLife = (v: { shelfLifeDays?: number | null; retestDays?: number | null }) =>
   v.retestDays == null || v.shelfLifeDays == null || v.retestDays <= v.shelfLifeDays;
@@ -151,6 +153,8 @@ export type CreateItemRequest = z.infer<typeof CreateItemRequest>;
  * not the editor (owner decision 18-11-2026; DB guard 0011). Name, category and tax code stay free.
  */
 export const GmpItemSensitiveFields = ['shelfLifeDays', 'retestDays', 'storageZone', 'isControlled'] as const;
+/** Owner 2026-11-25 (answer 4): qc_required of ANY item type, after DRAFT, needs the same QA countersign (0028). */
+export const QcItemSensitiveFields = ['qcRequired'] as const;
 export const UpdateItemRequest = z
   .object({ ...itemFields, name: name.optional(), categoryId: id.optional(), countersign: WitnessSignRequest.optional() })
   .strict();
@@ -166,6 +170,8 @@ export interface ItemDto extends Stamped {
   retestDays: number | null;
   isControlled: boolean;
   storageZone: StorageZone;
+  /** False: GRN lots are created APPROVED, no QC sample request (owner 2026-11-25). */
+  qcRequired: boolean;
   status: ItemStatus;
   /** True only when status is ACTIVE (generated column). */
   isActive: boolean;

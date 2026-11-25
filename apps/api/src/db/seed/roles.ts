@@ -80,7 +80,7 @@ const roles: RoleSeed[] = [
     name: 'Warehouse Manager',
     keys: [
       'inv.stock.view', 'purch.view', 'prod.view', 'fg.view', 'master.view',
-      'inv.adjustment.request', 'fg.gatepass.approve', 'fg.delivery.manage', 'inv.lot.dispose', 'master.location.manage', 'master.item.manage',
+      'inv.adjustment.request', 'purch.grn.reverse', 'fg.gatepass.approve', 'fg.delivery.manage', 'inv.lot.dispose', 'master.location.manage', 'master.item.manage',
     ],
   },
   {

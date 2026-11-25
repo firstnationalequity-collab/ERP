@@ -12,13 +12,15 @@ export interface StockItemRef {
   type: ItemType;
   categoryId: string;
   status: ItemStatus;
+  /** False: a GRN lot of this item starts APPROVED, with no QC sample request (owner 2026-11-25; 0028). */
+  qcRequired: boolean;
 }
 
 /** The item a lot belongs to: type (FG or material) and category (posting rules are per category). */
 export async function stockItem(q: Queryable, companyId: string, itemId: string): Promise<StockItemRef> {
   const row = await repo.findItem(q, companyId, itemId);
   if (!row) throw new AppError('NOT_FOUND', `Item ${itemId} not found`);
-  return { id: row.id, code: row.code, type: row.type, categoryId: row.categoryId, status: row.status };
+  return { id: row.id, code: row.code, type: row.type, categoryId: row.categoryId, status: row.status, qcRequired: row.qcRequired };
 }
 
 /** A location stock moves through: must exist in the company; stock only goes INTO an active one. */

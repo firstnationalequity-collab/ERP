@@ -1,6 +1,6 @@
 // Drizzle description of the `purch` schema. Source of truth: src/db/migrations/0023_procurement_pr_po.sql, 0025, 0027 (GRN).
 import { date, integer, numeric, pgSchema, text } from 'drizzle-orm/pg-core';
-import type { Incoterm, PostingStatus, PurchaseOrderStatus, PurchaseOrderType, PurchaseRequisitionStatus } from '@albert/shared';
+import type { GrnStatus, Incoterm, PurchaseOrderStatus, PurchaseOrderType, PurchaseRequisitionStatus } from '@albert/shared';
 import { auditColumns, bigintString, companyId, identityId, tstz } from './columns';
 
 export const purch = pgSchema('purch');
@@ -36,7 +36,7 @@ export const purchaseOrders = purch.table('purchase_orders', {
   vendorId: bigintString('vendor_id').notNull(),
   poType: text('po_type').$type<PurchaseOrderType>().notNull(),
   currency: text('currency').notNull(),
-  exchangeRate: numeric('exchange_rate', { precision: 9, scale: 4 }),
+  exchangeRate: numeric('exchange_rate', { precision: 18, scale: 6 }),
   exchangeRateDate: date('exchange_rate_date', { mode: 'string' }),
   incoterm: text('incoterm').$type<Incoterm>(),
   deliveryDate: date('delivery_date', { mode: 'string' }),
@@ -77,7 +77,7 @@ export const grns = purch.table('grns', {
   notes: text('notes'),
   exchangeRate: numeric('exchange_rate', { precision: 18, scale: 6 }),
   exchangeRateDate: date('exchange_rate_date', { mode: 'string' }),
-  status: text('status').$type<PostingStatus>().notNull(),
+  status: text('status').$type<GrnStatus>().notNull(),
   postedBy: bigintString('posted_by'),
   postedAt: tstz('posted_at'),
   ...auditColumns(),

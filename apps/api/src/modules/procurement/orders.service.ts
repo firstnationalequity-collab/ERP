@@ -47,6 +47,10 @@ export const PurchaseOrderMoves = defineTransitions<PurchaseOrderStatus>({
     { from: 'APPROVED', to: 'PARTIALLY_RECEIVED', permission: 'purch.grn.post' },
     { from: 'APPROVED', to: 'RECEIVED', permission: 'purch.grn.post' },
     { from: 'PARTIALLY_RECEIVED', to: 'RECEIVED', permission: 'purch.grn.post' },
+    // A GRN reversal gives its quantities back (owner 2026-11-25, answer 5; 0028).
+    { from: 'RECEIVED', to: 'PARTIALLY_RECEIVED', permission: 'purch.grn.reverse', reasonRequired: true },
+    { from: 'RECEIVED', to: 'APPROVED', permission: 'purch.grn.reverse', reasonRequired: true },
+    { from: 'PARTIALLY_RECEIVED', to: 'APPROVED', permission: 'purch.grn.reverse', reasonRequired: true },
   ],
 });
 

@@ -7,12 +7,21 @@
 //     - the PO's received quantities and PARTIALLY_RECEIVED / RECEIVED status.
 //   No landed charges here (owner 2026-11-25: task 4 adds them).
 //   Refusals: OVER_RECEIPT (ordered + tolerance), AVL_NOT_APPROVED (GMP material needs an APPROVED source for
-//   item + vendor + manufacturer at posting), RATE_MISSING, SEGREGATION_OF_DUTIES (receiver ≠ PO creator / approver).
+//   item + vendor + manufacturer at posting), RATE_MISSING, SEGREGATION_OF_DUTIES (receiver ≠ PO creator / approver),
+//   SHELF_LIFE_TOO_SHORT (setting purch.grn.min_shelf_life_pct), expired / retest passed / mfg after the GRN date.
+// Owner answers 2026-11-25 (0028):
+//   - an item with qc_required = false: its lot starts APPROVED and gets no sample request (answer 4);
+//   - DRAFT → CANCELLED with a reason (purch.grn.post);
+//   - POSTED → REVERSED (purch.grn.reverse, Warehouse Manager, e-signature + reason) only while every lot is
+//     untouched, else GRN_LOTS_IN_USE (the route then is QC rejection and return to vendor). In one transaction:
+//     receipt movements mirrored, GRN_RECEIPT journal reversed, sample requests CANCELLED, PO quantities given back
+//     and PO status restored. The lot record stays at zero stock (answer 5).
 import { Decimal } from 'decimal.js';
 import {
   AvlItemTypes,
-  PostingStatus,
+  GrnStatus,
   type CreateGrnRequest,
+  type GrnReverseRequest,
   type GrnDto,
   type GrnLineDto,
   type GrnLineInput,
@@ -24,12 +33,21 @@ import {
 import { db, withTransaction, type Queryable, type Tx } from '../../db/client';
 import { AppError } from '../../core/errors';
 import { companyToday } from '../../core/dates';
-import { txContext, type AuthContext } from '../../core/auth/auth.service';
+import { txContext, type AuthContext, type RequestMeta } from '../../core/auth/auth.service';
+import { recordSignature, verifySignature } from '../../core/esign/esign.service';
 import { defineTransitions, recordInitialStatus, transition } from '../../core/transition/transition';
 import { approversOf } from '../../core/approvals/approvals.service';
 import { nextDocNo } from '../../core/settings/numbering.service';
-import { createLot, lotsByIds, postMovement, type PostedMovement } from '../../engines/inventory';
-import { journalsOfSource, postStockJournal } from '../../engines/posting';
+import {
+  createLot,
+  lotsByIds,
+  lotsTouchedSinceReceipt,
+  movementsOfDocument,
+  postMovement,
+  reverseMovements,
+  type PostedMovement,
+} from '../../engines/inventory';
+import { journalsOfSource, postStockJournal, reverseStockJournal } from '../../engines/posting';
 import {
   approvedSourcesFor,
   assertPurchVendor,
@@ -41,21 +59,23 @@ import {
 } from '../masters/purch-refs.service';
 import { assertStockLocation } from '../masters/stock-refs.service';
 import { rateOn } from '../finance/rates.service';
-import { requestSample, sampleRequestsOfLots } from '../qc/sample-requests.service';
+import { cancelGrnSampleRequests, requestSample, sampleRequestsOfLots } from '../qc/sample-requests.service';
 import * as repo from './grns.repo';
 import { findPo, listPos, poLinesOf, userNames, type PoLineRow, type PoRow } from './procurement.repo';
-import { overReceiptPct } from './procurement.settings';
+import { minShelfLifePct, overReceiptPct } from './procurement.settings';
 import { PO_TABLE, PurchaseOrderMoves } from './orders.service';
 
 export const GRN_TABLE = 'purch.grns';
 export const GRN_DOC_TYPE = 'GRN'; // number series, ledger ref_doc_type, journal source_type
 
-export const GrnMoves = defineTransitions<PostingStatus>({
+export const GrnMoves = defineTransitions<GrnStatus>({
   entityTable: GRN_TABLE,
-  statuses: PostingStatus,
+  statuses: GrnStatus,
   moves: [
     { from: null, to: 'DRAFT', permission: 'purch.grn.post' },
     { from: 'DRAFT', to: 'POSTED', permission: 'purch.grn.post' },
+    { from: 'DRAFT', to: 'CANCELLED', permission: 'purch.grn.post', reasonRequired: true },
+    { from: 'POSTED', to: 'REVERSED', permission: 'purch.grn.reverse', esign: ['APPROVED'], reasonRequired: true },
   ],
 });
 
@@ -153,9 +173,12 @@ async function toDtos(q: Queryable, companyId: string, rows: repo.GrnRow[]): Pro
     Promise.all([...new Set(rows.map((r) => r.poId))].map((id) => findPo(q, companyId, id))),
   ]);
   const poDoc = new Map(pos.flatMap((p) => (p ? [[p.id, p.docNo] as const] : [])));
+  // The GRN_RECEIPT journal is the first one of the GRN; a reversal adds its mirror after it.
   const journals = new Map(
     await Promise.all(
-      rows.filter((r) => r.status !== 'DRAFT').map(async (r) => [r.id, (await journalsOfSource(q, companyId, GRN_DOC_TYPE, r.id))[0]] as const),
+      rows
+        .filter((r) => r.status === 'POSTED' || r.status === 'REVERSED')
+        .map(async (r) => [r.id, await journalsOfSource(q, companyId, GRN_DOC_TYPE, r.id)] as const),
     ),
   );
   return rows.map((r) => {
@@ -195,8 +218,8 @@ async function toDtos(q: Queryable, companyId: string, rows: repo.GrnRow[]): Pro
           notes: l.notes,
         };
       });
-    const total = r.status === 'DRAFT' ? null : myLines.reduce((s, l) => s.plus(l.valuePkr ?? 0), new Decimal(0)).toFixed(2);
-    const journal = journals.get(r.id);
+    const total = r.postedAt ? myLines.reduce((s, l) => s.plus(l.valuePkr ?? 0), new Decimal(0)).toFixed(2) : null;
+    const [journal, reversalJournal] = journals.get(r.id) ?? [];
     return {
       id: r.id,
       docNo: r.docNo,
@@ -224,6 +247,7 @@ async function toDtos(q: Queryable, companyId: string, rows: repo.GrnRow[]): Pro
       postedAt: r.postedAt ? r.postedAt.toISOString() : null,
       journalId: journal?.id ?? null,
       journalDocNo: journal?.docNo ?? null,
+      reversalJournalDocNo: reversalJournal?.docNo ?? null,
       lines: myLines,
     };
   });
@@ -252,6 +276,31 @@ export async function getGrn(auth: AuthContext, id: string): Promise<GrnDto> {
 type GrnHeader = Omit<UpdateGrnRequest, 'lines'>;
 type LineIn = Omit<GrnLineInput, 'containers'> & { containers?: number };
 
+const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+
+/**
+ * Owner 2026-11-25 (answer 3): with purch.grn.min_shelf_life_pct > 0, the shelf life left on the GRN date must be at
+ * least that percent of the total (expiry − mfg, or the item's shelf life without a mfg date). Mirrored in 0028.
+ */
+function lineShelfLife(it: PurchItemRef, l: LineIn, grnDate: string, minPct: number): void {
+  if (minPct <= 0 || !l.expiryDate) return;
+  const total = l.mfgDate ? daysBetween(l.mfgDate, l.expiryDate) : it.shelfLifeDays;
+  if (!total || total <= 0) {
+    throw new AppError('VALIDATION_FAILED', `${it.code}: give the mfg date so the remaining shelf life can be checked`, { field: 'mfgDate', itemId: it.id });
+  }
+  const left = daysBetween(grnDate, l.expiryDate);
+  if (new Decimal(left).times(100).lessThan(new Decimal(minPct).times(total))) {
+    const pct = new Decimal(left).times(100).div(total).toDecimalPlaces(1, Decimal.ROUND_DOWN).toFixed(1);
+    throw new AppError('SHELF_LIFE_TOO_SHORT', `${it.code}: only ${left} of ${total} days of shelf life left (${pct}%); the minimum is ${minPct}%`, {
+      field: 'expiryDate',
+      itemId: it.id,
+      daysLeft: left,
+      totalDays: total,
+      minPct,
+    });
+  }
+}
+
 function lineDates(it: PurchItemRef, l: LineIn, grnDate: string): void {
   const field = (f: string, msg: string) => new AppError('VALIDATION_FAILED', `${it.code}: ${msg}`, { field: f, itemId: it.id });
   if (it.type === 'API' && (!l.mfrBatchNo || !l.mfgDate || !l.expiryDate || !l.retestDate)) {
@@ -277,6 +326,7 @@ async function prepare(q: Queryable, auth: AuthContext, po: PoRow, header: GrnHe
   const poLines = new Map((await poLinesOf(q, [po.id])).map((l) => [l.id, l]));
   const items = await purchItems(q, auth.companyId, [...poLines.values()].map((l) => l.itemId));
   const pct = await overReceiptPct(q, auth.companyId);
+  const minShelfPct = await minShelfLifePct(q, auth.companyId);
 
   const wanted = new Map<string, Decimal>();
   const rows: repo.GrnLineValues[] = [];
@@ -286,6 +336,7 @@ async function prepare(q: Queryable, auth: AuthContext, po: PoRow, header: GrnHe
     const it = items.get(pl.itemId);
     if (!it) throw new AppError('VALIDATION_FAILED', 'Item does not exist', { itemId: pl.itemId });
     lineDates(it, l, header.grnDate);
+    lineShelfLife(it, l, header.grnDate, minShelfPct);
     const gmp = AvlItemTypes.includes(it.type);
     if (!gmp && l.approvedSourceId) {
       throw new AppError('VALIDATION_FAILED', `${it.code} (${it.type}) is not on the AVL; type the manufacturer instead`, { field: 'approvedSourceId' });
@@ -402,6 +453,7 @@ export async function postGrn(auth: AuthContext, id: string): Promise<GrnDto> {
       })),
     );
     const { rate, rateDate } = await rateOn(tx, auth.companyId, grn.currency, grn.grnDate);
+    const items = await purchItems(tx, auth.companyId, lines.map((l) => l.itemId));
 
     const movements: PostedMovement[] = [];
     for (const l of lines) {
@@ -429,7 +481,8 @@ export async function postGrn(auth: AuthContext, id: string): Promise<GrnDto> {
         }),
       );
       await repo.setLineLot(tx, l.id, { lotId: lot.id, unitCost });
-      await requestSample(tx, auth, { lotId: lot.id, source: 'GRN', refDocId: id });
+      // Owner 2026-11-25 (answer 4): only an item that needs QC gets a sample request (its lot is in QUARANTINE).
+      if (items.get(l.itemId)?.qcRequired ?? true) await requestSample(tx, auth, { lotId: lot.id, source: 'GRN', refDocId: id });
     }
     await postStockJournal(tx, auth, { movements, narration: `GRN ${grn.docNo} against ${po.docNo}`, dimensions: { vendorId: po.vendorId } });
     await transition(tx, GrnMoves, {
@@ -445,6 +498,84 @@ export async function postGrn(auth: AuthContext, id: string): Promise<GrnDto> {
     const after = await poLinesOf(tx, [po.id]);
     const to = after.every((l) => new Decimal(l.receivedQty).greaterThanOrEqualTo(l.qty)) ? 'RECEIVED' : 'PARTIALLY_RECEIVED';
     if (to !== po.status) await transition(tx, PurchaseOrderMoves, { entityId: po.id, to, actor: auth, reason: `GRN ${grn.docNo}` });
+  });
+  return getGrn(auth, id);
+}
+
+// ---------------------------------------------------------------- cancel and reverse (owner 2026-11-25, answer 5)
+
+/** DRAFT → CANCELLED with a reason; nothing was posted, the keyed lines stay on record. */
+export async function cancelGrn(auth: AuthContext, id: string, reason: string): Promise<GrnDto> {
+  await withTransaction(txContext(auth, `cancel GRN: ${reason}`), async (tx) => {
+    const grn = await repo.findGrn(tx, auth.companyId, id, true);
+    if (!grn) throw new AppError('NOT_FOUND', 'GRN not found');
+    if (grn.status !== 'DRAFT') {
+      throw new AppError('INVALID_TRANSITION', `GRN ${grn.docNo} is ${grn.status}; only a DRAFT is cancelled (a posted GRN is reversed)`, {
+        status: grn.status,
+      });
+    }
+    await transition(tx, GrnMoves, { entityId: id, to: 'CANCELLED', actor: auth, reason });
+  });
+  return getGrn(auth, id);
+}
+
+const GIVES_BACK: readonly string[] = ['PARTIALLY_RECEIVED', 'RECEIVED'];
+
+/**
+ * POSTED → REVERSED (purch.grn.reverse, own e-signature APPROVED; its reason is the reversal reason). Only while
+ * every lot is untouched; then, in one transaction: receipt movements mirrored (dated today), the GRN_RECEIPT journal
+ * reversed, sample requests CANCELLED, the PO's received quantities given back and its status restored.
+ */
+export async function reverseGrn(auth: AuthContext, id: string, input: GrnReverseRequest, meta: RequestMeta): Promise<GrnDto> {
+  if (input.signature.meaning !== 'APPROVED') throw new AppError('VALIDATION_FAILED', 'Reversing a GRN needs the meaning APPROVED');
+  const proof = await verifySignature(auth, input.signature, meta);
+  const reason = input.signature.reason;
+  await withTransaction(txContext(auth, `reverse GRN: ${reason}`), async (tx) => {
+    const grn = await repo.findGrn(tx, auth.companyId, id, true);
+    if (!grn) throw new AppError('NOT_FOUND', 'GRN not found');
+    if (grn.status !== 'POSTED') {
+      throw new AppError('INVALID_TRANSITION', `GRN ${grn.docNo} is ${grn.status}; only a POSTED GRN is reversed`, { status: grn.status });
+    }
+    const po = await lockPoOrFail(tx, auth.companyId, grn.poId, true);
+    if (!GIVES_BACK.includes(po.status)) {
+      throw new AppError('INVALID_TRANSITION', `Purchase order ${po.docNo} is ${po.status}; its receipts can no longer be reversed`, { status: po.status });
+    }
+    await repo.lockPoLines(tx, po.id);
+    const lines = await repo.grnLinesOf(tx, [id]);
+    const lotIds = lines.flatMap((l) => (l.lotId ? [l.lotId] : []));
+    const doc = { refDocType: GRN_DOC_TYPE, refDocId: id };
+
+    // Untouched: no movement but the receipt, no status change, no reservation, no sampling started.
+    const touched = (await lotsTouchedSinceReceipt(tx, doc, lotIds)).filter((t) => t.touches.length > 0);
+    if (touched.length > 0) {
+      throw new AppError(
+        'GRN_LOTS_IN_USE',
+        `GRN ${grn.docNo} cannot be reversed: ${touched.map((t) => `lot ${t.lotNo} has ${t.touches.join(', ')}`).join('; ')}. Reject the lot through QC and return it to the vendor instead`,
+        { lots: touched.map((t) => ({ lotId: t.lotId, lotNo: t.lotNo, touches: t.touches })) },
+      );
+    }
+    await cancelGrnSampleRequests(tx, auth, { grnId: id, lotIds, reason });
+
+    const receipts = (await movementsOfDocument(tx, auth.companyId, doc)).filter((m) => m.movementType === 'RECEIPT');
+    const reversed = await reverseMovements(tx, auth, { ...doc, movementIds: receipts.map((m) => m.id), date: companyToday() });
+    const journal = (await journalsOfSource(tx, auth.companyId, GRN_DOC_TYPE, id)).find((j) => j.event === 'GRN_RECEIPT' && j.status === 'POSTED');
+    await reverseStockJournal(tx, auth, { entryId: journal?.id ?? null, movements: reversed, reason: `GRN ${grn.docNo} reversed: ${reason}` });
+
+    const signature = await recordSignature(tx, proof, { table: GRN_TABLE, id }, ['APPROVED']);
+    await transition(tx, GrnMoves, { entityId: id, to: 'REVERSED', actor: auth, signature, reason });
+
+    const given = new Map<string, Decimal>();
+    for (const l of lines) given.set(l.poLineId, (given.get(l.poLineId) ?? new Decimal(0)).plus(l.qty));
+    for (const [poLineId, qty] of given) await repo.addReceived(tx, poLineId, qty.neg().toFixed(4));
+    const after = await poLinesOf(tx, [po.id]);
+    const to = after.every((l) => new Decimal(l.receivedQty).isZero())
+      ? 'APPROVED'
+      : after.every((l) => new Decimal(l.receivedQty).greaterThanOrEqualTo(l.qty))
+        ? 'RECEIVED'
+        : 'PARTIALLY_RECEIVED';
+    if (to !== po.status) {
+      await transition(tx, PurchaseOrderMoves, { entityId: po.id, to, actor: auth, reason: `GRN ${grn.docNo} reversed: ${reason}` });
+    }
   });
   return getGrn(auth, id);
 }

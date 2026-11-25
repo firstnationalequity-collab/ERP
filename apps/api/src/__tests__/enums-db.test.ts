@@ -28,6 +28,7 @@ import {
   AccountType,
   PostingEvent,
   AccountRole,
+  GrnStatus,
   PostingStatus,
   SampleRequestStatus,
   LotStatus,
@@ -90,7 +91,7 @@ const cases: [string, string, readonly string[]][] = [
   ['inv.lots', 'owner_type', StockOwner],
   ['inv.lots', 'source', LotSource],
   ['inv.stock_movements', 'movement_type', StockMovementType],
-  ['purch.grns', 'status', PostingStatus],
+  ['purch.grns', 'status', GrnStatus],
   ['qc.sample_requests', 'status', SampleRequestStatus],
 ];
 

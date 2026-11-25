@@ -3,7 +3,8 @@
 // QUARANTINE, the receipt movements and journal, and a QC sample request per lot. PATCH edits a DRAFT only.
 // Quantities and rates travel as decimal strings, never JS numbers (rule 10).
 import { z } from 'zod';
-import type { PostingStatus, SampleRequestStatus } from '../../enums';
+import type { GrnStatus, SampleRequestStatus } from '../../enums';
+import { ESignRequest } from '../core/esign';
 import { decimalString } from '../master/masters';
 
 const id = z.string().regex(/^\d+$/, 'Invalid id');
@@ -48,6 +49,13 @@ export type CreateGrnRequest = z.infer<typeof CreateGrnRequest>;
 /** Replaces the whole DRAFT (header and lines); the PO stays the same. */
 export const UpdateGrnRequest = z.object(grnHeader).strict();
 export type UpdateGrnRequest = z.infer<typeof UpdateGrnRequest>;
+
+/**
+ * Reverse a POSTED GRN (owner 2026-11-25, answer 5): purch.grn.reverse (Warehouse Manager), own e-signature with
+ * meaning APPROVED; the signature's reason is the reversal reason. Only while every lot is untouched.
+ */
+export const GrnReverseRequest = z.object({ signature: ESignRequest }).strict();
+export type GrnReverseRequest = z.infer<typeof GrnReverseRequest>;
 
 // ---------------------------------------------------------------- responses
 
@@ -108,7 +116,7 @@ export interface GrnDto {
   exchangeRateDate: string | null;
   /** Sum of the lines' PKR values, once posted. */
   totalPkr: string | null;
-  status: PostingStatus;
+  status: GrnStatus;
   createdBy: string;
   createdByName: string;
   createdAt: string;
@@ -118,6 +126,8 @@ export interface GrnDto {
   /** The GRN_RECEIPT journal (SJ number), once posted. */
   journalId: string | null;
   journalDocNo: string | null;
+  /** The mirror journal, once the GRN is REVERSED. */
+  reversalJournalDocNo: string | null;
   lines: GrnLineDto[];
 }
 

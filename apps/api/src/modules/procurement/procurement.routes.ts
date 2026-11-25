@@ -9,6 +9,7 @@ import {
   CreateGrnRequest,
   CreatePoRequest,
   CreatePrRequest,
+  GrnReverseRequest,
   PurchActionRequest,
   PurchListQuery,
   UpdateGrnRequest,
@@ -16,7 +17,7 @@ import {
   UpdatePrRequest,
 } from '@albert/shared';
 import { requirePermission } from '../../core/rbac/require-permission';
-import { asyncHandler, authOf } from '../../core/auth/middleware';
+import { asyncHandler, authOf, requestMeta } from '../../core/auth/middleware';
 import { idempotent } from '../../core/idempotency/idempotency';
 import * as prs from './requisitions.service';
 import * as pos from './orders.service';
@@ -85,6 +86,13 @@ r.patch('/grns/:id', requirePermission('purch.grn.post'), asyncHandler(async (re
 // Posting action: Idempotency-Key required (CLAUDE.md conventions).
 r.post('/grns/:id/post', requirePermission('purch.grn.post'), idempotent(), asyncHandler(async (req, res) => {
   res.json(await grns.postGrn(authOf(req), idOf(req)));
+}));
+r.post('/grns/:id/cancel', requirePermission('purch.grn.post'), once, asyncHandler(async (req, res) => {
+  res.json(await grns.cancelGrn(authOf(req), idOf(req), PurchActionRequest.parse(req.body).reason));
+}));
+// Owner 2026-11-25 (answer 5): Warehouse Manager, e-signature + reason; a posting action, so Idempotency-Key required.
+r.post('/grns/:id/reverse', requirePermission('purch.grn.reverse'), idempotent(), asyncHandler(async (req, res) => {
+  res.json(await grns.reverseGrn(authOf(req), idOf(req), GrnReverseRequest.parse(req.body), requestMeta(req)));
 }));
 r.get('/grns/:id/labels.pdf', requirePermission('inv.label.print'), asyncHandler(async (req, res) => {
   const { fileName, pdf } = await grnLabelsPdf(authOf(req), idOf(req));

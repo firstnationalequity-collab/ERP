@@ -25,4 +25,18 @@ registerSetting({
 });
 export const overReceiptPct = (q: Queryable, companyId: string) => getSetting<number>(q, companyId, OVER_RECEIPT_PCT);
 
+/**
+ * Owner 2026-11-25 (answer 3): minimum remaining shelf life at receipt, percent of the total (0 = off). Remaining =
+ * expiry − GRN date; total = expiry − mfg, or the item's shelf life when there is no mfg date. Mirrored by SQL
+ * purch.min_shelf_life_pct (0028).
+ */
+export const MIN_SHELF_LIFE_PCT = 'purch.grn.min_shelf_life_pct';
+registerSetting({
+  key: MIN_SHELF_LIFE_PCT,
+  description: 'Minimum remaining shelf life at receipt, percent of the total shelf life (0 = no check)',
+  schema: z.number().min(0).max(100),
+  defaultValue: 0,
+});
+export const minShelfLifePct = (q: Queryable, companyId: string) => getSetting<number>(q, companyId, MIN_SHELF_LIFE_PCT);
+
 export const allowBulkFgPurchase =(q: Queryable, companyId: string) => getSetting<boolean>(q, companyId, ALLOW_BULK_FG_PURCHASE);

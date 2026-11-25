@@ -49,13 +49,14 @@ export function ItemsPage() {
           { key: 'retestDays', title: 'Retest (d)' },
           { key: 'storageZone', title: 'Storage', render: (r) => r.storageZone.replace(/_/g, ' ') },
           { key: 'isControlled', title: 'Controlled', render: (r) => (r.isControlled ? <Tag color="red">CONTROLLED</Tag> : ''), exportValue: (r) => yesNo(r.isControlled) },
+          { key: 'qcRequired', title: 'QC', render: (r) => (r.qcRequired ? <Tag>QC</Tag> : <Tag color="default">no QC</Tag>), exportValue: (r) => yesNo(r.qcRequired) },
           { key: 'status', title: 'Status', render: (r) => <StatusTag status={r.status} /> },
         ],
         isActive: (r) => r.status === 'ACTIVE',
         create: {
           schema: CreateItemRequest,
           initial: { storageZone: 'AMBIENT', isControlled: false },
-          intro: 'Code, type and base unit cannot be changed later.',
+          intro: 'Code, type and base unit cannot be changed later. RM, PM, API and excipients need QC on receipt; other types do not (QA can change it later).',
           fields: [
             { name: 'code', label: 'Code', kind: 'text' },
             { name: 'type', label: 'Type', kind: 'select', options: enumOptions(ItemType) },
@@ -79,8 +80,10 @@ export function ItemsPage() {
             retestDays: r.retestDays,
             storageZone: r.storageZone,
             isControlled: r.isControlled,
+            qcRequired: r.qcRequired,
           }),
-          fields: () => commonFields,
+          // Owner 2026-11-25 (answer 4): after DRAFT, changing whether the item needs QC takes a QA countersign.
+          fields: () => [...commonFields, { name: 'qcRequired', label: 'Needs QC on receipt (sample + QC decision)', kind: 'switch' }],
         },
       }}
     />

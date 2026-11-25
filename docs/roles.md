@@ -55,6 +55,7 @@ Design context: `docs/architecture.md` §3 and §4.
 | `purch.po.manage` | action | Create/edit purchase orders | existing |
 | `purch.po.approve` | action | Approve purchase orders | existing |
 | `purch.grn.post` | action | Post goods receipts | existing |
+| `purch.grn.reverse` | action | Reverse a posted GRN whose lots are untouched (e-signature + reason) | new (owner 2026-11-25, answer 5; Warehouse Manager only) |
 | `purch.landed_cost.manage` | action | Enter landed costs | existing |
 | `qc.view` | view | View specs, samples, results, CoAs | new |
 | `qc.spec.manage` | action | Draft specifications | existing |
@@ -113,7 +114,7 @@ Every role except SYSTEM also holds `core.approval.inbox` (not repeated below). 
 | 8 | Purchase Officer | `purch.view`, `master.view`, `inv.stock.view` | `purch.pr.manage`, `purch.po.manage`, `master.vendor.manage`, `purch.landed_cost.manage` |
 | 9 | Purchase Manager | `purch.view`, `master.view`, `inv.stock.view` | `purch.po.approve`, `master.vendor.approve`, `master.item.manage` |
 | 10 | Storekeeper | `inv.stock.view`, `purch.view`, `prod.view`, `fg.view`, `master.view` | `purch.grn.post`, `inv.movement.post`, `inv.label.print`, `fg.delivery.manage`, `fg.dispatch.post` |
-| 11 | Warehouse Manager | `inv.stock.view`, `purch.view`, `prod.view`, `fg.view`, `master.view` | `inv.adjustment.request`, `fg.gatepass.approve`, `fg.delivery.manage` (returns), `inv.lot.dispose`, `master.location.manage`, `master.item.manage` |
+| 11 | Warehouse Manager | `inv.stock.view`, `purch.view`, `prod.view`, `fg.view`, `master.view` | `inv.adjustment.request`, `purch.grn.reverse`, `fg.gatepass.approve`, `fg.delivery.manage` (returns), `inv.lot.dispose`, `master.location.manage`, `master.item.manage` |
 | 12 | Planner | `prod.view`, `sales.view`, `inv.stock.view`, `master.view` | `prod.order.manage` |
 | 13 | Production Operator | `prod.view` | `prod.stage.sign` |
 | 14 | Production Supervisor | `prod.view`, `inv.stock.view` | `prod.stage.sign`, `prod.output.verify`, `prod.batch.close` |

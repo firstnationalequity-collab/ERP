@@ -1,13 +1,13 @@
 // Daily exchange rates (/api/v1/fin/exchange-rates), maintained by Finance (fin.rate.manage; owner 2026-11-25, Q4).
-// A rate is PKR per 1 unit of the currency, NUMERIC(9,4). Documents copy the rate they use.
+// A rate is PKR per 1 unit of the currency, NUMERIC(18,6) (CLAUDE.md rule 10; owner 2026-11-25; 0028). Documents copy the rate they use.
 import { z } from 'zod';
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date: YYYY-MM-DD');
-/** Above zero, up to 5 digits and 4 decimals (NUMERIC(9,4)). */
+/** Above zero, up to 12 digits and 6 decimals (NUMERIC(18,6)). */
 export const exchangeRate = z
   .string()
   .trim()
-  .regex(/^\d{1,5}(\.\d{1,4})?$/, 'Rate: up to 5 digits and 4 decimals')
+  .regex(/^\d{1,12}(\.\d{1,6})?$/, 'Rate: up to 12 digits and 6 decimals')
   .refine((v) => /[1-9]/.test(v), 'Rate must be above zero');
 export const foreignCurrency = z
   .string()

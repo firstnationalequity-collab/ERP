@@ -1,6 +1,8 @@
 // Goods received notes (M3 task 3). The Storekeeper scans (or types) the PO number, enters what arrived per line
 // (manufacturer source for GMP materials, batch and dates), saves a DRAFT, then posts it: the lots are created in
 // QUARANTINE, valued at PO price × the GRN-date rate, a QC sample request is opened per lot, and labels print.
+// Owner 2026-11-25 (0028): an item that needs no QC is received APPROVED without a sample request; a DRAFT is
+// cancelled with a reason; a POSTED GRN whose lots are untouched is reversed by the Warehouse Manager (e-signature).
 import { useState } from 'react';
 import dayjs from 'dayjs';
 import { Alert, App, Button, DatePicker, Descriptions, Drawer, Input, InputNumber, Modal, Select, Space, Table, Typography } from 'antd';
@@ -8,7 +10,7 @@ import { BarcodeOutlined, DeleteOutlined, PrinterOutlined } from '@ant-design/ic
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CreateGrnRequest,
-  PostingStatus,
+  GrnStatus,
   UpdateGrnRequest,
   type GrnDto,
   type GrnLineDto,
@@ -16,6 +18,7 @@ import {
   type PoReceiptLineDto,
 } from '@albert/shared';
 import { api, apiBlob, errorText, newIdempotencyKey } from '../../api/client';
+import { ESignModal } from '../../components/ESignModal';
 import { useAuth } from '../../auth/AuthContext';
 import { DataTable, statusFilter } from '../../components/DataTable';
 import { PageHeader } from '../../components/PageHeader';
@@ -46,13 +49,13 @@ export function GrnPage() {
   return (
     <>
       <PageHeader title="Goods received (GRN)" extra={can('purch.grn.post') && <Button type="primary" icon={<BarcodeOutlined />} onClick={() => setEditing('new')}>Receive against a PO</Button>}>
-        Scan the PO number, enter what arrived and post. Received stock goes into QUARANTINE until QC decides; a QC sample request is opened for every lot.
+        Scan the PO number, enter what arrived and post. Received stock goes into QUARANTINE until QC decides, with a QC sample request per lot; items that need no QC are received APPROVED.
       </PageHeader>
       <DataTable<GrnDto>
         title="Goods received notes"
         path="/purch/grns"
         queryKey={grnKey}
-        filters={[statusFilter(PostingStatus)]}
+        filters={[statusFilter(GrnStatus)]}
         searchPlaceholder="Search number, delivery note or notes"
         onRowClick={(r) => setOpenId(r.id)}
         columns={[
@@ -278,6 +281,9 @@ async function openLabels(grn: GrnDto): Promise<void> {
 function GrnDrawer({ id, onClose, onEdit, onChanged }: { id: string; onClose(): void; onEdit(g: GrnDto): void; onChanged(): Promise<void> }) {
   const { can } = useAuth();
   const { message, modal } = App.useApp();
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [reversing, setReversing] = useState(false);
   const qc = useQueryClient();
   const detail = useQuery({ queryKey: [...grnKey, 'detail', id], queryFn: () => api<GrnDto>(`/purch/grns/${id}`) });
   const g = detail.data;
@@ -289,7 +295,7 @@ function GrnDrawer({ id, onClose, onEdit, onChanged }: { id: string; onClose(): 
   const postIt = () =>
     modal.confirm({
       title: 'Post this GRN?',
-      content: 'Lots are created in QUARANTINE and valued at the PO price × Finance’s rate for the GRN date; the stock and the journal are posted and cannot be edited afterwards. The PO’s creator and approvers cannot post it.',
+      content: 'Lots are created in QUARANTINE (APPROVED for items that need no QC) and valued at the PO price × Finance’s rate for the GRN date; the stock and the journal are posted and cannot be edited afterwards. The PO’s creator and approvers cannot post it.',
       okText: 'Post',
       onOk: async () => {
         try {
@@ -311,7 +317,9 @@ function GrnDrawer({ id, onClose, onEdit, onChanged }: { id: string; onClose(): 
         g && (
           <Space>
             {can('purch.grn.post') && g.status === 'DRAFT' && <Button onClick={() => onEdit(g)}>Edit</Button>}
+            {can('purch.grn.post') && g.status === 'DRAFT' && <Button danger onClick={() => setCancelling(true)}>Cancel GRN</Button>}
             {can('purch.grn.post') && g.status === 'DRAFT' && <Button type="primary" onClick={postIt}>Post</Button>}
+            {can('purch.grn.reverse') && g.status === 'POSTED' && <Button danger onClick={() => setReversing(true)}>Reverse</Button>}
             {can('inv.label.print') && g.status === 'POSTED' && (
               <Button icon={<PrinterOutlined />} onClick={() => openLabels(g).catch((err) => void message.error(errorText(err)))}>Print labels</Button>
             )}
@@ -334,6 +342,7 @@ function GrnDrawer({ id, onClose, onEdit, onChanged }: { id: string; onClose(): 
             <Descriptions.Item label="Value (PKR)">{g.totalPkr ? formatDecimal(g.totalPkr) : '—'}</Descriptions.Item>
             <Descriptions.Item label="Created by">{g.createdByName}</Descriptions.Item>
             <Descriptions.Item label="Posted">{g.postedByName ? `${g.postedByName} · journal ${g.journalDocNo ?? '—'}` : '—'}</Descriptions.Item>
+            {g.reversalJournalDocNo && <Descriptions.Item label="Reversed" span={2}>Reversal journal {g.reversalJournalDocNo}; the lots are kept at zero stock</Descriptions.Item>}
             {g.notes && <Descriptions.Item label="Notes" span={2}>{g.notes}</Descriptions.Item>}
           </Descriptions>
           <Typography.Title level={5} style={{ marginTop: 16 }}>Lines</Typography.Title>
@@ -358,6 +367,42 @@ function GrnDrawer({ id, onClose, onEdit, onChanged }: { id: string; onClose(): 
           />
         </>
       )}
+      <Modal
+        open={cancelling}
+        title="Cancel this draft GRN?"
+        okText="Cancel GRN"
+        okButtonProps={{ danger: true, disabled: cancelReason.trim().length < 3 }}
+        cancelText="Keep"
+        onCancel={() => setCancelling(false)}
+        onOk={async () => {
+          try {
+            await api(`/purch/grns/${id}/cancel`, { method: 'POST', body: { reason: cancelReason.trim() }, idempotencyKey: newIdempotencyKey() });
+            void message.success('GRN cancelled');
+            setCancelling(false);
+            setCancelReason('');
+            await reload();
+          } catch (err) {
+            void message.error(errorText(err));
+          }
+        }}
+      >
+        <Typography.Paragraph>Nothing was posted. The draft stays on record as CANCELLED.</Typography.Paragraph>
+        <Input.TextArea rows={2} placeholder="Reason (at least 3 characters)" value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} />
+      </Modal>
+      <ESignModal
+        open={reversing}
+        title={`Reverse GRN ${g?.docNo ?? ''}`}
+        meaning="APPROVED"
+        summary="Only while no lot was sampled, moved, reserved or changed status. The receipt and its journal are reversed today, the QC sample requests are cancelled and the PO quantities are given back. Once a sample is taken, reject the lot through QC and return it to the vendor instead."
+        okText="Reverse"
+        onCancel={() => setReversing(false)}
+        onSubmit={async (r) => {
+          await api(`/purch/grns/${id}/reverse`, { method: 'POST', body: { signature: r.signature }, idempotencyKey: newIdempotencyKey() });
+          void message.success('GRN reversed');
+          setReversing(false);
+          await reload();
+        }}
+      />
     </Drawer>
   );
 }

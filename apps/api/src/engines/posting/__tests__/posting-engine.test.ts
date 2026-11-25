@@ -116,6 +116,7 @@ beforeAll(async () => {
   await runSeed({ nodeEnv: 'test' });
   actors.store = await actorFor('p_store', ['STOREKEEPER']);
   actors.fm = await actorFor('p_fm', ['FINANCE_MANAGER']);
+  actors.wm = await actorFor('p_wm_rev', ['WAREHOUSE_MANAGER']); // reverses GRN_RECEIPT journals (purch.grn.reverse, owner 2026-11-25)
   const wm = await createTestUser({ username: 'p_wm', roleCodes: ['WAREHOUSE_MANAGER'] });
   const qa = await createTestUser({ username: 'p_qa', roleCodes: ['QA_MANAGER'] });
   const fm = actors.fm.userId;
@@ -343,7 +344,9 @@ describe('reverseJournal', () => {
     await expect(as('fm', (tx, a) => reverseJournal(tx, a, { entryId: e.id, date: '2026-12-01', reason: 'wrong GRN' }))).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
-    const r = await as('store', (tx, a) => reverseJournal(tx, a, { entryId: e.id, date: '2026-12-01', reason: 'wrong GRN' }));
+    // Owner 2026-11-25 (answer 5): a GRN journal is reversed under purch.grn.reverse (Warehouse Manager), not by the poster.
+    await expect(as('store', (tx, a) => reverseJournal(tx, a, { entryId: e.id, date: '2026-12-01', reason: 'wrong GRN' }))).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const r = await as('wm', (tx, a) => reverseJournal(tx, a, { entryId: e.id, date: '2026-12-01', reason: 'wrong GRN' }));
     expect(r).toMatchObject({ status: 'POSTED', reversalOf: e.id, event: 'GRN_RECEIPT', sourceType: 'NOSTOCK', sourceId: '778', entryDate: '2026-12-01' });
     expect(lineView(r)).toEqual([['1310', '0.00', '70.00'], ['2120', '70.00', '0.00']]);
     const { rows } = await client.query(`SELECT status, reversal_id FROM fin.journal_entries WHERE id = $1`, [e.id]);
@@ -353,11 +356,11 @@ describe('reverseJournal', () => {
       [e.id],
     );
     expect(h).toEqual([{ reason: 'wrong GRN' }]);
-    await expect(as('store', (tx, a) => reverseJournal(tx, a, { entryId: e.id, date: '2026-12-01', reason: 'again' }))).rejects.toMatchObject({
+    await expect(as('wm', (tx, a) => reverseJournal(tx, a, { entryId: e.id, date: '2026-12-01', reason: 'again' }))).rejects.toMatchObject({
       code: 'INVALID_TRANSITION',
     });
-    await expect(as('store', (tx, a) => reverseJournal(tx, a, { entryId: r.id, date: '2026-12-01', reason: 'undo' }))).rejects.toThrow(/itself a reversal/);
-    await expect(as('store', (tx, a) => reverseJournal(tx, a, { entryId: '999999', date: '2026-12-01', reason: 'x y z' }))).rejects.toMatchObject({
+    await expect(as('wm', (tx, a) => reverseJournal(tx, a, { entryId: r.id, date: '2026-12-01', reason: 'undo' }))).rejects.toThrow(/itself a reversal/);
+    await expect(as('wm', (tx, a) => reverseJournal(tx, a, { entryId: '999999', date: '2026-12-01', reason: 'x y z' }))).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
   });

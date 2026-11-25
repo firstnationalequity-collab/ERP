@@ -47,7 +47,7 @@ export async function listRates(auth: AuthContext, query: ExchangeRateQuery): Pr
 
 /** Create the day's rate, or correct it (a correction needs a reason, kept in the audit log). */
 export async function setRate(auth: AuthContext, input: SetExchangeRateRequest): Promise<ExchangeRateDto> {
-  const rate = new Decimal(input.rate).toFixed(4);
+  const rate = new Decimal(input.rate).toFixed(6);
   await withTransaction(txContext(auth, input.reason ?? `exchange rate ${input.currency} ${input.rateDate}`), async (tx) => {
     const existing = await repo.findRate(tx, auth.companyId, input.currency, input.rateDate, true);
     if (!existing) {
@@ -73,7 +73,7 @@ export async function setRate(auth: AuthContext, input: SetExchangeRateRequest):
  * fin.rate.max_age_days (default 3); older or none → RATE_MISSING. The caller copies rate and date.
  */
 export async function rateOn(q: Queryable, companyId: string, currency: string, date: string): Promise<RateUsed> {
-  if (currency === 'PKR') return { rate: '1.0000', rateDate: date };
+  if (currency === 'PKR') return { rate: '1.000000', rateDate: date };
   const maxAge = await getSetting<number>(q, companyId, RATE_MAX_AGE_SETTING);
   const row = await repo.findLatestRate(q, companyId, currency, date);
   if (!row || days(row.rateDate, date) > maxAge) {

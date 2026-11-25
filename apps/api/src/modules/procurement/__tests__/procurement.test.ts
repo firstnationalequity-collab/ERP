@@ -159,7 +159,7 @@ describe('daily exchange rates (fin.rate.manage, Finance Manager)', () => {
   it('lets the Finance Manager enter a rate, and Finance and Procurement read it', async () => {
     const res = await call('fm', 'post', '/fin/exchange-rates', { currency: 'usd', rateDate: PO_DATE, rate: '280.5000', source: 'SBP' });
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ currency: 'USD', rateDate: PO_DATE, rate: '280.5000', source: 'SBP' });
+    expect(res.body).toMatchObject({ currency: 'USD', rateDate: PO_DATE, rate: '280.500000', source: 'SBP' });
     expect((await call('buyer', 'get', '/fin/exchange-rates?currency=USD')).body).toHaveLength(1);
     expect((await call('ceo', 'get', '/fin/exchange-rates')).status).toBe(200);
   });
@@ -168,6 +168,8 @@ describe('daily exchange rates (fin.rate.manage, Finance Manager)', () => {
     expect((await call('buyer', 'post', '/fin/exchange-rates', { currency: 'USD', rateDate: PO_DATE, rate: '1', source: 'SBP' })).status).toBe(403);
     expect((await call('fm', 'post', '/fin/exchange-rates', { currency: 'PKR', rateDate: PO_DATE, rate: '1', source: 'SBP' })).status).toBe(400);
     expect((await call('fm', 'post', '/fin/exchange-rates', { currency: 'EUR', rateDate: PO_DATE, rate: '0', source: 'SBP' })).status).toBe(400);
+    // Rule 10 (owner 2026-11-25; 0028): NUMERIC(18,6), so 6 decimals are kept and a 7th is refused.
+    expect((await call('fm', 'post', '/fin/exchange-rates', { currency: 'EUR', rateDate: PO_DATE, rate: '300.1234567', source: 'SBP' })).status).toBe(400);
     const noReason = await call('fm', 'post', '/fin/exchange-rates', { currency: 'USD', rateDate: PO_DATE, rate: '281', source: 'SBP' });
     expect(noReason.status).toBe(400);
     expect(noReason.body.error.details).toMatchObject({ field: 'reason' });
@@ -175,11 +177,11 @@ describe('daily exchange rates (fin.rate.manage, Finance Manager)', () => {
 
   it('corrects a rate with a reason, keeping the old value in the audit log; currency and date never change', async () => {
     const res = await call('fm', 'post', '/fin/exchange-rates', { currency: 'USD', rateDate: PO_DATE, rate: '280.2500', source: 'SBP', reason: 'Typo in the rate' });
-    expect(res.body.rate).toBe('280.2500');
+    expect(res.body.rate).toBe('280.250000');
     const { rows } = await client.query(
       `SELECT old_data->>'rate' AS old, new_data->>'rate' AS new, reason FROM core.audit_log WHERE table_name = 'fin.exchange_rates' AND action = 'UPDATE'`,
     );
-    expect(rows).toEqual([{ old: '280.5000', new: '280.2500', reason: 'Typo in the rate' }]);
+    expect(rows).toEqual([{ old: '280.500000', new: '280.250000', reason: 'Typo in the rate' }]);
     await expect(raw(`UPDATE fin.exchange_rates SET rate_date = '2026-11-21' WHERE currency = 'USD'`)).rejects.toThrow(/FORBIDDEN/);
     await expect(raw(`DELETE FROM fin.exchange_rates`)).rejects.toThrow();
   });
@@ -324,7 +326,7 @@ describe('purchase orders: submit, approval matrix and segregation', () => {
     ids.localPo = po.id;
     const sub = await call('buyer', 'post', `/purch/pos/${po.id}/submit`);
     expect(sub.status).toBe(200);
-    expect(sub.body).toMatchObject({ status: 'PENDING_APPROVAL', exchangeRate: '1.0000', totalPkr: '250000.00', submittedBy: users.buyer });
+    expect(sub.body).toMatchObject({ status: 'PENDING_APPROVAL', exchangeRate: '1.000000', totalPkr: '250000.00', submittedBy: users.buyer });
     const approval = await approvalOf(po.id);
     expect(approval).toMatchObject({ status: 'PENDING', measured_amount: '250000.00' });
     expect(sub.body.approvalId).toBe(approval.id);
@@ -368,11 +370,11 @@ describe('purchase orders: submit, approval matrix and segregation', () => {
     expect(missing.status).toBe(422);
     expect(missing.body.error).toMatchObject({ code: 'RATE_MISSING', details: { currency: 'USD', date: '2026-11-19' } });
 
-    await call('fm', 'post', '/fin/exchange-rates', { currency: 'USD', rateDate: '2026-11-19', rate: '280.1234', source: 'SBP' });
+    await call('fm', 'post', '/fin/exchange-rates', { currency: 'USD', rateDate: '2026-11-19', rate: '280.123456', source: 'SBP' });
     const sub = await call('buyer', 'post', `/purch/pos/${po.id}/submit`);
-    expect(sub.body).toMatchObject({ exchangeRate: '280.1234', totalPkr: '7003085.00' });
+    expect(sub.body).toMatchObject({ exchangeRate: '280.123456', totalPkr: '7003086.40' });
     const approval = await approvalOf(po.id);
-    expect(approval.measured_amount).toBe('7003085.00');
+    expect(approval.measured_amount).toBe('7003086.40');
     const { rows: steps } = await client.query(
       `SELECT s.step_no, r.code, s.status FROM core.approval_steps s JOIN core.roles r ON r.id = s.role_id WHERE s.approval_id = $1 ORDER BY s.step_no`,
       [approval.id],
@@ -435,9 +437,9 @@ describe('exchange rate lookup (owner 2026-11-25, answer 3)', () => {
     await call('fm', 'post', '/fin/exchange-rates', { currency: 'EUR', rateDate: '2026-11-16', rate: '301.5000', source: 'SBP' });
     const friday = await eurPo('2026-11-19'); // 3 days after the 16th: allowed
     const sub = await call('buyer', 'post', `/purch/pos/${friday.id}/submit`);
-    expect(sub.body).toMatchObject({ exchangeRate: '301.5000', exchangeRateDate: '2026-11-16' });
+    expect(sub.body).toMatchObject({ exchangeRate: '301.500000', exchangeRateDate: '2026-11-16' });
     const local = (await call('buyer', 'post', '/purch/pos', localPo(ids.vendor!, [{ itemId: ids.rm!, qty: '1', unitPrice: '10' }]))).body;
-    expect((await call('buyer', 'post', `/purch/pos/${local.id}/submit`)).body).toMatchObject({ exchangeRate: '1.0000', exchangeRateDate: PO_DATE });
+    expect((await call('buyer', 'post', `/purch/pos/${local.id}/submit`)).body).toMatchObject({ exchangeRate: '1.000000', exchangeRateDate: PO_DATE });
   });
 
   it('refuses a rate older than the limit (RATE_MISSING names the latest), and takes a newer one once entered', async () => {
@@ -448,7 +450,7 @@ describe('exchange rate lookup (owner 2026-11-25, answer 3)', () => {
     await call('fm', 'post', '/fin/exchange-rates', { currency: 'EUR', rateDate: '2026-11-21', rate: '302.0000', source: 'SBP' }); // after the PO date: not used
     expect((await call('buyer', 'post', `/purch/pos/${late.id}/submit`)).status).toBe(422);
     await call('fm', 'post', '/fin/exchange-rates', { currency: 'EUR', rateDate: '2026-11-18', rate: '301.7500', source: 'SBP' });
-    expect((await call('buyer', 'post', `/purch/pos/${late.id}/submit`)).body).toMatchObject({ exchangeRate: '301.7500', exchangeRateDate: '2026-11-18' });
+    expect((await call('buyer', 'post', `/purch/pos/${late.id}/submit`)).body).toMatchObject({ exchangeRate: '301.750000', exchangeRateDate: '2026-11-18' });
   });
 });
 

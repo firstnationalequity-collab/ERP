@@ -192,7 +192,7 @@ export async function startApproval(tx: Tx, actor: Actor, input: StartApprovalIn
     measure: ruleMeasure,
     amount: m.amount?.toFixed(2) ?? null,
     currency: m.currency,
-    exchangeRate: m.exchangeRate?.toFixed(4) ?? null,
+    exchangeRate: m.exchangeRate?.toFixed(6) ?? null,
     measuredAmount: ruleMeasure === 'AMOUNT_PKR' ? (m.measured?.toFixed(2) ?? null) : null,
     measuredPercent: ruleMeasure === 'PERCENT' ? (m.measured?.toFixed(4) ?? null) : null,
     requestedBy: actor.userId,

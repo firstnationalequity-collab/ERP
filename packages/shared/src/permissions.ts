@@ -72,6 +72,7 @@ export const Permissions = {
   'purch.po.manage': action('Create/edit purchase orders'),
   'purch.po.approve': action('Approve purchase orders'),
   'purch.grn.post': action('Post goods receipts'),
+  'purch.grn.reverse': action('Reverse a posted GRN whose lots are untouched (e-signature + reason)'),
   'purch.landed_cost.manage': action('Enter landed costs'),
 
   // qc

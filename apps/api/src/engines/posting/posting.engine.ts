@@ -60,6 +60,14 @@ export const JournalPostingKeys: Readonly<Partial<Record<PostingEvent, Permissio
   LOT_RETURNED: 'inv.lot.dispose',
 };
 
+/**
+ * Where reversing an event's journal needs a different key than posting it: a GRN is reversed by the Warehouse
+ * Manager (purch.grn.reverse, owner 2026-11-25, answer 5). Others reverse under their posting key.
+ */
+export const JournalReversalKeys: Readonly<Partial<Record<PostingEvent, PermissionKey>>> = {
+  GRN_RECEIPT: 'purch.grn.reverse',
+};
+
 type Posting = { event: PostingEvent; counter: AccountRole };
 
 /**
@@ -118,6 +126,10 @@ function postingKey(event: PostingEvent): PermissionKey {
     throw new AppError('VALIDATION_FAILED', `No posting key is defined for ${event} journals yet; its module adds it when it is built`, { event });
   }
   return key;
+}
+
+function reversalKey(event: PostingEvent): PermissionKey {
+  return JournalReversalKeys[event] ?? postingKey(event);
 }
 
 // ---------------------------------------------------------------- types
@@ -233,7 +245,7 @@ export async function reverseJournal(tx: Tx, actor: Actor, input: ReverseInput):
   if (original.event === null || original.sourceId === null) {
     throw new AppError('VALIDATION_FAILED', 'Manual journal vouchers are reversed from the journal voucher screen (M8)');
   }
-  const key = postingKey(original.event);
+  const key = reversalKey(original.event);
   const map = journalMap(key);
   const lines = await repo.linesOf(tx, original.id);
 
@@ -331,7 +343,7 @@ export async function reverseStockJournal(tx: Tx, actor: Actor, input: ReverseSt
   }
   const event = oneEvent(movements);
   const { doc, date } = oneDocumentAndDate(movements);
-  const key = postingKey(event);
+  const key = reversalKey(event);
   const valued = movements.filter(hasValue);
   const amount = valued.reduce((s, m) => s.plus(new Decimal(m.value).abs()), new Decimal(0));
 
