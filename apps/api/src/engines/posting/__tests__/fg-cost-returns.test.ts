@@ -327,8 +327,8 @@ describe('FG lot valuation (owner Q8, Option A)', () => {
     await expect(adjust(own.fg, '0.00')).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
     await expect(adjust(own.fg, '1.234')).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
     await expect(adjust(own.fg, '1.00', 'NOT_A_REASON')).rejects.toThrow(/Unknown value adjustment reason/);
-    // M3 (0029): LANDED_COST is a known reason now, but only on a GRN lot for a landed-cost document.
-    await expect(adjust(own.fg, '1.00', 'LANDED_COST')).rejects.toThrow(/landed-cost adjustment raises a GRN lot/);
+    // M3 (0029, 0030): LANDED_COST is a known reason now, but only on a GRN lot for a landed-cost document.
+    await expect(adjust(own.fg, '1.00', 'LANDED_COST')).rejects.toThrow(/landed-cost adjustment changes a GRN lot/);
     const rm = await approvedRm('1', '5');
     await expect(adjust(rm, '1.00')).rejects.toMatchObject({ code: 'INVALID_TRANSITION' });
     // A toll batch closes with no value and no journal (rule 12).

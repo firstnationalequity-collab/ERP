@@ -28,7 +28,7 @@ function call(who: string, method: 'get' | 'post' | 'patch', url: string, body?:
 }
 const post = (who: string, grnId: string) =>
   call(who, 'post', `/purch/grns/${grnId}/post`).set('Idempotency-Key', `grn-test-${++keyNo}`);
-const sign = (meaning: 'APPROVED' | 'REJECTED') => ({ signature: { password: TEST_PASSWORD, meaning, reason: 'Checked the order' } });
+const sign = (meaning: 'APPROVED' | 'REJECTED' | 'REVERSED') => ({ signature: { password: TEST_PASSWORD, meaning, reason: 'Checked the order' } });
 
 async function inTx<T>(userId: string, work: () => Promise<T>): Promise<T> {
   await client.query('BEGIN');
@@ -442,7 +442,7 @@ describe('GRN database guards (0027)', () => {
 
 // ---------------------------------------------------------------- owner answers 2026-11-25 (0028)
 
-const reverse = (who: string, grnId: string, body: object = sign('APPROVED')) =>
+const reverse = (who: string, grnId: string, body: object = sign('REVERSED')) =>
   call(who, 'post', `/purch/grns/${grnId}/reverse`, body).set('Idempotency-Key', `grn-rev-${++keyNo}`);
 const setShelfPct = (pct: number) =>
   raw(`INSERT INTO core.settings (key, value) VALUES ('purch.grn.min_shelf_life_pct', $1::jsonb)
@@ -590,7 +590,7 @@ describe('GRN reversal (owner 2026-11-25, answer 5)', () => {
     const g = await postedGrn(po, [rmLine(po.lineIds[0]!, '10'), { poLineId: po.lineIds[1], qty: '2' }]);
     expect((await call('store', 'get', `/purch/pos/${po.id}`)).body.status).toBe('RECEIVED');
 
-    const res = await reverse('wm', g.id, { signature: { password: TEST_PASSWORD, meaning: 'APPROVED', reason: 'Delivered to the wrong site' } });
+    const res = await reverse('wm', g.id, { signature: { password: TEST_PASSWORD, meaning: 'REVERSED', reason: 'Delivered to the wrong site' } });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ status: 'REVERSED', journalDocNo: g.journalDocNo, totalPkr: '325.00' });
     expect(res.body.reversalJournalDocNo).toMatch(/^SJ-/);
@@ -631,9 +631,10 @@ describe('GRN reversal (owner 2026-11-25, answer 5)', () => {
     const g = await postedGrn(po, [{ poLineId: po.lineIds[0], qty: '3' }]);
     expect((await reverse('store', g.id)).status).toBe(403);
     expect((await call('wm', 'post', `/purch/grns/${g.id}/reverse`, sign('APPROVED'))).status).toBe(400);
-    expect((await reverse('wm', g.id, { signature: { password: 'wrong-password', meaning: 'APPROVED', reason: 'Wrong' } })).body.error.code).toBe('ESIGN_FAILED');
+    expect((await reverse('wm', g.id, { signature: { password: 'wrong-password', meaning: 'REVERSED', reason: 'Wrong' } })).body.error.code).toBe('ESIGN_FAILED');
     expect((await reverse('wm', g.id, sign('REJECTED'))).status).toBe(400);
-    expect((await reverse('wm', g.id, { signature: { password: TEST_PASSWORD, meaning: 'APPROVED' } })).status).toBe(400); // no reason
+    expect((await reverse('wm', g.id, sign('APPROVED'))).status).toBe(400); // owner 2026-11-25: the meaning is REVERSED
+    expect((await reverse('wm', g.id, { signature: { password: TEST_PASSWORD, meaning: 'REVERSED' } })).status).toBe(400); // no reason
     const draft = await call('store', 'post', '/purch/grns', grnBody(po.id, [{ poLineId: po.lineIds[0], qty: '1' }]));
     expect([(await reverse('wm', draft.body.id)).status]).toEqual([409]);
     expect((await reverse('wm', g.id)).status).toBe(200);

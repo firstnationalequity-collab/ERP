@@ -232,15 +232,19 @@ export async function lotTouches(
   lotIds: string[],
   refDocType: string,
   refDocId: string,
+  own: { refDocType: string; refDocIds: string[] },
 ): Promise<{ lotId: string; lotNo: string; otherMovements: number; statusChanges: number; reservations: number }[]> {
   if (lotIds.length === 0) return [];
   const ids = sql.join(lotIds.map((id) => sql`${id}::bigint`), sql`, `);
+  const ownIds = own.refDocIds.length ? sql.join(own.refDocIds.map((id) => sql`${id}::bigint`), sql`, `) : sql`NULL::bigint`;
   const res = await q.execute<{ lot_id: string; lot_no: string; other_movements: string; status_changes: string; reservations: string }>(sql`
     SELECT l.id::text AS lot_id, l.lot_no,
            (SELECT count(*) FROM inv.stock_movements m
              WHERE m.lot_id = l.id AND m.movement_type <> 'ROUNDING_SWEEP'
                AND NOT (m.ref_doc_type = ${refDocType} AND m.ref_doc_id = ${refDocId}::bigint
-                        AND m.movement_type = 'RECEIPT'))::text AS other_movements,
+                        AND m.movement_type = 'RECEIPT')
+               AND NOT (m.movement_type = 'VALUE_ADJUSTMENT' AND m.ref_doc_type = ${own.refDocType}
+                        AND m.ref_doc_id IN (${ownIds})))::text AS other_movements,
            (SELECT count(*) - 1 FROM core.status_history h
              WHERE h.entity_table = 'inv.lots' AND h.entity_id = l.id::text)::text AS status_changes,
            (SELECT count(*) FROM inv.stock_reservations r WHERE r.lot_id = l.id)::text AS reservations

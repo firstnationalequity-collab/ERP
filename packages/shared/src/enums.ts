@@ -140,7 +140,7 @@ export type GrnStatus = (typeof GrnStatus)[number];
  * Landed cost charge (0029; owner Q21, Q2): DRAFT → POSTED (with its GRN, or alone as a later bill);
  * DRAFT → CANCELLED (reason; also when its GRN is cancelled or reversed). A posted charge never changes.
  */
-export const LandedCostStatus = ['DRAFT', 'POSTED', 'CANCELLED'] as const;
+export const LandedCostStatus = ['DRAFT', 'POSTED', 'CANCELLED', 'REVERSED'] as const;
 export type LandedCostStatus = (typeof LandedCostStatus)[number];
 
 /**
@@ -165,7 +165,7 @@ export type SampleRequestStatus = (typeof SampleRequestStatus)[number];
 export const DeviationClass = ['MINOR', 'MAJOR', 'CRITICAL'] as const;
 export type DeviationClass = (typeof DeviationClass)[number];
 
-export const SignatureMeaning = ['REVIEWED', 'APPROVED', 'RELEASED', 'REJECTED', 'WITNESSED', 'PERFORMED'] as const;
+export const SignatureMeaning = ['REVIEWED', 'APPROVED', 'RELEASED', 'REJECTED', 'WITNESSED', 'PERFORMED', 'REVERSED'] as const;
 export type SignatureMeaning = (typeof SignatureMeaning)[number];
 
 /** Changed only through core/transition (OPEN → CLOSED → OPEN, core.period.close). */

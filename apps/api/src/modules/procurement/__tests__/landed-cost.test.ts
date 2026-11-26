@@ -34,7 +34,7 @@ function call(who: string, method: 'get' | 'post' | 'patch', url: string, body?:
   return body ? r.send(body) : r;
 }
 const act = (who: string, url: string, body?: object) => call(who, 'post', url, body).set('Idempotency-Key', `lc-test-${++keyNo}`);
-const sign = (meaning: 'APPROVED' | 'REJECTED', reason = 'Checked the order') => ({ signature: { password: TEST_PASSWORD, meaning, reason } });
+const sign = (meaning: 'APPROVED' | 'REJECTED' | 'REVERSED', reason = 'Checked the order') => ({ signature: { password: TEST_PASSWORD, meaning, reason } });
 
 async function inTx<T>(userId: string, work: () => Promise<T>): Promise<T> {
   await client.query('BEGIN');
@@ -48,6 +48,8 @@ async function inTx<T>(userId: string, work: () => Promise<T>): Promise<T> {
     throw err;
   }
 }
+const count = async (text: string, params: unknown[] = []) => Number((await client.query<{ n: string }>(text, params)).rows[0]!.n);
+const tomorrow = () => new Date(Date.now() + 36 * 3600 * 1000).toISOString().slice(0, 10);
 const one = async (text: string, params: unknown[] = []) => (await client.query<{ id: string }>(text, params)).rows[0]!.id;
 const history = (table: string, id: string, from: string | null, to: string, actor: string) =>
   client.query(`INSERT INTO core.status_history (entity_table, entity_id, from_status, to_status, actor_id) VALUES ($1, $2, $3, $4, $5)`, [
@@ -209,6 +211,7 @@ beforeAll(async () => {
     ['store', ['STOREKEEPER']],
     ['wm', ['WAREHOUSE_MANAGER']],
     ['qa', ['QA_MANAGER']],
+    ['buyfm', ['PURCHASE_OFFICER', 'FINANCE_MANAGER']],
   ] as const) {
     users[name] = await createTestUser({ username: `lc_${name}`, roleCodes: [...roles] });
     const res = await request(app).post('/api/v1/core/auth/login').send({ username: `lc_${name}`, password: TEST_PASSWORD });
@@ -378,11 +381,22 @@ describe('known charges entered with the GRN (owner Q2): the lot is received at 
       [[cd.body.id, st.body.id]],
     );
     expect(who).toEqual([{ actor_id: users.store }]);
-    // A posted charge never changes; the GRN with posted charges is not reversed.
+    // A posted charge never changes.
     const edit = await call('buyer', 'patch', `/purch/landed-costs/${cd.body.id}`, { chargeTypeId: types.CD, chargeDate: GRN_DATE, amount: '1' });
     expect([edit.status, edit.body.error.code]).toEqual([409, 'RECORD_LOCKED']);
-    const rev = await act('wm', `/purch/grns/${grn.id}/reverse`, sign('APPROVED', 'Wrong delivery'));
-    expect([rev.status, rev.body.error.code]).toEqual([422, 'GRN_HAS_LANDED_COST']);
+    await glEqualsLedger();
+
+    // Owner 2026-11-25 (4b): the lots are untouched, so the GRN is reversed and takes its posted charges with it.
+    const rev = await act('wm', `/purch/grns/${grn.id}/reverse`, sign('REVERSED', 'Wrong delivery'));
+    expect([rev.status, rev.body.error]).toEqual([200, undefined]);
+    expect(rev.body.landedCosts.map((c: { status: string }) => c.status)).toEqual(['REVERSED', 'REVERSED', 'REVERSED', 'REVERSED', 'REVERSED']);
+    for (const l of posted.lines) expect(await lotOf(l.lotId)).toMatchObject({ qty: '0.0000', value: '0.00' });
+    const { rows: lcj } = await client.query(
+      `SELECT status, count(*)::int AS n FROM fin.journal_entries WHERE source_type = 'LANDED_COST' AND source_id = ANY($1::bigint[]) GROUP BY status ORDER BY status`,
+      [[cd.body.id, fr.body.id, ins.body.id, st.body.id, it.body.id]],
+    );
+    expect(lcj).toEqual([{ status: 'POSTED', n: 5 }, { status: 'REVERSED', n: 5 }]); // 5 mirrors posted, 5 originals reversed
+    expect(await count(`SELECT count(*) AS n FROM core.e_signatures WHERE record_table = 'purch.grns' AND record_id = $1 AND meaning = 'REVERSED'`, [grn.id])).toBe(1);
     await glEqualsLedger();
   });
 });
@@ -434,7 +448,7 @@ describe('later bills (owner Q21): held share into the lot, consumed share to pr
       return [r.status, r.body.error?.code];
     };
     expect(await code(charge(grn.id, 'FREIGHT', '10', { chargeDate: '2026-11-23' }))).toEqual([400, 'VALIDATION_FAILED']);
-    expect(await code(charge(grn.id, 'FREIGHT', '10', { chargeDate: '2026-11-26' }))).toEqual([400, 'VALIDATION_FAILED']);
+    expect(await code(charge(grn.id, 'FREIGHT', '10', { chargeDate: tomorrow() }))).toEqual([400, 'VALIDATION_FAILED']);
     expect(await code(charge(grn.id, 'CD', '10', { basis: 'GD_AMOUNTS', inputs: [{ poLineId: po.lineIds[0], gdAmount: '9' }] }))).toEqual([400, 'VALIDATION_FAILED']);
     expect(await code(charge(grn.id, 'CD', '10', { basis: 'WEIGHT', inputs: [{ poLineId: po.lineIds[0], weightKg: '9' }] }))).toEqual([400, 'VALIDATION_FAILED']);
     expect(await code(charge(grn.id, 'IMPORT_ST', '10', { basis: 'VALUE' }))).toEqual([400, 'VALIDATION_FAILED']);
@@ -454,7 +468,7 @@ describe('later bills (owner Q21): held share into the lot, consumed share to pr
   it('a GRN without posted charges is still reversed, cancelling its DRAFT later bills; a DRAFT bill is cancelled with a reason', async () => {
     const { grn } = await postedSpareGrn('3', '100');
     const bill = await call('buyer', 'post', '/purch/landed-costs', charge(grn.id, 'CLEARING', '30', { chargeDate: BILL_DATE }));
-    const rev = await act('wm', `/purch/grns/${grn.id}/reverse`, sign('APPROVED', 'Wrong vendor'));
+    const rev = await act('wm', `/purch/grns/${grn.id}/reverse`, sign('REVERSED', 'Wrong vendor'));
     expect(rev.status).toBe(200);
     expect((await call('buyer', 'get', `/purch/landed-costs/${bill.body.id}`)).body.status).toBe('CANCELLED');
 
@@ -487,7 +501,7 @@ describe('posting date = charge date, in an open period (rule 11)', () => {
 
 describe('database guards (0029)', () => {
   it('a posted charge and its allocations never change; a used type keeps its capitalise flag; a landed-cost adjustment needs a GRN lot', async () => {
-    const { rows } = await client.query<{ id: string }>(`SELECT id FROM purch.landed_costs WHERE status = 'POSTED' ORDER BY id LIMIT 1`);
+    const { rows } = await client.query<{ id: string }>(`SELECT c.id FROM purch.landed_costs c WHERE c.status = 'POSTED' AND EXISTS (SELECT 1 FROM purch.landed_cost_allocations a WHERE a.landed_cost_id = c.id) ORDER BY c.id LIMIT 1`);
     const id = rows[0]!.id;
     await expect(raw(`UPDATE purch.landed_costs SET notes = 'x' WHERE id = $1`, [id])).rejects.toThrow(/RECORD_LOCKED/);
     await expect(raw(`UPDATE purch.landed_cost_allocations SET amount = amount WHERE landed_cost_id = $1`, [id])).rejects.toThrow(/RECORD_LOCKED/);
@@ -502,6 +516,177 @@ describe('database guards (0029)', () => {
         postValueAdjustment(tx, buyer, { lotId: grn.lines[0]!.lotId, value: '5.00', reason: 'LANDED_COST', date: BILL_DATE, refDocType: 'GRN', refDocId: grn.id }),
       ),
     ).rejects.toThrow(/landed-cost adjustment/);
-    await expect(raw(`UPDATE purch.landed_costs SET status = 'POSTED', posting_date = '2026-11-25', posted_by = 1, posted_at = now() WHERE status = 'DRAFT'`)).rejects.toThrow();
+    const draft = await call('buyer', 'post', '/purch/landed-costs', charge(grn.id, 'FREIGHT', '3', { chargeDate: BILL_DATE }));
+    expect(draft.status).toBe(201);
+    await expect(raw(`UPDATE purch.landed_costs SET status = 'POSTED', posting_date = '2026-11-25', posted_by = 1, posted_at = now() WHERE id = $1`, [draft.body.id])).rejects.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------- owner answers 2026-11-25 (task 4b, 0030)
+
+const correct = (who: string, id: string, amount: string, reason = 'Forwarder credit note') =>
+  call(who, 'post', `/purch/landed-costs/${id}/correct`, { chargeDate: BILL_DATE, amount, reason });
+const approve = (who: string, id: string, meaning = 'APPROVED', password = TEST_PASSWORD) =>
+  act(who, `/purch/landed-costs/${id}/approve`, { signature: { password, meaning, reason: 'Credit note checked' } });
+
+/** A posted later bill on a fresh spare GRN (qty @ 100): the lot holds qty × 100 + amount. */
+async function postedBill(code: string, amount: string, qty = '10') {
+  const { po, grn } = await postedSpareGrn(qty, '100');
+  const bill = await call('buyer', 'post', '/purch/landed-costs', charge(grn.id, code, amount, { chargeDate: BILL_DATE, vendorId: ids.vendor }));
+  expect(bill.status).toBe(201);
+  const res = await act('buyer', `/purch/landed-costs/${bill.body.id}/post`);
+  expect([res.status, res.body.error]).toEqual([200, undefined]);
+  return { po, grn, bill: res.body as { id: string; docNo: string } };
+}
+
+describe('charge currency (owner 2026-11-25, 4b answer 3)', () => {
+  it('converts at the latest rate on or before the charge date, stores currency, foreign amount, rate and PKR, and refreshes the rate at posting', async () => {
+    const { grn } = await postedSpareGrn('10', '100');
+    const usd = await call('buyer', 'post', '/purch/landed-costs', charge(grn.id, 'FREIGHT', '10', { currency: 'USD', chargeDate: BILL_DATE }));
+    expect(usd.status).toBe(201);
+    // No rate on 25-11 yet: the 24-11 rate (1 day old, within 3).
+    expect(usd.body).toMatchObject({ currency: 'USD', foreignAmount: '10.00', exchangeRate: '280.000000', exchangeRateDate: GRN_DATE, amount: '2800.00' });
+    // Finance enters the 25-11 rate before posting: the charge posts at it.
+    expect((await call('fm', 'post', '/fin/exchange-rates', { currency: 'USD', rateDate: BILL_DATE, rate: '281.555555', source: 'SBP' })).status).toBe(200);
+    const posted = await act('buyer', `/purch/landed-costs/${usd.body.id}/post`);
+    expect(posted.body).toMatchObject({ status: 'POSTED', exchangeRate: '281.555555', exchangeRateDate: BILL_DATE, amount: '2815.56' });
+    expect(await journalOf(usd.body.id)).toEqual([
+      { event: 'LANDED_COST', date: BILL_DATE, code: '1310', dr: '2815.56', cr: '0.00', vendor: null },
+      { event: 'LANDED_COST', date: BILL_DATE, code: '2130', dr: '0.00', cr: '2815.56', vendor: null },
+    ]);
+    // No rate for the currency: RATE_MISSING.
+    const eur = await call('buyer', 'post', '/purch/landed-costs', charge(grn.id, 'FREIGHT', '10', { currency: 'EUR', chargeDate: BILL_DATE }));
+    expect([eur.status, eur.body.error.code]).toEqual([422, 'RATE_MISSING']);
+    // The database keeps PKR = foreign × rate.
+    await expect(raw(`UPDATE purch.landed_costs SET amount = 1 WHERE id = $1`, [usd.body.id])).rejects.toThrow();
+    await glEqualsLedger();
+  });
+});
+
+describe('correction charges (owner 2026-11-25, 4b answer 5)', () => {
+  it('a negative document linked to the original, split held / price variance at its date, posted by a Finance Manager e-signature', async () => {
+    const { grn, bill } = await postedBill('FREIGHT', '1000');
+    const lotId = grn.lines[0]!.lotId;
+    await consume(lotId, '4', BILL_DATE); // 4 of 10 used at 200: the lot holds 6 = 1200
+    const c = await correct('buyer', bill.id, '-500');
+    expect(c.status).toBe(201);
+    expect(c.body).toMatchObject({ status: 'DRAFT', amount: '-500.00', correctionOfId: bill.id, correctionOfDocNo: bill.docNo, correctionReason: 'Forwarder credit note', basis: 'VALUE' });
+
+    // Only the Finance Manager posts it, with an e-signature APPROVED, and an Idempotency-Key.
+    expect((await act('buyer', `/purch/landed-costs/${c.body.id}/post`)).status).toBe(409);
+    expect((await approve('buyer', c.body.id)).status).toBe(403);
+    expect((await call('fm', 'post', `/purch/landed-costs/${c.body.id}/approve`, { signature: { password: TEST_PASSWORD, meaning: 'APPROVED', reason: 'ok ok' } })).status).toBe(400);
+    expect((await approve('fm', c.body.id, 'REVIEWED')).status).toBe(400);
+    expect((await approve('fm', c.body.id, 'APPROVED', 'wrong-password')).body.error.code).toBe('ESIGN_FAILED');
+    const ok = await approve('fm', c.body.id);
+    expect([ok.status, ok.body.error]).toEqual([200, undefined]);
+    expect(ok.body).toMatchObject({ status: 'POSTED', postingDate: BILL_DATE });
+    expect(ok.body.allocations).toEqual([expect.objectContaining({ amount: '-500.00', heldQty: '6.0000', heldAmount: '-300.00', varianceAmount: '-200.00' })]);
+    expect(await lotOf(lotId)).toEqual({ unit_cost: '150.000000', qty: '6.0000', value: '900.00' });
+    expect(await journalOf(c.body.id)).toEqual([
+      { event: 'LANDED_COST', date: BILL_DATE, code: '1310', dr: '0.00', cr: '300.00', vendor: null },
+      { event: 'LANDED_COST', date: BILL_DATE, code: '2130', dr: '500.00', cr: '0.00', vendor: ids.vendor },
+      { event: 'LANDED_COST', date: BILL_DATE, code: '5200', dr: '0.00', cr: '200.00', vendor: null },
+    ]);
+    expect(
+      await count(`SELECT count(*) AS n FROM core.e_signatures WHERE record_table = 'purch.landed_costs' AND record_id = $1 AND meaning = 'APPROVED' AND user_id = $2`, [
+        c.body.id,
+        users.fm,
+      ]),
+    ).toBe(1);
+    expect((await call('buyer', 'get', `/purch/landed-costs/${bill.id}`)).body.corrections).toEqual([
+      expect.objectContaining({ id: c.body.id, status: 'POSTED', amount: '-500.00' }),
+    ]);
+    await glEqualsLedger();
+
+    // Refusals: beyond what is left (500), a positive amount, no reason, a correction of a correction, of a DRAFT.
+    const over = await correct('buyer', bill.id, '-500.01');
+    expect([over.status, over.body.error.code]).toEqual([422, 'CORRECTION_EXCEEDS_CHARGE']);
+    expect((await correct('buyer', bill.id, '100')).status).toBe(400);
+    expect((await call('buyer', 'post', `/purch/landed-costs/${bill.id}/correct`, { chargeDate: BILL_DATE, amount: '-1' })).status).toBe(400);
+    expect((await correct('buyer', c.body.id, '-1')).status).toBe(400);
+    const draft = await call('buyer', 'post', '/purch/landed-costs', charge(grn.id, 'CLEARING', '50', { chargeDate: BILL_DATE }));
+    expect((await correct('buyer', draft.body.id, '-1')).status).toBe(409);
+    // A correction is never edited.
+    const c2 = await correct('buyer', bill.id, '-100');
+    expect((await call('buyer', 'patch', `/purch/landed-costs/${c2.body.id}`, { chargeTypeId: types.FREIGHT, chargeDate: BILL_DATE, amount: '1' })).status).toBe(409);
+  });
+
+  it('creator and signer differ: one person holding both keys cannot sign their own correction', async () => {
+    const { bill } = await postedBill('INSURANCE', '300');
+    const c = await correct('buyfm', bill.id, '-100');
+    expect(c.status).toBe(201);
+    const own = await approve('buyfm', c.body.id);
+    expect([own.status, own.body.error.code]).toEqual([403, 'SEGREGATION_OF_DUTIES']);
+    expect((await approve('fm', c.body.id)).status).toBe(200);
+  });
+
+  it('a tax correction takes the tax back: Dr clearing / Cr input tax', async () => {
+    const { bill } = await postedBill('IMPORT_ST', '900');
+    const c = await correct('buyer', bill.id, '-900', 'GD amended');
+    expect((await approve('fm', c.body.id)).status).toBe(200);
+    expect(await journalOf(c.body.id)).toEqual([
+      { event: 'IMPORT_TAX', date: BILL_DATE, code: '1230', dr: '0.00', cr: '900.00', vendor: null },
+      { event: 'IMPORT_TAX', date: BILL_DATE, code: '2130', dr: '900.00', cr: '0.00', vendor: ids.vendor },
+    ]);
+  });
+
+  it('never takes a lot below zero: the engine refuses a landed-cost adjustment beyond the lot value; a stray one fails at commit', async () => {
+    const { grn, bill } = await postedBill('FREIGHT', '100', '2'); // lot holds 300
+    const buyer = await actorOf('buyer');
+    const adjust = (value: string) =>
+      withTransaction({ userId: buyer.userId, companyId: '1' }, (tx) =>
+        postValueAdjustment(tx, buyer, { lotId: grn.lines[0]!.lotId, value, reason: 'LANDED_COST', date: BILL_DATE, refDocType: 'LANDED_COST', refDocId: bill.id }),
+      );
+    await expect(adjust('-300.01')).rejects.toMatchObject({ code: 'LOT_VALUE_NEGATIVE' });
+    await expect(adjust('-50.00')).rejects.toThrow(/not by what it holds there/);
+  });
+});
+
+describe('GRN reversal with posted charges (owner 2026-11-25, 4b answer 5)', () => {
+  it('undoes a later bill and its correction in the same transaction while the lots are untouched', async () => {
+    const { grn, bill } = await postedBill('FREIGHT', '500', '5'); // lot 500 + 500
+    const c = await correct('buyer', bill.id, '-200');
+    expect((await approve('fm', c.body.id)).status).toBe(200);
+    expect(await lotOf(grn.lines[0]!.lotId)).toMatchObject({ qty: '5.0000', value: '800.00' });
+    const rev = await act('wm', `/purch/grns/${grn.id}/reverse`, sign('REVERSED', 'Received against the wrong PO'));
+    expect([rev.status, rev.body.error]).toEqual([200, undefined]);
+    for (const id of [bill.id, c.body.id]) expect((await call('buyer', 'get', `/purch/landed-costs/${id}`)).body.status).toBe('REVERSED');
+    expect(await lotOf(grn.lines[0]!.lotId)).toMatchObject({ qty: '0.0000', value: '0.00' });
+    const { rows } = await client.query(
+      `SELECT status, count(*)::int AS n FROM fin.journal_entries WHERE source_type = 'LANDED_COST' AND source_id = ANY($1::bigint[]) GROUP BY status ORDER BY status`,
+      [[bill.id, c.body.id]],
+    );
+    expect(rows).toEqual([{ status: 'POSTED', n: 2 }, { status: 'REVERSED', n: 2 }]);
+    await glEqualsLedger();
+    // A reversed charge is not corrected.
+    expect((await correct('buyer', bill.id, '-1')).status).toBe(409);
+  });
+
+  it('still refuses GRN_LOTS_IN_USE once a lot was used; the database reverses a charge only with its GRN', async () => {
+    const { grn, bill } = await postedBill('FREIGHT', '100');
+    await consume(grn.lines[0]!.lotId, '1', BILL_DATE);
+    const rev = await act('wm', `/purch/grns/${grn.id}/reverse`, sign('REVERSED', 'Wrong delivery'));
+    expect([rev.status, rev.body.error.code]).toEqual([422, 'GRN_LOTS_IN_USE']);
+    await expect(
+      inTx(users.wm!, async () => {
+        await history('purch.landed_costs', bill.id, 'POSTED', 'REVERSED', users.wm!);
+        await client.query(`UPDATE purch.landed_costs SET status = 'REVERSED' WHERE id = $1`, [bill.id]);
+      }),
+    ).rejects.toThrow(/reversed only with its GRN|journal is not/);
+  });
+});
+
+describe('GRN posting re-checks the vendor after a reversal (owner 2026-11-25, 4b)', () => {
+  it('the PO goes back to APPROVED without re-running its checks; a vendor deactivated afterwards stops the next GRN', async () => {
+    const vendorId = await vendor('V-DEACT');
+    const po = await approvedPo([{ itemId: ids.spare!, qty: '2', unitPrice: '10' }], { vendorId });
+    const g = await postGrn((await draftGrn(po.id, [{ poLineId: po.lineIds[0], qty: '2' }])).id);
+    expect((await act('wm', `/purch/grns/${g.id}/reverse`, sign('REVERSED', 'Wrong delivery'))).status).toBe(200);
+    expect((await call('buyer', 'get', `/purch/pos/${po.id}`)).body.status).toBe('APPROVED');
+    const again = await draftGrn(po.id, [{ poLineId: po.lineIds[0], qty: '2' }]);
+    expect((await call('pm', 'post', `/master/vendors/${vendorId}/deactivate`, { reason: 'Vendor stopped trading' })).status).toBe(200);
+    const res = await act('store', `/purch/grns/${again.id}/post`);
+    expect([res.status, res.body.error.code]).toEqual([422, 'VENDOR_NOT_ACTIVE']);
   });
 });

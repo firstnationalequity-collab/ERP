@@ -65,7 +65,7 @@ import { cancelGrnSampleRequests, requestSample, sampleRequestsOfLots } from '..
 import * as repo from './grns.repo';
 import { findPo, listPos, poLinesOf, userNames, type PoLineRow, type PoRow } from './procurement.repo';
 import { minShelfLifePct, overReceiptPct } from './procurement.settings';
-import { assertNoPostedCharges, cancelChargesOfGrn, landedCostsOfGrns, postChargesWithGrn } from './landed-costs.service';
+import { cancelChargesOfGrn, chargeIdsOfGrn, landedCostsOfGrns, postChargesWithGrn, reverseChargesOfGrn } from './landed-costs.service';
 import { PO_TABLE, PurchaseOrderMoves } from './orders.service';
 
 export const GRN_TABLE = 'purch.grns';
@@ -78,7 +78,7 @@ export const GrnMoves = defineTransitions<GrnStatus>({
     { from: null, to: 'DRAFT', permission: 'purch.grn.post' },
     { from: 'DRAFT', to: 'POSTED', permission: 'purch.grn.post' },
     { from: 'DRAFT', to: 'CANCELLED', permission: 'purch.grn.post', reasonRequired: true },
-    { from: 'POSTED', to: 'REVERSED', permission: 'purch.grn.reverse', esign: ['APPROVED'], reasonRequired: true },
+    { from: 'POSTED', to: 'REVERSED', permission: 'purch.grn.reverse', esign: ['REVERSED'], reasonRequired: true },
   ],
 });
 
@@ -541,12 +541,14 @@ export async function cancelGrn(auth: AuthContext, id: string, reason: string): 
 const GIVES_BACK: readonly string[] = ['PARTIALLY_RECEIVED', 'RECEIVED'];
 
 /**
- * POSTED → REVERSED (purch.grn.reverse, own e-signature APPROVED; its reason is the reversal reason). Only while
- * every lot is untouched; then, in one transaction: receipt movements mirrored (dated today), the GRN_RECEIPT journal
- * reversed, sample requests CANCELLED, the PO's received quantities given back and its status restored.
+ * POSTED → REVERSED (purch.grn.reverse, own e-signature REVERSED, owner 2026-11-25; its reason is the reversal
+ * reason). Only while every lot is untouched (the GRN's own landed-cost adjustments are not use); then, in one
+ * transaction: posted landed costs undone (4b), receipt movements mirrored (dated today), the GRN_RECEIPT journal
+ * reversed, sample requests CANCELLED, the PO's received quantities given back and its status restored. The PO goes
+ * back without re-running its submit checks (owner 2026-11-25); the next GRN posting re-checks vendor, AVL and rate.
  */
 export async function reverseGrn(auth: AuthContext, id: string, input: GrnReverseRequest, meta: RequestMeta): Promise<GrnDto> {
-  if (input.signature.meaning !== 'APPROVED') throw new AppError('VALIDATION_FAILED', 'Reversing a GRN needs the meaning APPROVED');
+  if (input.signature.meaning !== 'REVERSED') throw new AppError('VALIDATION_FAILED', 'Reversing a GRN needs the meaning REVERSED');
   const proof = await verifySignature(auth, input.signature, meta);
   const reason = input.signature.reason;
   await withTransaction(txContext(auth, `reverse GRN: ${reason}`), async (tx) => {
@@ -560,14 +562,13 @@ export async function reverseGrn(auth: AuthContext, id: string, input: GrnRevers
       throw new AppError('INVALID_TRANSITION', `Purchase order ${po.docNo} is ${po.status}; its receipts can no longer be reversed`, { status: po.status });
     }
     await repo.lockPoLines(tx, po.id);
-    // A posted landed cost raised the lots by a value adjustment that is never reversed (0017, 0029).
-    await assertNoPostedCharges(tx, grn);
     const lines = await repo.grnLinesOf(tx, [id]);
     const lotIds = lines.flatMap((l) => (l.lotId ? [l.lotId] : []));
     const doc = { refDocType: GRN_DOC_TYPE, refDocId: id };
 
     // Untouched: no movement but the receipt, no status change, no reservation, no sampling started.
-    const touched = (await lotsTouchedSinceReceipt(tx, doc, lotIds)).filter((t) => t.touches.length > 0);
+    const own = { refDocType: 'LANDED_COST', refDocIds: await chargeIdsOfGrn(tx, id) };
+    const touched = (await lotsTouchedSinceReceipt(tx, doc, lotIds, own)).filter((t) => t.touches.length > 0);
     if (touched.length > 0) {
       throw new AppError(
         'GRN_LOTS_IN_USE',
@@ -577,12 +578,15 @@ export async function reverseGrn(auth: AuthContext, id: string, input: GrnRevers
     }
     await cancelGrnSampleRequests(tx, auth, { grnId: id, lotIds, reason });
 
+    // Owner 2026-11-25 (4b): the posted landed costs go with the GRN, before the receipts leave the lots.
+    const today = companyToday();
+    await reverseChargesOfGrn(tx, auth, id, today, `GRN ${grn.docNo} reversed: ${reason}`);
     const receipts = (await movementsOfDocument(tx, auth.companyId, doc)).filter((m) => m.movementType === 'RECEIPT');
-    const reversed = await reverseMovements(tx, auth, { ...doc, movementIds: receipts.map((m) => m.id), date: companyToday() });
+    const reversed = await reverseMovements(tx, auth, { ...doc, movementIds: receipts.map((m) => m.id), date: today });
     const journal = (await journalsOfSource(tx, auth.companyId, GRN_DOC_TYPE, id)).find((j) => j.event === 'GRN_RECEIPT' && j.status === 'POSTED');
     await reverseStockJournal(tx, auth, { entryId: journal?.id ?? null, movements: reversed, reason: `GRN ${grn.docNo} reversed: ${reason}` });
 
-    const signature = await recordSignature(tx, proof, { table: GRN_TABLE, id }, ['APPROVED']);
+    const signature = await recordSignature(tx, proof, { table: GRN_TABLE, id }, ['REVERSED']);
     await transition(tx, GrnMoves, { entityId: id, to: 'REVERSED', actor: auth, signature, reason });
     await cancelChargesOfGrn(tx, auth, id, 'purch.grn.reverse', `GRN ${grn.docNo} reversed: ${reason}`);
 

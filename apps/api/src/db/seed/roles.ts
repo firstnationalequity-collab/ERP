@@ -54,7 +54,7 @@ const roles: RoleSeed[] = [
       'fin.view', 'fin.report.view', 'fin.costing.view', 'sales.view', 'purch.view', 'inv.stock.view', 'master.view',
       'fin.payment.approve', 'sales.order.credit_override', 'sales.quotation.approve', 'purch.po.approve',
       'inv.adjustment.approve', 'core.period.manage', 'core.period.close', 'fin.approval_rules.countersign',
-      'fin.master.manage', 'fin.rate.manage',
+      'fin.master.manage', 'fin.rate.manage', 'purch.landed_cost.correct',
     ],
   },
   {

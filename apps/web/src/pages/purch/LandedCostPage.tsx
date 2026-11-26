@@ -22,6 +22,7 @@ import { useAuth } from '../../auth/AuthContext';
 import { DataTable, statusFilter } from '../../components/DataTable';
 import { PageHeader } from '../../components/PageHeader';
 import { ReasonModal } from '../../components/ReasonModal';
+import { ESignModal } from '../../components/ESignModal';
 import { RefSelect } from '../../components/RefSelect';
 import { StatusTag } from '../../components/StatusTag';
 import { companyToday, formatDate, formatDecimal, toBusinessDate } from '../../lib/format';
@@ -193,7 +194,8 @@ export function LandedCostEditor({ grn, charge, onClose, onSaved }: { grn: GrnDt
   const [v, setV] = useState({
     chargeTypeId: charge?.chargeTypeId,
     chargeDate: charge?.chargeDate ?? (grn.status === 'DRAFT' ? grn.grnDate : companyToday()),
-    amount: charge?.amount ?? '',
+    amount: charge?.foreignAmount ?? '',
+    currency: charge?.currency ?? 'PKR',
     basis: charge?.basis ?? null,
     vendorId: charge?.vendorId ?? undefined,
     reference: charge?.reference ?? '',
@@ -213,6 +215,7 @@ export function LandedCostEditor({ grn, charge, onClose, onSaved }: { grn: GrnDt
       chargeTypeId: v.chargeTypeId,
       chargeDate: v.chargeDate,
       amount: v.amount,
+      currency: v.currency,
       basis,
       vendorId: v.vendorId ?? null,
       reference: v.reference || null,
@@ -261,7 +264,8 @@ export function LandedCostEditor({ grn, charge, onClose, onSaved }: { grn: GrnDt
         />
         <Space wrap>
           <DatePicker aria-label="Charge date" format="DD-MM-YYYY" value={dayjs(v.chargeDate)} onChange={(d) => d && setV({ ...v, chargeDate: toBusinessDate(d) })} />
-          <InputNumber<string> aria-label="Amount (PKR)" placeholder="Amount (PKR)" stringMode min="0" precision={2} value={v.amount || null} onChange={(a) => setV({ ...v, amount: a ?? '' })} style={{ width: 180 }} />
+          <Input aria-label="Currency" value={v.currency} maxLength={3} onChange={(e) => setV({ ...v, currency: e.target.value.toUpperCase() })} style={{ width: 80 }} />
+          <InputNumber<string> aria-label="Amount" placeholder={`Amount (${v.currency})`} stringMode min="0" precision={2} value={v.amount || null} onChange={(a) => setV({ ...v, amount: a ?? '' })} style={{ width: 180 }} />
           {type?.capitalise && (
             <Select
               aria-label="Basis"
@@ -283,7 +287,7 @@ export function LandedCostEditor({ grn, charge, onClose, onSaved }: { grn: GrnDt
             columns={[
               { title: 'PO line item', render: (_, l) => `${l.itemCode} — ${l.itemName}` },
               {
-                title: basis === 'GD_AMOUNTS' ? 'GD amount (PKR)' : 'Weight (kg)',
+                title: basis === 'GD_AMOUNTS' ? `GD amount (${v.currency})` : 'Weight (kg)',
                 render: (_, l) => (
                   <InputNumber<string>
                     aria-label={`${basis === 'GD_AMOUNTS' ? 'GD amount' : 'Weight'} ${l.itemCode}`}
@@ -297,6 +301,9 @@ export function LandedCostEditor({ grn, charge, onClose, onSaved }: { grn: GrnDt
               },
             ]}
           />
+        )}
+        {v.currency !== 'PKR' && (
+          <Typography.Text type="secondary">Converted at Finance's {v.currency} rate for the charge date (latest on or before it), refreshed when posted.</Typography.Text>
         )}
         <Input.TextArea rows={2} aria-label="Notes" placeholder="Notes" value={v.notes} onChange={(e) => setV({ ...v, notes: e.target.value })} />
       </Space>
@@ -312,6 +319,9 @@ export function LandedCostDrawer({ id, onClose, onChanged }: { id: string; onClo
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [correcting, setCorrecting] = useState(false);
+  const [correction, setCorrection] = useState({ chargeDate: companyToday(), amount: '', reason: '' });
+  const [approving, setApproving] = useState(false);
   const detail = useQuery({ queryKey: [...landedKey, 'detail', id], queryFn: () => api<LandedCostDto>(`/purch/landed-costs/${id}`) });
   const c = detail.data;
   const grn = useQuery({ queryKey: ['purch', 'grns', 'detail', c?.grnId], enabled: !!c && editing, queryFn: () => api<GrnDto>(`/purch/grns/${c!.grnId}`) });
@@ -321,6 +331,21 @@ export function LandedCostDrawer({ id, onClose, onChanged }: { id: string; onClo
     await onChanged();
   };
   const manage = can('purch.landed_cost.manage');
+  const canCorrect = can('purch.landed_cost.correct');
+  const isCorrection = !!c?.correctionOfId;
+  const saveCorrection = async () => {
+    try {
+      await api(`/purch/landed-costs/${id}/correct`, {
+        method: 'POST',
+        body: { chargeDate: correction.chargeDate, amount: `-${correction.amount.replace(/^-/, '')}`, reason: correction.reason },
+      });
+      void message.success('Correction entered; a Finance Manager posts it');
+      setCorrecting(false);
+      await reload();
+    } catch (err) {
+      void message.error(errorText(err));
+    }
+  };
   const postIt = () =>
     modal.confirm({
       title: `Post ${c?.docNo}?`,
@@ -345,13 +370,13 @@ export function LandedCostDrawer({ id, onClose, onChanged }: { id: string; onClo
       width={900}
       title={c ? `Landed cost ${c.docNo}` : 'Landed cost'}
       extra={
-        c &&
-        manage &&
-        c.status === 'DRAFT' && (
+        c && (
           <Space>
-            {(!c.withGrn || c.grnStatus === 'DRAFT') && <Button onClick={() => setEditing(true)}>Edit</Button>}
-            <Button danger onClick={() => setCancelling(true)}>Cancel</Button>
-            {!c.withGrn && <Button type="primary" onClick={postIt}>Post</Button>}
+            {manage && c.status === 'DRAFT' && !isCorrection && (!c.withGrn || c.grnStatus === 'DRAFT') && <Button onClick={() => setEditing(true)}>Edit</Button>}
+            {manage && c.status === 'DRAFT' && <Button danger onClick={() => setCancelling(true)}>Cancel</Button>}
+            {manage && c.status === 'DRAFT' && !c.withGrn && !isCorrection && <Button type="primary" onClick={postIt}>Post</Button>}
+            {canCorrect && c.status === 'DRAFT' && isCorrection && <Button type="primary" onClick={() => setApproving(true)}>Approve and post</Button>}
+            {manage && c.status === 'POSTED' && !isCorrection && <Button onClick={() => setCorrecting(true)}>Correct</Button>}
           </Space>
         )
       }
@@ -362,7 +387,16 @@ export function LandedCostDrawer({ id, onClose, onChanged }: { id: string; onClo
             <Descriptions.Item label="GRN">{c.grnDocNo} (<StatusTag status={c.grnStatus} />)</Descriptions.Item>
             <Descriptions.Item label="Status"><StatusTag status={c.status} /></Descriptions.Item>
             <Descriptions.Item label="Charge">{c.chargeTypeCode} — {c.chargeTypeName}{c.capitalise ? '' : ' (tax, not cost)'}</Descriptions.Item>
-            <Descriptions.Item label="Amount (PKR)">{formatDecimal(c.amount)}</Descriptions.Item>
+            <Descriptions.Item label="Amount (PKR)">
+              {formatDecimal(c.amount)}
+              {c.currency !== 'PKR' && ` = ${c.currency} ${formatDecimal(c.foreignAmount)} × ${c.exchangeRate} (rate of ${formatDate(c.exchangeRateDate)})`}
+            </Descriptions.Item>
+            {c.correctionOfId && <Descriptions.Item label="Corrects" span={2}>{c.correctionOfDocNo}: {c.correctionReason}</Descriptions.Item>}
+            {c.corrections.length > 0 && (
+              <Descriptions.Item label="Corrections" span={2}>
+                {c.corrections.map((x) => `${x.docNo} ${formatDecimal(x.amount)} (${x.status})`).join(' · ')}
+              </Descriptions.Item>
+            )}
             <Descriptions.Item label="Charge date">{formatDate(c.chargeDate)}</Descriptions.Item>
             <Descriptions.Item label="Basis">{c.basis ? BASIS_LABEL[c.basis] : '—'}</Descriptions.Item>
             <Descriptions.Item label="When">{c.withGrn ? 'With the GRN: into the receipt cost' : 'Later bill'}</Descriptions.Item>
@@ -407,6 +441,32 @@ export function LandedCostDrawer({ id, onClose, onChanged }: { id: string; onClo
           )}
         </>
       )}
+      <Modal open={correcting} title={`Correct ${c?.docNo ?? ''}`} okText="Enter correction" onOk={saveCorrection} onCancel={() => setCorrecting(false)}>
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Alert
+            type="info"
+            showIcon
+            message={`A new document that takes an amount (${c?.currency ?? 'PKR'}) off this charge, allocated like it, on its own date. A Finance Manager posts it with an e-signature.`}
+          />
+          <DatePicker aria-label="Correction date" format="DD-MM-YYYY" value={dayjs(correction.chargeDate)} onChange={(d) => d && setCorrection({ ...correction, chargeDate: toBusinessDate(d) })} />
+          <InputNumber<string> aria-label="Amount to take off" placeholder="Amount to take off" stringMode min="0" precision={2} value={correction.amount || null} onChange={(a) => setCorrection({ ...correction, amount: a ?? '' })} style={{ width: 200 }} />
+          <Input.TextArea rows={2} aria-label="Reason" placeholder="Reason (at least 3 characters)" value={correction.reason} onChange={(e) => setCorrection({ ...correction, reason: e.target.value })} />
+        </Space>
+      </Modal>
+      <ESignModal
+        open={approving}
+        title={`Approve and post ${c?.docNo ?? ''}`}
+        meaning="APPROVED"
+        summary={`Posts the correction (${c ? formatDecimal(c.amount) : ''} PKR) on its date: the share for stock still held comes off the lots, the rest off price variance. The person who entered it cannot sign.`}
+        okText="Approve and post"
+        onCancel={() => setApproving(false)}
+        onSubmit={async (r) => {
+          await api(`/purch/landed-costs/${id}/approve`, { method: 'POST', body: { signature: r.signature }, idempotencyKey: newIdempotencyKey() });
+          void message.success('Correction posted');
+          setApproving(false);
+          await reload();
+        }}
+      />
       {editing && c && grn.data && <LandedCostEditor grn={grn.data} charge={c} onClose={() => setEditing(false)} onSaved={reload} />}
       <ReasonModal
         open={cancelling}

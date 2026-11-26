@@ -74,6 +74,7 @@ export const Permissions = {
   'purch.grn.post': action('Post goods receipts'),
   'purch.grn.reverse': action('Reverse a posted GRN whose lots are untouched (e-signature + reason)'),
   'purch.landed_cost.manage': action('Enter landed costs'),
+  'purch.landed_cost.correct': action('Post a landed-cost correction with an e-signature (Finance Manager; owner 2026-11-25)'),
 
   // qc
   'qc.view': view('View specs, samples, results, CoAs'),

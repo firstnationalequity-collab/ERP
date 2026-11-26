@@ -595,9 +595,10 @@ export async function postValueAdjustment(tx: Tx, actor: Actor, input: ValueAdju
   if (input.reason === 'BATCH_CLOSE' && (lot.source !== 'PRODUCTION_OUTPUT' || lot.batchClosedAt)) {
     throw new AppError('INVALID_TRANSITION', `The batch-close adjustment applies once, to a production lot whose batch is not closed (lot ${lot.lotNo})`, details);
   }
-  // Owner Q21 (0029): a later landed-cost bill raises a GRN lot's value, for a landed-cost document.
-  if (input.reason === 'LANDED_COST' && (lot.source !== 'GRN' || input.refDocType !== 'LANDED_COST' || new Decimal(input.value).lte(0))) {
-    throw new AppError('VALIDATION_FAILED', `A landed-cost adjustment raises a GRN lot's value for a landed-cost document (lot ${lot.lotNo})`, details);
+  // Owner Q21 (0029): a landed-cost bill raises a GRN lot's value; a correction or the undo at GRN reversal lowers
+  // it (0030). Always for a landed-cost document; the DB checks the sign against the document at commit.
+  if (input.reason === 'LANDED_COST' && (lot.source !== 'GRN' || input.refDocType !== 'LANDED_COST')) {
+    throw new AppError('VALIDATION_FAILED', `A landed-cost adjustment changes a GRN lot's value for a landed-cost document (lot ${lot.lotNo})`, details);
   }
   const totals = await repo.lotLedgerTotals(tx, lot.id);
   const lotQty = new Decimal(totals.qty);
@@ -1119,8 +1120,14 @@ export interface LotTouch {
  * Has anything but `doc`'s own RECEIPT (and its reversal, and rounding sweeps) moved these lots, changed their
  * status after creation, or reserved them? Used before reversing a receipt (owner 2026-11-25, answer 5).
  */
-export async function lotsTouchedSinceReceipt(q: Queryable, doc: DocumentRef, lotIds: string[]): Promise<LotTouch[]> {
-  return (await repo.lotTouches(q, [...new Set(lotIds)], doc.refDocType, doc.refDocId)).map((t) => ({
+export async function lotsTouchedSinceReceipt(
+  q: Queryable,
+  doc: DocumentRef,
+  lotIds: string[],
+  /** Value adjustments that do not count as use: the receiving document's own landed costs (0030). */
+  ownAdjustments: { refDocType: string; refDocIds: string[] } = { refDocType: '', refDocIds: [] },
+): Promise<LotTouch[]> {
+  return (await repo.lotTouches(q, [...new Set(lotIds)], doc.refDocType, doc.refDocId, ownAdjustments)).map((t) => ({
     lotId: t.lotId,
     lotNo: t.lotNo,
     touches: [

@@ -57,6 +57,7 @@ Design context: `docs/architecture.md` §3 and §4.
 | `purch.grn.post` | action | Post goods receipts | existing |
 | `purch.grn.reverse` | action | Reverse a posted GRN whose lots are untouched (e-signature + reason) | new (owner 2026-11-25, answer 5; Warehouse Manager only) |
 | `purch.landed_cost.manage` | action | Enter landed costs | existing |
+| `purch.landed_cost.correct` | action | Post a landed-cost correction with an e-signature (Finance Manager; owner 2026-11-25) | new (M3 task 4b; Finance Manager only) |
 | `qc.view` | view | View specs, samples, results, CoAs | new |
 | `qc.spec.manage` | action | Draft specifications | existing |
 | `qc.spec.approve` | action | Approve specifications | existing |
@@ -110,7 +111,7 @@ Every role except SYSTEM also holds `core.approval.inbox` (not repeated below). 
 | 4 | Accountant | `fin.view`, `fin.report.view`, `purch.view`, `master.view` | `fin.journal.manage`, `fin.invoice.manage`, `fin.bank.reconcile` |
 | 5 | AR Officer | `fin.view`, `sales.view`, `fg.view`, `master.view` | `fin.invoice.manage`, `fin.receipt.manage` |
 | 6 | AP Officer | `fin.view`, `purch.view`, `master.view` | `fin.payment.manage` |
-| 7 | Finance Manager | `fin.view`, `fin.report.view`, `fin.costing.view`, `sales.view`, `purch.view`, `inv.stock.view`, `master.view` | `fin.payment.approve`, `sales.order.credit_override`, `sales.quotation.approve` (discount > 5% second step), `purch.po.approve`, `inv.adjustment.approve`, `core.period.manage`, `core.period.close`, `fin.approval_rules.countersign`, `fin.master.manage`, `fin.rate.manage` |
+| 7 | Finance Manager | `fin.view`, `fin.report.view`, `fin.costing.view`, `sales.view`, `purch.view`, `inv.stock.view`, `master.view` | `fin.payment.approve`, `sales.order.credit_override`, `sales.quotation.approve` (discount > 5% second step), `purch.po.approve`, `inv.adjustment.approve`, `core.period.manage`, `core.period.close`, `fin.approval_rules.countersign`, `fin.master.manage`, `fin.rate.manage`, `purch.landed_cost.correct` |
 | 8 | Purchase Officer | `purch.view`, `master.view`, `inv.stock.view` | `purch.pr.manage`, `purch.po.manage`, `master.vendor.manage`, `purch.landed_cost.manage` |
 | 9 | Purchase Manager | `purch.view`, `master.view`, `inv.stock.view` | `purch.po.approve`, `master.vendor.approve`, `master.item.manage` |
 | 10 | Storekeeper | `inv.stock.view`, `purch.view`, `prod.view`, `fg.view`, `master.view` | `purch.grn.post`, `inv.movement.post`, `inv.label.print`, `fg.delivery.manage`, `fg.dispatch.post` |

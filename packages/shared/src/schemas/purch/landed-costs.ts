@@ -5,6 +5,7 @@
 import { z } from 'zod';
 import { LandedCostBasis, LandedCostTaxRole, type LandedCostStatus } from '../../enums';
 import { decimalString } from '../master/masters';
+import { ESignRequest } from '../core/esign';
 
 const id = z.string().regex(/^\d+$/, 'Invalid id');
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date: YYYY-MM-DD');
@@ -73,8 +74,12 @@ const chargeInput = z
   .strict();
 export type LandedCostInputDto = z.infer<typeof chargeInput>;
 
+const currency = z.string().trim().toUpperCase().regex(/^[A-Z]{3}$/, 'Currency: 3-letter ISO code');
+
 const chargeFields = {
   chargeTypeId: id,
+  /** Owner 2026-11-25 (4b): a charge carries a currency; non-PKR converts at Finance's rate for the charge date. */
+  currency: currency.default('PKR'),
   /** Bill / GD date. A later bill posts on this date (open period); a charge entered with a DRAFT GRN posts with it. */
   chargeDate: isoDate,
   amount,
@@ -93,6 +98,24 @@ export type CreateLandedCostRequest = z.infer<typeof CreateLandedCostRequest>;
 /** Replaces the whole DRAFT (the GRN stays the same). */
 export const UpdateLandedCostRequest = z.object(chargeFields).strict();
 export type UpdateLandedCostRequest = z.infer<typeof UpdateLandedCostRequest>;
+
+/**
+ * Correction (owner 2026-11-25, 4b): a new document with a negative amount (in the original's currency), linked to
+ * the original and allocated like it. Entered under purch.landed_cost.manage; a Finance Manager posts it (/approve).
+ */
+export const CreateLandedCostCorrectionRequest = z
+  .object({
+    chargeDate: isoDate,
+    amount: z.string().trim().regex(/^-\d{1,16}(\.\d{1,2})?$/, 'A correction amount is below zero, up to 16 digits and 2 decimals').refine((v) => /[1-9]/.test(v), 'A correction amount is below zero'),
+    reason: z.string().trim().min(3, 'Give the reason for the correction (at least 3 characters)').max(500),
+    reference: optText(60),
+  })
+  .strict();
+export type CreateLandedCostCorrectionRequest = z.infer<typeof CreateLandedCostCorrectionRequest>;
+
+/** The Finance Manager posts a correction with their own e-signature (meaning APPROVED). */
+export const ApproveLandedCostCorrectionRequest = z.object({ signature: ESignRequest }).strict();
+export type ApproveLandedCostCorrectionRequest = z.infer<typeof ApproveLandedCostCorrectionRequest>;
 
 export const LandedCostListQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -129,7 +152,17 @@ export interface LandedCostDto {
   chargeTypeName: string;
   capitalise: boolean;
   chargeDate: string;
+  /** PKR amount (foreign amount × rate, 2 decimals). */
   amount: string;
+  currency: string;
+  foreignAmount: string;
+  exchangeRate: string;
+  exchangeRateDate: string;
+  /** A correction: the original it corrects, and why. */
+  correctionOfId: string | null;
+  correctionOfDocNo: string | null;
+  correctionReason: string | null;
+  corrections: { id: string; docNo: string; status: LandedCostStatus; foreignAmount: string; amount: string }[];
   basis: LandedCostBasis | null;
   vendorId: string | null;
   vendorName: string | null;

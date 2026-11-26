@@ -395,8 +395,8 @@ function GrnDrawer({ id, onClose, onEdit, onChanged }: { id: string; onClose(): 
       <ESignModal
         open={reversing}
         title={`Reverse GRN ${g?.docNo ?? ''}`}
-        meaning="APPROVED"
-        summary="Only while no lot was sampled, moved, reserved or changed status. The receipt and its journal are reversed today, the QC sample requests are cancelled and the PO quantities are given back. Once a sample is taken, reject the lot through QC and return it to the vendor instead."
+        meaning="REVERSED"
+        summary="Only while no lot was sampled, moved, reserved or changed status. The receipt, its posted landed costs and their journals are reversed today, the QC sample requests are cancelled and the PO quantities are given back. Once a sample is taken, reject the lot through QC and return it to the vendor instead."
         okText="Reverse"
         onCancel={() => setReversing(false)}
         onSubmit={async (r) => {

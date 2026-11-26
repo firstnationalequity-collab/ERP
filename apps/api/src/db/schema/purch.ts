@@ -1,4 +1,4 @@
-// Drizzle description of the `purch` schema. Source of truth: src/db/migrations/0023_procurement_pr_po.sql, 0025, 0027 (GRN), 0029 (landed cost).
+// Drizzle description of the `purch` schema. Source of truth: src/db/migrations/0023_procurement_pr_po.sql, 0025, 0027 (GRN), 0029 (landed cost), 0030 (landed-cost currency, corrections, reversal).
 import { boolean, date, integer, numeric, pgSchema, text } from 'drizzle-orm/pg-core';
 import type { GrnStatus, LandedCostBasis, LandedCostStatus, LandedCostTaxRole, Incoterm, PurchaseOrderStatus, PurchaseOrderType, PurchaseRequisitionStatus } from '@albert/shared';
 import { auditColumns, bigintString, companyId, identityId, tstz } from './columns';
@@ -126,7 +126,13 @@ export const landedCosts = purch.table('landed_costs', {
   grnId: bigintString('grn_id').notNull(),
   chargeTypeId: bigintString('charge_type_id').notNull(),
   chargeDate: date('charge_date', { mode: 'string' }).notNull(),
-  amount: numeric('amount', { precision: 18, scale: 2 }).notNull(),
+  amount: numeric('amount', { precision: 18, scale: 2 }).notNull(), // PKR
+  currency: text('currency').notNull(),
+  foreignAmount: numeric('foreign_amount', { precision: 18, scale: 2 }).notNull(),
+  exchangeRate: numeric('exchange_rate', { precision: 18, scale: 6 }).notNull(),
+  exchangeRateDate: date('exchange_rate_date', { mode: 'string' }).notNull(),
+  correctionOf: bigintString('correction_of'),
+  correctionReason: text('correction_reason'),
   basis: text('basis').$type<LandedCostBasis>(),
   vendorId: bigintString('vendor_id'),
   reference: text('reference'),

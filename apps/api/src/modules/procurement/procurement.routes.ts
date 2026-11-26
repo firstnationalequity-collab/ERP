@@ -7,6 +7,8 @@ import { z } from 'zod';
 import {
   ConvertPrRequest,
   CreateGrnRequest,
+  ApproveLandedCostCorrectionRequest,
+  CreateLandedCostCorrectionRequest,
   CreateLandedCostRequest,
   CreateLandedCostTypeRequest,
   DeactivateRequest,
@@ -138,6 +140,13 @@ r.patch('/landed-costs/:id', requirePermission('purch.landed_cost.manage'), asyn
 }));
 r.post('/landed-costs/:id/post', requirePermission('purch.landed_cost.manage'), idempotent(), asyncHandler(async (req, res) => {
   res.json(await landed.postLandedCost(authOf(req), idOf(req)));
+}));
+// Corrections (owner 2026-11-25, 4b): entered by the Purchase Officer with a reason; a Finance Manager posts with an e-signature.
+r.post('/landed-costs/:id/correct', requirePermission('purch.landed_cost.manage'), asyncHandler(async (req, res) => {
+  res.status(201).json(await landed.createLandedCostCorrection(authOf(req), idOf(req), CreateLandedCostCorrectionRequest.parse(req.body)));
+}));
+r.post('/landed-costs/:id/approve', requirePermission('purch.landed_cost.correct'), idempotent(), asyncHandler(async (req, res) => {
+  res.json(await landed.approveLandedCostCorrection(authOf(req), idOf(req), ApproveLandedCostCorrectionRequest.parse(req.body), requestMeta(req)));
 }));
 r.post('/landed-costs/:id/cancel', requirePermission('purch.landed_cost.manage'), once, asyncHandler(async (req, res) => {
   res.json(await landed.cancelLandedCost(authOf(req), idOf(req), PurchActionRequest.parse(req.body).reason));

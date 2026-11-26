@@ -69,8 +69,8 @@ export const JournalPostingKeys: Readonly<Partial<Record<PostingEvent, Permissio
  * of the charges entered with it, without the Storekeeper holding purch.landed_cost.manage.
  */
 export const JournalAlternativeKeys: Readonly<Partial<Record<PostingEvent, readonly PermissionKey[]>>> = {
-  LANDED_COST: ['purch.grn.post'],
-  IMPORT_TAX: ['purch.grn.post'],
+  LANDED_COST: ['purch.grn.post', 'purch.landed_cost.correct'],
+  IMPORT_TAX: ['purch.grn.post', 'purch.landed_cost.correct'],
 };
 
 /**
@@ -79,6 +79,15 @@ export const JournalAlternativeKeys: Readonly<Partial<Record<PostingEvent, reado
  */
 export const JournalReversalKeys: Readonly<Partial<Record<PostingEvent, PermissionKey>>> = {
   GRN_RECEIPT: 'purch.grn.reverse',
+};
+
+/**
+ * Other keys a caller may name to reverse an event's journal (ReverseInput.key): reversing a GRN undoes its posted
+ * landed costs in the same transaction (owner 2026-11-25, 4b), under purch.grn.reverse.
+ */
+export const JournalReversalAlternativeKeys: Readonly<Partial<Record<PostingEvent, readonly PermissionKey[]>>> = {
+  LANDED_COST: ['purch.grn.reverse'],
+  IMPORT_TAX: ['purch.grn.reverse'],
 };
 
 type Posting = { event: PostingEvent; counter: AccountRole };
@@ -146,8 +155,13 @@ function postingKey(event: PostingEvent, requested?: PermissionKey): PermissionK
   return requested;
 }
 
-function reversalKey(event: PostingEvent): PermissionKey {
-  return JournalReversalKeys[event] ?? postingKey(event);
+function reversalKey(event: PostingEvent, requested?: PermissionKey): PermissionKey {
+  const key = JournalReversalKeys[event] ?? postingKey(event);
+  if (requested === undefined || requested === key) return key;
+  if (!(JournalReversalAlternativeKeys[event] ?? []).includes(requested)) {
+    throw new AppError('VALIDATION_FAILED', `${event} journals are not reversed under ${requested}`, { event, key: requested });
+  }
+  return requested;
 }
 
 // ---------------------------------------------------------------- types
@@ -244,6 +258,8 @@ export interface ReverseInput {
   /** Date of the reversal (YYYY-MM-DD), in an OPEN period; may be later than the original. */
   date: string;
   reason: string;
+  /** As JournalInput.key: one of JournalReversalAlternativeKeys for the event. */
+  key?: PermissionKey;
 }
 
 /** Mirror entry (sides swapped, same accounts, dimensions and tax codes); the original becomes REVERSED (rule 4). */
@@ -265,7 +281,7 @@ export async function reverseJournal(tx: Tx, actor: Actor, input: ReverseInput):
   if (original.event === null || original.sourceId === null) {
     throw new AppError('VALIDATION_FAILED', 'Manual journal vouchers are reversed from the journal voucher screen (M8)');
   }
-  const key = reversalKey(original.event);
+  const key = reversalKey(original.event, input.key);
   const map = journalMap(key);
   const lines = await repo.linesOf(tx, original.id);
 
