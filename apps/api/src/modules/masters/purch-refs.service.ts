@@ -1,7 +1,7 @@
 // Master data the procurement module needs, exported so modules/procurement never reads master tables itself
 // (CLAUDE.md "Modules talk to each other only through exported service functions"). Run inside the caller's
 // query or transaction; no permission checks here (the calling module's route did them).
-import { AvlItemTypes, type ItemStatus, type ItemType, type PartyStatus } from '@albert/shared';
+import { AvlItemTypes, type ItemStatus, type ItemType, type PartyStatus, type TaxKind } from '@albert/shared';
 import type { Queryable } from '../../db/client';
 import { AppError } from '../../core/errors';
 import * as repo from './purch-refs.repo';
@@ -13,6 +13,28 @@ export interface PurchVendorRef {
   status: PartyStatus;
   currency: string;
   isForeign: boolean;
+  /** AP ageing: due date = invoice date + these days (owner 2026-11-25 extra). */
+  paymentTermsDays: number;
+  /** WHT section (a WITHHOLDING tax code) and filer status (ATL) with the day it was checked (0031). */
+  whtTaxCodeId: string | null;
+  isFiler: boolean | null;
+  filerCheckedOn: string | null;
+}
+
+export interface PurchTaxCodeRef {
+  id: string;
+  code: string;
+  name: string;
+  kind: TaxKind;
+  rate: string;
+  isPlaceholder: boolean;
+  isActive: boolean;
+}
+
+/** Tax codes for vendor invoices (sales tax on the bill) and payments (WHT). */
+export async function purchTaxCodes(q: Queryable, companyId: string, ids: string[]): Promise<Map<string, PurchTaxCodeRef>> {
+  const rows = await repo.taxCodesByIds(q, companyId, [...new Set(ids)]);
+  return new Map(rows.map((r) => [r.id, r]));
 }
 
 export interface PurchItemRef {
@@ -22,6 +44,8 @@ export interface PurchItemRef {
   type: ItemType;
   status: ItemStatus;
   uomCode: string;
+  /** Posting rules may map accounts by item category (GRNI, price variance). */
+  categoryId: string;
   shelfLifeDays: number | null;
   /** False: GRN lots start APPROVED with no QC sample request (owner 2026-11-25; 0028). */
   qcRequired: boolean;

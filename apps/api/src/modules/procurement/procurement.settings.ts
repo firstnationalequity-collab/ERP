@@ -40,3 +40,27 @@ registerSetting({
 export const minShelfLifePct = (q: Queryable, companyId: string) => getSetting<number>(q, companyId, MIN_SHELF_LIFE_PCT);
 
 export const allowBulkFgPurchase =(q: Queryable, companyId: string) => getSetting<boolean>(q, companyId, ALLOW_BULK_FG_PURCHASE);
+
+/**
+ * Architecture §7.5: the 3-way match tolerance on price and quantity is a setting (M3 task 5, 0031). Outside it, the
+ * invoice goes to MATCH_EXCEPTION (owner Q5). Defaults: agent default — PENDING OWNER. Mirrored by SQL
+ * purch.invoice_price_tolerance_pct / purch.invoice_qty_tolerance_pct (0031).
+ */
+export const INVOICE_PRICE_TOLERANCE_PCT = 'purch.invoice.price_tolerance_pct';
+registerSetting({
+  key: INVOICE_PRICE_TOLERANCE_PCT,
+  description: 'Vendor invoice match: allowed difference of the invoice unit price from the PO price, percent (0–20)',
+  schema: z.number().min(0).max(20),
+  defaultValue: 2,
+});
+export const INVOICE_QTY_TOLERANCE_PCT = 'purch.invoice.qty_tolerance_pct';
+registerSetting({
+  key: INVOICE_QTY_TOLERANCE_PCT,
+  description: 'Vendor invoice match: quantity that may be invoiced beyond the quantity received, percent (0–10)',
+  schema: z.number().min(0).max(10),
+  defaultValue: 0,
+});
+export const invoiceTolerances = async (q: Queryable, companyId: string) => ({
+  pricePct: await getSetting<number>(q, companyId, INVOICE_PRICE_TOLERANCE_PCT),
+  qtyPct: await getSetting<number>(q, companyId, INVOICE_QTY_TOLERANCE_PCT),
+});

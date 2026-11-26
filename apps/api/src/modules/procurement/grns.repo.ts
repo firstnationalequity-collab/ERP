@@ -81,3 +81,14 @@ export async function addReceived(tx: Tx, poLineId: string, qty: string): Promis
     .set({ receivedQty: sql`${poLines.receivedQty} + ${qty}::numeric` })
     .where(eq(poLines.id, poLineId));
 }
+
+export async function grnLinesByIds(q: Queryable, ids: string[]): Promise<GrnLineRow[]> {
+  if (ids.length === 0) return [];
+  return q.select().from(grnLines).where(inArray(grnLines.id, [...new Set(ids)]));
+}
+
+export async function grnsByIds(q: Queryable, companyId: string, ids: string[]): Promise<Map<string, GrnRow>> {
+  if (ids.length === 0) return new Map();
+  const rows = await q.select().from(grns).where(and(eq(grns.companyId, companyId), inArray(grns.id, [...new Set(ids)])));
+  return new Map(rows.map((r) => [r.id, r]));
+}

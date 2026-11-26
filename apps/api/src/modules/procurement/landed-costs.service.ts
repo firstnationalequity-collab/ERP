@@ -24,6 +24,9 @@
 //     stock and price variance at its own date. Entered with a reason (purch.landed_cost.manage); a Finance Manager
 //     posts it with an e-signature (purch.landed_cost.correct, POST /:id/approve), creator ≠ signer. Refused if it
 //     would take a lot's value below zero, or the corrections would exceed the charge.
+//   - owner 2026-11-26 (0031): charge types flagged pkr_only (CD, ACD, RD, IMPORT_ST, IMPORT_IT: customs assesses in
+//     PKR) take PKR charges only, and GD amounts are in PKR (basis GD_AMOUNTS → PKR); else CURRENCY_NOT_ALLOWED.
+//     A correction never takes a charge below what was already invoiced (CORRECTION_EXCEEDS_CHARGE, task 5).
 //   - a GRN reversal undoes every posted charge of the GRN in its transaction (POSTED → REVERSED, under
 //     purch.grn.reverse): the lot adjustments mirrored, the journals reversed. Replaces GRN_HAS_LANDED_COST.
 import { Decimal } from 'decimal.js';
@@ -56,6 +59,12 @@ import { assertPurchVendor, purchItems, purchVendors } from '../masters/purch-re
 import * as grnRepo from './grns.repo';
 import * as repo from './landed-costs.repo';
 import { poLinesOf, userNames } from './procurement.repo';
+import { invoicedOnCharges } from './invoices.repo';
+
+/** Foreign amount POSTED vendor invoices billed on a charge (task 5). */
+async function invoicedOn(q: Queryable, chargeId: string): Promise<Decimal> {
+  return new Decimal((await invoicedOnCharges(q, [chargeId])).get(chargeId) ?? 0);
+}
 
 export const LANDED_COST_TABLE = 'purch.landed_costs';
 export const LANDED_COST_DOC_TYPE = 'LANDED_COST'; // number series, ledger ref_doc_type, journal source_type
@@ -185,6 +194,7 @@ function typeDto(t: repo.LandedCostTypeRow): LandedCostTypeDto {
     taxRole: t.taxRole,
     isDuty: t.isDuty,
     defaultBasis: t.defaultBasis,
+    pkrOnly: t.pkrOnly,
     isActive: t.isActive,
   };
 }
@@ -205,6 +215,7 @@ export async function createLandedCostType(auth: AuthContext, input: CreateLande
       taxRole: input.capitalise ? null : (input.taxRole ?? null),
       isDuty: input.capitalise ? input.isDuty : false,
       defaultBasis: input.capitalise ? (input.defaultBasis ?? 'VALUE') : null,
+      pkrOnly: input.pkrOnly,
     });
   });
   return typeDto((await repo.findType(db, auth.companyId, id))!);
@@ -223,7 +234,11 @@ export async function updateLandedCostType(auth: AuthContext, id: string, input:
       if (!t.capitalise) throw new AppError('VALIDATION_FAILED', `${t.code} is a tax and is not allocated`, { field: 'defaultBasis' });
       assertBasisFits(t, input.defaultBasis, 'defaultBasis');
     }
-    await repo.updateType(tx, id, { ...(input.name ? { name: input.name } : {}), ...(input.defaultBasis ? { defaultBasis: input.defaultBasis } : {}) });
+    await repo.updateType(tx, id, {
+      ...(input.name ? { name: input.name } : {}),
+      ...(input.defaultBasis ? { defaultBasis: input.defaultBasis } : {}),
+      ...(input.pkrOnly !== undefined ? { pkrOnly: input.pkrOnly } : {}),
+    });
   });
   return typeDto((await repo.findType(db, auth.companyId, id))!);
 }
@@ -380,6 +395,7 @@ async function prepare(
     });
   }
   if (input.vendorId) await assertPurchVendor(q, auth.companyId, input.vendorId);
+  assertCurrencyAllowed(type, input.currency, null);
   const conversion = await convert(q, auth.companyId, input.currency, input.amount, input.chargeDate);
 
   let basis: LandedCostBasis | null = null;
@@ -389,6 +405,7 @@ async function prepare(
   } else if (input.basis) {
     throw new AppError('VALIDATION_FAILED', `${type.code} is a tax: it is not allocated to lots`, { field: 'basis' });
   }
+  assertCurrencyAllowed(type, input.currency, basis);
 
   const poLineIds = new Set((await poLinesOf(q, [grn.poId])).map((l) => l.id));
   const seen = new Set<string>();
@@ -432,6 +449,20 @@ async function prepare(
       notes: input.notes?.trim() || null,
     },
   };
+}
+
+/**
+ * Owner 2026-11-26 (0031): a PKR-only type (customs assesses it in PKR) takes PKR charges; GD amounts are in PKR, so a
+ * charge allocated by GD amounts is in PKR. The database re-checks both (purch.guard_landed_cost_currency).
+ */
+export function assertCurrencyAllowed(type: Pick<repo.LandedCostTypeRow, 'code' | 'pkrOnly'>, currency: string, basis: LandedCostBasis | null): void {
+  if (currency === 'PKR') return;
+  if (type.pkrOnly) {
+    throw new AppError('CURRENCY_NOT_ALLOWED', `${type.code} is assessed by customs in PKR; enter it in PKR, not ${currency}`, { field: 'currency', currency });
+  }
+  if (basis === 'GD_AMOUNTS') {
+    throw new AppError('CURRENCY_NOT_ALLOWED', `GD amounts are in PKR: a charge allocated by GD amounts is entered in PKR, not ${currency}`, { field: 'currency', currency });
+  }
 }
 
 /**
@@ -552,8 +583,9 @@ async function correctedSoFar(q: Queryable, originalId: string, exceptId?: strin
     .reduce((s, c) => s.plus(c.foreignAmount), new Decimal(0));
 }
 
-function assertWithinCharge(original: repo.LandedCostRow, soFar: Decimal, amount: string): void {
-  const left = new Decimal(original.foreignAmount).plus(soFar);
+/** What is left to correct: the original + posted corrections − what POSTED vendor invoices already billed (task 5). */
+function assertWithinCharge(original: repo.LandedCostRow, soFar: Decimal, amount: string, invoiced: Decimal): void {
+  const left = new Decimal(original.foreignAmount).plus(soFar).minus(invoiced);
   if (left.plus(amount).lt(0)) {
     throw new AppError(
       'CORRECTION_EXCEEDS_CHARGE',
@@ -580,7 +612,7 @@ export async function createLandedCostCorrection(auth: AuthContext, originalId: 
         field: 'chargeDate',
       });
     }
-    assertWithinCharge(original, await correctedSoFar(tx, original.id), input.amount);
+    assertWithinCharge(original, await correctedSoFar(tx, original.id), input.amount, await invoicedOn(tx, original.id));
     const conversion = await convert(tx, auth.companyId, original.currency, input.amount, input.chargeDate);
     const docNo = await nextDocNo(tx, LANDED_COST_DOC_TYPE, input.chargeDate);
     const chargeId = await repo.insertCharge(tx, {
@@ -628,7 +660,7 @@ export async function approveLandedCostCorrection(
     }
     const grn = await grnOrFail(tx, auth.companyId, row.grnId, true);
     if (grn.status !== 'POSTED') throw new AppError('INVALID_TRANSITION', `GRN ${grn.docNo} is ${grn.status}`, { status: grn.status });
-    assertWithinCharge(original, await correctedSoFar(tx, original.id, row.id), row.foreignAmount);
+    assertWithinCharge(original, await correctedSoFar(tx, original.id, row.id), row.foreignAmount, await invoicedOn(tx, original.id));
     const signature = await recordSignature(tx, proof, { table: LANDED_COST_TABLE, id }, ['APPROVED']);
     await postCharge(tx, auth, CORRECT_KEY, await refreshRate(tx, row), grn, row.chargeDate, signature);
   });
@@ -702,6 +734,7 @@ async function postCharge(
   const type = await repo.findType(tx, actor.companyId, row.chargeTypeId);
   if (!type) throw new AppError('NOT_FOUND', 'Charge type not found');
   if (!type.isActive) throw new AppError('VALIDATION_FAILED', `Charge type ${type.code} is not active`);
+  if (!row.correctionOf) assertCurrencyAllowed(type, row.currency, row.basis);
   if (row.vendorId) await assertPurchVendor(tx, actor.companyId, row.vendorId);
   const vendor = row.vendorId ? { vendorId: row.vendorId } : {};
   const narration = `${type.name} ${row.docNo} on GRN ${grn.docNo}${row.reference ? ` (${row.reference})` : ''}`;

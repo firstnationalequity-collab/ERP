@@ -38,6 +38,9 @@ import {
   StockOwner,
   StockMovementType,
   LotSource,
+  VendorInvoiceStatus,
+  VendorInvoiceType,
+  VendorPaymentStatus,
 } from '@albert/shared';
 import { databaseUrl } from '../config/env';
 
@@ -100,6 +103,9 @@ const cases: [string, string, readonly string[]][] = [
   ['purch.landed_cost_types', 'default_basis', LandedCostBasis],
   ['purch.landed_cost_types', 'tax_role', LandedCostTaxRole],
   ['qc.sample_requests', 'status', SampleRequestStatus],
+  ['purch.vendor_invoices', 'status', VendorInvoiceStatus],
+  ['purch.vendor_invoices', 'invoice_type', VendorInvoiceType],
+  ['purch.vendor_payments', 'status', VendorPaymentStatus],
 ];
 
 beforeAll(async () => {

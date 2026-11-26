@@ -1,12 +1,23 @@
 // Queries behind purch-refs.service.ts (master data procurement needs). No business rules here.
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { Queryable } from '../../db/client';
-import { approvedSources, items, locations, uoms, vendors, warehouses } from '../../db/schema/masters';
+import { approvedSources, items, locations, taxCodes, uoms, vendors, warehouses } from '../../db/schema/masters';
 
 export async function vendorsByIds(q: Queryable, companyId: string, ids: string[]) {
   if (ids.length === 0) return [];
   return q
-    .select({ id: vendors.id, code: vendors.code, name: vendors.name, status: vendors.status, currency: vendors.currency, isForeign: vendors.isForeign })
+    .select({
+      id: vendors.id,
+      code: vendors.code,
+      name: vendors.name,
+      status: vendors.status,
+      currency: vendors.currency,
+      isForeign: vendors.isForeign,
+      paymentTermsDays: vendors.paymentTermsDays,
+      whtTaxCodeId: vendors.whtTaxCodeId,
+      isFiler: vendors.isFiler,
+      filerCheckedOn: vendors.filerCheckedOn,
+    })
     .from(vendors)
     .where(and(eq(vendors.companyId, companyId), inArray(vendors.id, ids)));
 }
@@ -21,6 +32,7 @@ export async function itemsByIds(q: Queryable, companyId: string, ids: string[])
       type: items.type,
       status: items.status,
       uomCode: uoms.code,
+      categoryId: items.categoryId,
       shelfLifeDays: items.shelfLifeDays,
       qcRequired: items.qcRequired,
     })
@@ -84,4 +96,12 @@ export async function locationsByIds(q: Queryable, companyId: string, ids: strin
     .from(locations)
     .innerJoin(warehouses, eq(warehouses.id, locations.warehouseId))
     .where(and(eq(locations.companyId, companyId), inArray(locations.id, ids)));
+}
+
+export async function taxCodesByIds(q: Queryable, companyId: string, ids: string[]) {
+  if (ids.length === 0) return [];
+  return q
+    .select({ id: taxCodes.id, code: taxCodes.code, name: taxCodes.name, kind: taxCodes.kind, rate: taxCodes.rate, isPlaceholder: taxCodes.isPlaceholder, isActive: taxCodes.isActive })
+    .from(taxCodes)
+    .where(and(eq(taxCodes.companyId, companyId), inArray(taxCodes.id, ids)));
 }

@@ -25,6 +25,9 @@ import { ExchangeRatesPage } from './pages/fin/ExchangeRatesPage';
 import { PurchaseOrdersPage, RequisitionsPage } from './pages/purch/PurchasingPages';
 import { GrnPage } from './pages/purch/GrnPage';
 import { LandedCostPage } from './pages/purch/LandedCostPage';
+import { VendorInvoicesPage } from './pages/purch/VendorInvoicesPage';
+import { VendorPaymentsPage } from './pages/purch/VendorPaymentsPage';
+import { ApAgeingPage, VendorLedgerPage } from './pages/purch/PayablesPages';
 
 export function App() {
   const { user, restoring } = useAuth();
@@ -63,6 +66,10 @@ export function App() {
         <Route path="/purch/orders" element={<RequirePermission anyOf={['purch.view']}><PurchaseOrdersPage /></RequirePermission>} />
         <Route path="/purch/grns" element={<RequirePermission anyOf={['purch.view']}><GrnPage /></RequirePermission>} />
         <Route path="/purch/landed-costs" element={<RequirePermission anyOf={['purch.view']}><LandedCostPage /></RequirePermission>} />
+        <Route path="/purch/vendor-invoices" element={<RequirePermission anyOf={['purch.view', 'fin.view']}><VendorInvoicesPage /></RequirePermission>} />
+        <Route path="/purch/vendor-payments" element={<RequirePermission anyOf={['purch.view', 'fin.view']}><VendorPaymentsPage /></RequirePermission>} />
+        <Route path="/purch/vendor-ledger" element={<RequirePermission anyOf={['purch.view', 'fin.view']}><VendorLedgerPage /></RequirePermission>} />
+        <Route path="/purch/ap-ageing" element={<RequirePermission anyOf={['purch.view', 'fin.view']}><ApAgeingPage /></RequirePermission>} />
         <Route path="/fin/exchange-rates" element={<RequirePermission anyOf={['fin.view', 'purch.view']}><ExchangeRatesPage /></RequirePermission>} />
         <Route path="/fin/journals" element={<RequirePermission anyOf={['fin.view']}><JournalsPage /></RequirePermission>} />
         <Route path="/fin/accounts" element={<RequirePermission anyOf={['fin.view', 'master.view']}><AccountsPage /></RequirePermission>} />

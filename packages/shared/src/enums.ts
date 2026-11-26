@@ -148,6 +148,24 @@ export type LandedCostStatus = (typeof LandedCostStatus)[number];
  * charges, weight per PO line), GD_AMOUNTS (duties: the amounts per PO line from the goods declaration).
  * Within one PO line received on several GRN lines, the share is split by quantity.
  */
+/**
+ * Vendor invoice (M3 task 5; 0031). GOODS: 3-way match against GRN lines of one PO; CHARGES: settles landed-cost
+ * clearing (owner Q3). DRAFT → POSTED (within the match tolerances) or → MATCH_EXCEPTION (outside), which a Finance
+ * Manager releases with an e-signature and a reason, creator ≠ releaser (owner Q5), or returns to DRAFT;
+ * DRAFT / MATCH_EXCEPTION → CANCELLED (reason).
+ */
+export const VendorInvoiceStatus = ['DRAFT', 'MATCH_EXCEPTION', 'POSTED', 'CANCELLED'] as const;
+export type VendorInvoiceStatus = (typeof VendorInvoiceStatus)[number];
+export const VendorInvoiceType = ['GOODS', 'CHARGES'] as const;
+export type VendorInvoiceType = (typeof VendorInvoiceType)[number];
+
+/**
+ * Vendor payment (M3 task 5; 0031): DRAFT → PENDING_APPROVAL (approval matrix VENDOR_PAYMENT) → APPROVED → POSTED;
+ * a rejection returns it to DRAFT; DRAFT / APPROVED → CANCELLED (reason). Creator ≠ approver (§3).
+ */
+export const VendorPaymentStatus = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'POSTED', 'CANCELLED'] as const;
+export type VendorPaymentStatus = (typeof VendorPaymentStatus)[number];
+
 export const LandedCostBasis = ['VALUE', 'WEIGHT', 'GD_AMOUNTS'] as const;
 export type LandedCostBasis = (typeof LandedCostBasis)[number];
 
@@ -288,6 +306,7 @@ export const AccountRole = [
   'ACCOUNTS_PAYABLE',
   'BANK',
   'WHT_PAYABLE',
+  'EXCHANGE_DIFFERENCE', // IAS 21 rate difference on vendor invoices and payments (owner Q4; 0031). Placeholder account
   'WIP',
   'LABOUR_ABSORBED',
   'OVERHEAD_ABSORBED',
@@ -312,8 +331,9 @@ export const PostingEventRoles: Readonly<Record<PostingEvent, readonly AccountRo
   GRN_RECEIPT: ['INVENTORY', 'GRNI'],
   LANDED_COST: ['INVENTORY', 'PRICE_VARIANCE', 'LANDED_COST_CLEARING'],
   IMPORT_TAX: ['INPUT_TAX', 'ADVANCE_TAX', 'LANDED_COST_CLEARING'],
-  VENDOR_INVOICE: ['GRNI', 'INPUT_TAX', 'PRICE_VARIANCE', 'ACCOUNTS_PAYABLE'],
-  VENDOR_PAYMENT: ['ACCOUNTS_PAYABLE', 'BANK', 'WHT_PAYABLE'],
+  // 0031: a CHARGES invoice settles landed-cost clearing (owner Q3); the rate difference → exchange gain/loss (Q4).
+  VENDOR_INVOICE: ['GRNI', 'LANDED_COST_CLEARING', 'INPUT_TAX', 'PRICE_VARIANCE', 'EXCHANGE_DIFFERENCE', 'ACCOUNTS_PAYABLE'],
+  VENDOR_PAYMENT: ['ACCOUNTS_PAYABLE', 'BANK', 'WHT_PAYABLE', 'EXCHANGE_DIFFERENCE'],
   MATERIAL_ISSUE: ['WIP', 'INVENTORY'],
   MATERIAL_RETURN: ['INVENTORY', 'WIP'],
   CONVERSION_ABSORB: ['WIP', 'LABOUR_ABSORBED', 'OVERHEAD_ABSORBED'],

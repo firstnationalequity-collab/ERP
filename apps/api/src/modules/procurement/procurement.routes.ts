@@ -5,7 +5,16 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 import {
+  ApAgeingQuery,
+  BillableQuery,
   ConvertPrRequest,
+  CreateVendorInvoiceRequest,
+  CreateVendorPaymentRequest,
+  ReleaseVendorInvoiceRequest,
+  UpdateVendorInvoiceRequest,
+  UpdateVendorPaymentRequest,
+  VendorInvoiceListQuery,
+  VendorLedgerQuery,
   CreateGrnRequest,
   ApproveLandedCostCorrectionRequest,
   CreateLandedCostCorrectionRequest,
@@ -33,6 +42,9 @@ import * as pos from './orders.service';
 import * as grns from './grns.service';
 import { grnLabelsPdf } from './grn-labels';
 import * as landed from './landed-costs.service';
+import * as invoices from './invoices.service';
+import * as payments from './payments.service';
+import * as ap from './ap.service';
 
 const IdParam = z.object({ id: z.string().regex(/^\d+$/, 'Invalid id') });
 const idOf = (req: Request) => IdParam.parse(req.params).id;
@@ -151,3 +163,56 @@ r.post('/landed-costs/:id/approve', requirePermission('purch.landed_cost.correct
 r.post('/landed-costs/:id/cancel', requirePermission('purch.landed_cost.manage'), once, asyncHandler(async (req, res) => {
   res.json(await landed.cancelLandedCost(authOf(req), idOf(req), PurchActionRequest.parse(req.body).reason));
 }));
+
+// ---------------------------------------------------------------- vendor invoices, payments, ledger, ageing (M3 task 5; 0031)
+// Finance reads them with fin.view, procurement with purch.view.
+const AP_VIEW = requireAnyPermission('purch.view', 'fin.view');
+
+// Invoices: the Accountant enters and posts (fin.invoice.manage); outside the match tolerances the invoice is held in
+// MATCH_EXCEPTION and a Finance Manager releases it with an e-signature or returns it (fin.invoice.match_release).
+r.get('/vendor-invoices', AP_VIEW, asyncHandler(async (req, res) => { res.json(await invoices.listVendorInvoices(authOf(req), VendorInvoiceListQuery.parse(req.query))); }));
+r.get('/vendor-invoices/billable', AP_VIEW, asyncHandler(async (req, res) => { res.json(await invoices.billable(authOf(req), BillableQuery.parse(req.query))); }));
+r.get('/vendor-invoices/:id', AP_VIEW, asyncHandler(async (req, res) => { res.json(await invoices.getVendorInvoice(authOf(req), idOf(req))); }));
+r.post('/vendor-invoices', requirePermission('fin.invoice.manage'), asyncHandler(async (req, res) => {
+  res.status(201).json(await invoices.createVendorInvoice(authOf(req), CreateVendorInvoiceRequest.parse(req.body)));
+}));
+r.patch('/vendor-invoices/:id', requirePermission('fin.invoice.manage'), asyncHandler(async (req, res) => {
+  res.json(await invoices.updateVendorInvoice(authOf(req), idOf(req), UpdateVendorInvoiceRequest.parse(req.body)));
+}));
+r.post('/vendor-invoices/:id/post', requirePermission('fin.invoice.manage'), idempotent(), asyncHandler(async (req, res) => {
+  res.json(await invoices.postVendorInvoice(authOf(req), idOf(req)));
+}));
+r.post('/vendor-invoices/:id/release', requirePermission('fin.invoice.match_release'), idempotent(), asyncHandler(async (req, res) => {
+  res.json(await invoices.releaseVendorInvoice(authOf(req), idOf(req), ReleaseVendorInvoiceRequest.parse(req.body), requestMeta(req)));
+}));
+r.post('/vendor-invoices/:id/return', requirePermission('fin.invoice.match_release'), once, asyncHandler(async (req, res) => {
+  res.json(await invoices.returnVendorInvoice(authOf(req), idOf(req), PurchActionRequest.parse(req.body).reason));
+}));
+r.post('/vendor-invoices/:id/cancel', requirePermission('fin.invoice.manage'), once, asyncHandler(async (req, res) => {
+  res.json(await invoices.cancelVendorInvoice(authOf(req), idOf(req), PurchActionRequest.parse(req.body).reason));
+}));
+
+// Payments: the AP Officer drafts, submits and posts (fin.payment.manage); the approval matrix (Finance Manager,
+// /core/approvals/:id/approve) approves; creator ≠ approver.
+r.get('/vendor-payments', AP_VIEW, asyncHandler(async (req, res) => { res.json(await payments.listVendorPayments(authOf(req), PurchListQuery.parse(req.query))); }));
+r.get('/vendor-payments/:id', AP_VIEW, asyncHandler(async (req, res) => { res.json(await payments.getVendorPayment(authOf(req), idOf(req))); }));
+r.post('/vendor-payments', requirePermission('fin.payment.manage'), asyncHandler(async (req, res) => {
+  res.status(201).json(await payments.createVendorPayment(authOf(req), CreateVendorPaymentRequest.parse(req.body)));
+}));
+r.patch('/vendor-payments/:id', requirePermission('fin.payment.manage'), asyncHandler(async (req, res) => {
+  res.json(await payments.updateVendorPayment(authOf(req), idOf(req), UpdateVendorPaymentRequest.parse(req.body)));
+}));
+r.post('/vendor-payments/:id/submit', requirePermission('fin.payment.manage'), once, asyncHandler(async (req, res) => {
+  res.json(await payments.submitVendorPayment(authOf(req), idOf(req)));
+}));
+r.post('/vendor-payments/:id/post', requirePermission('fin.payment.manage'), idempotent(), asyncHandler(async (req, res) => {
+  res.json(await payments.postVendorPayment(authOf(req), idOf(req)));
+}));
+r.post('/vendor-payments/:id/cancel', requirePermission('fin.payment.manage'), once, asyncHandler(async (req, res) => {
+  res.json(await payments.cancelVendorPayment(authOf(req), idOf(req), PurchActionRequest.parse(req.body).reason));
+}));
+
+// Vendor ledger and AP ageing.
+r.get('/vendors/:id/open-invoices', AP_VIEW, asyncHandler(async (req, res) => { res.json(await payments.openInvoicesOfVendor(authOf(req), idOf(req))); }));
+r.get('/vendors/:id/ledger', AP_VIEW, asyncHandler(async (req, res) => { res.json(await ap.vendorLedger(authOf(req), idOf(req), VendorLedgerQuery.parse(req.query))); }));
+r.get('/ap-ageing', AP_VIEW, asyncHandler(async (req, res) => { res.json(await ap.apAgeing(authOf(req), ApAgeingQuery.parse(req.query))); }));

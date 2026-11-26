@@ -1,6 +1,6 @@
-// Drizzle description of the `purch` schema. Source of truth: src/db/migrations/0023_procurement_pr_po.sql, 0025, 0027 (GRN), 0029 (landed cost), 0030 (landed-cost currency, corrections, reversal).
+// Drizzle description of the `purch` schema. Source of truth: src/db/migrations/0023_procurement_pr_po.sql, 0025, 0027 (GRN), 0029 (landed cost), 0030 (landed-cost currency, corrections, reversal), 0031 (vendor invoices, payments; PKR-only charge types).
 import { boolean, date, integer, numeric, pgSchema, text } from 'drizzle-orm/pg-core';
-import type { GrnStatus, LandedCostBasis, LandedCostStatus, LandedCostTaxRole, Incoterm, PurchaseOrderStatus, PurchaseOrderType, PurchaseRequisitionStatus } from '@albert/shared';
+import type { VendorInvoiceStatus, VendorInvoiceType, VendorPaymentStatus, GrnStatus, LandedCostBasis, LandedCostStatus, LandedCostTaxRole, Incoterm, PurchaseOrderStatus, PurchaseOrderType, PurchaseRequisitionStatus } from '@albert/shared';
 import { auditColumns, bigintString, companyId, identityId, tstz } from './columns';
 
 export const purch = pgSchema('purch');
@@ -115,6 +115,7 @@ export const landedCostTypes = purch.table('landed_cost_types', {
   taxRole: text('tax_role').$type<LandedCostTaxRole>(),
   isDuty: boolean('is_duty').notNull().default(false),
   defaultBasis: text('default_basis').$type<LandedCostBasis>(),
+  pkrOnly: boolean('pkr_only').notNull().default(false),
   isActive: boolean('is_active').notNull().default(true),
   ...auditColumns(),
 });
@@ -166,5 +167,98 @@ export const landedCostAllocations = purch.table('landed_cost_allocations', {
   heldAmount: numeric('held_amount', { precision: 18, scale: 2 }).notNull(),
   varianceAmount: numeric('variance_amount', { precision: 18, scale: 2 }).notNull(),
   movementId: bigintString('movement_id'),
+  ...auditColumns(),
+});
+
+export const vendorInvoices = purch.table('vendor_invoices', {
+  id: identityId(),
+  companyId: companyId(),
+  docNo: text('doc_no').notNull(),
+  invoiceType: text('invoice_type').$type<VendorInvoiceType>().notNull(),
+  vendorId: bigintString('vendor_id').notNull(),
+  poId: bigintString('po_id'),
+  vendorInvoiceNo: text('vendor_invoice_no').notNull(),
+  invoiceDate: date('invoice_date', { mode: 'string' }).notNull(),
+  dueDate: date('due_date', { mode: 'string' }).notNull(),
+  currency: text('currency').notNull(),
+  exchangeRate: numeric('exchange_rate', { precision: 18, scale: 6 }).notNull(),
+  exchangeRateDate: date('exchange_rate_date', { mode: 'string' }).notNull(),
+  goodsAmount: numeric('goods_amount', { precision: 18, scale: 2 }).notNull(),
+  taxAmount: numeric('tax_amount', { precision: 18, scale: 2 }).notNull(),
+  totalAmount: numeric('total_amount', { precision: 18, scale: 2 }).notNull(),
+  totalPkr: numeric('total_pkr', { precision: 18, scale: 2 }).notNull(),
+  notes: text('notes'),
+  status: text('status').$type<VendorInvoiceStatus>().notNull(),
+  exceptionAt: tstz('exception_at'),
+  releasedBy: bigintString('released_by'),
+  releasedAt: tstz('released_at'),
+  releaseReason: text('release_reason'),
+  postingDate: date('posting_date', { mode: 'string' }),
+  postedBy: bigintString('posted_by'),
+  postedAt: tstz('posted_at'),
+  ...auditColumns(),
+});
+
+export const vendorInvoiceLines = purch.table('vendor_invoice_lines', {
+  id: identityId(),
+  companyId: companyId(),
+  invoiceId: bigintString('invoice_id').notNull(),
+  lineNo: integer('line_no').notNull(),
+  grnLineId: bigintString('grn_line_id'),
+  landedCostId: bigintString('landed_cost_id'),
+  qty: numeric('qty', { precision: 18, scale: 4 }),
+  unitPrice: numeric('unit_price', { precision: 18, scale: 6 }),
+  amount: numeric('amount', { precision: 18, scale: 2 }).notNull(),
+  taxCodeId: bigintString('tax_code_id'),
+  taxRate: numeric('tax_rate', { precision: 9, scale: 4 }).notNull(),
+  taxAmount: numeric('tax_amount', { precision: 18, scale: 2 }).notNull(),
+  poUnitPrice: numeric('po_unit_price', { precision: 18, scale: 6 }),
+  priceDiffPct: numeric('price_diff_pct', { precision: 9, scale: 4 }),
+  qtyOver: numeric('qty_over', { precision: 18, scale: 4 }),
+  inTolerance: boolean('in_tolerance'),
+  amountPkr: numeric('amount_pkr', { precision: 18, scale: 2 }),
+  taxPkr: numeric('tax_pkr', { precision: 18, scale: 2 }),
+  clearedPkr: numeric('cleared_pkr', { precision: 18, scale: 2 }),
+  matchedQty: numeric('matched_qty', { precision: 18, scale: 4 }),
+  priceVariancePkr: numeric('price_variance_pkr', { precision: 18, scale: 2 }),
+  exchangeDiffPkr: numeric('exchange_diff_pkr', { precision: 18, scale: 2 }),
+  ...auditColumns(),
+});
+
+export const vendorPayments = purch.table('vendor_payments', {
+  id: identityId(),
+  companyId: companyId(),
+  docNo: text('doc_no').notNull(),
+  vendorId: bigintString('vendor_id').notNull(),
+  paymentDate: date('payment_date', { mode: 'string' }).notNull(),
+  currency: text('currency').notNull(),
+  foreignAmount: numeric('foreign_amount', { precision: 18, scale: 2 }).notNull(),
+  pkrPaid: numeric('pkr_paid', { precision: 18, scale: 2 }).notNull(),
+  whtTaxCodeId: bigintString('wht_tax_code_id'),
+  whtRate: numeric('wht_rate', { precision: 9, scale: 4 }).notNull(),
+  whtAmount: numeric('wht_amount', { precision: 18, scale: 2 }).notNull(),
+  netPaid: numeric('net_paid', { precision: 18, scale: 2 }).notNull(),
+  payeeIsFiler: boolean('payee_is_filer'),
+  payeeFilerCheckedOn: date('payee_filer_checked_on', { mode: 'string' }),
+  carryingPkr: numeric('carrying_pkr', { precision: 18, scale: 2 }),
+  exchangeDiffPkr: numeric('exchange_diff_pkr', { precision: 18, scale: 2 }),
+  reference: text('reference'),
+  notes: text('notes'),
+  status: text('status').$type<VendorPaymentStatus>().notNull(),
+  submittedBy: bigintString('submitted_by'),
+  submittedAt: tstz('submitted_at'),
+  postingDate: date('posting_date', { mode: 'string' }),
+  postedBy: bigintString('posted_by'),
+  postedAt: tstz('posted_at'),
+  ...auditColumns(),
+});
+
+export const paymentAllocations = purch.table('payment_allocations', {
+  id: identityId(),
+  companyId: companyId(),
+  paymentId: bigintString('payment_id').notNull(),
+  invoiceId: bigintString('invoice_id').notNull(),
+  foreignAmount: numeric('foreign_amount', { precision: 18, scale: 2 }).notNull(),
+  carryingPkr: numeric('carrying_pkr', { precision: 18, scale: 2 }),
   ...auditColumns(),
 });

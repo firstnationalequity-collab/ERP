@@ -58,6 +58,8 @@ export const PLACEHOLDER_ACCOUNTS: readonly AccountSeed[] = [
   { code: '6000', name: 'Operating expenses', type: 'EXPENSE', header: true },
   { code: '6100', name: 'Stock loss on adjustment', type: 'EXPENSE', parent: '6000' },
   { code: '6200', name: 'Rejected material write-off', type: 'EXPENSE', parent: '6000' },
+  // Owner Q4 (2026-11-25): rate differences on vendor invoices and payments (IAS 21). Placeholder: Finance to confirm.
+  { code: '6300', name: 'Exchange gain / loss (Finance to confirm)', type: 'EXPENSE', parent: '6000' },
 ];
 
 /** Default account per role (rules with no item category). Finance adds per-category rules, e.g. INVENTORY by category. */
@@ -72,6 +74,7 @@ export const PLACEHOLDER_ROLE_ACCOUNTS: Readonly<Record<AccountRole, string>> = 
   ACCOUNTS_PAYABLE: '2110',
   BANK: '1120',
   WHT_PAYABLE: '2220',
+  EXCHANGE_DIFFERENCE: '6300',
   LABOUR_ABSORBED: '5300',
   OVERHEAD_ABSORBED: '5310',
   COGS: '5100',

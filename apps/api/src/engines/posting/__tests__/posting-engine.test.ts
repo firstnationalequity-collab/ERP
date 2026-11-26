@@ -320,9 +320,13 @@ describe('postJournal', () => {
     await expect(postAs('store', { ...base, date: '2026-10-15', lines: lines() })).rejects.toMatchObject({ code: 'PERIOD_CLOSED' });
     await expect(postAs('store', { ...base, date: '2030-01-01', lines: lines() })).rejects.toMatchObject({ code: 'PERIOD_NOT_DEFINED' });
     await expect(postAs('fm', { ...base, lines: lines() })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // M3 task 5 gave VENDOR_INVOICE its key (fin.invoice.manage); customer receipts get theirs in M8.
     await expect(
-      postAs('fm', { ...base, event: 'VENDOR_INVOICE', lines: [{ role: 'GRNI', debit: '1' }, { role: 'ACCOUNTS_PAYABLE', credit: '1' }] }),
-    ).rejects.toThrow(/No posting key is defined for VENDOR_INVOICE/);
+      postAs('fm', { ...base, event: 'CUSTOMER_RECEIPT', lines: [{ role: 'BANK', debit: '1' }, { role: 'ACCOUNTS_RECEIVABLE', credit: '1' }] }),
+    ).rejects.toThrow(/No posting key is defined for CUSTOMER_RECEIPT/);
+    await expect(
+      postAs('store', { ...base, event: 'VENDOR_INVOICE', lines: [{ role: 'GRNI', debit: '1' }, { role: 'ACCOUNTS_PAYABLE', credit: '1' }] }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(
       postAs('store', { ...base, event: 'ROUNDING_DIFFERENCE', lines: [{ role: 'INVENTORY', debit: '1' }, { role: 'ROUNDING_DIFFERENCE', credit: '1' }] }),
     ).rejects.toThrow(/only by the stock sweep/);

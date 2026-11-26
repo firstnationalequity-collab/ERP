@@ -1,5 +1,5 @@
 // Queries on the `fin` journal tables and posting rules, for engines/posting only (no business rules).
-import { and, asc, eq, isNull, or } from 'drizzle-orm';
+import { and, asc, eq, isNull, or, sql } from 'drizzle-orm';
 import type { AccountRole, PostingEvent } from '@albert/shared';
 import type { Queryable, Tx } from '../../db/client';
 import { journalEntries, journalLines, postingRules } from '../../db/schema/fin';
@@ -78,4 +78,53 @@ export async function entriesOfSource(q: Queryable, companyId: string, sourceTyp
     .from(journalEntries)
     .where(and(eq(journalEntries.companyId, companyId), eq(journalEntries.sourceType, sourceType), eq(journalEntries.sourceId, sourceId)))
     .orderBy(asc(journalEntries.id));
+}
+
+/** One vendor's lines on the accounts of a role (POSTED and REVERSED entries both stand: a reversal is its own entry). */
+export async function vendorSubledger(
+  q: Queryable,
+  companyId: string,
+  role: AccountRole,
+  vendorId: string,
+  period: { from?: string; to?: string },
+): Promise<{
+  opening: string;
+  lines: { entryId: string; docNo: string; entryDate: string; sourceType: string; sourceId: string | null; narration: string; debit: string; credit: string }[];
+}> {
+  const base = sql`FROM fin.journal_lines l JOIN fin.journal_entries e ON e.id = l.entry_id
+    WHERE e.company_id = ${companyId} AND e.status IN ('POSTED', 'REVERSED') AND l.vendor_id = ${vendorId}
+      AND l.account_id IN (SELECT pr.account_id FROM fin.posting_rules pr WHERE pr.company_id = ${companyId} AND pr.account_role = ${role})`;
+  const opening = period.from
+    ? ((await q.execute<{ v: string }>(sql`SELECT coalesce(sum(l.debit - l.credit), 0)::text AS v ${base} AND e.entry_date < ${period.from}`)).rows[0]?.v ?? '0')
+    : '0';
+  const rows = (
+    await q.execute<{
+      entry_id: string;
+      doc_no: string;
+      entry_date: string;
+      source_type: string;
+      source_id: string | null;
+      narration: string;
+      debit: string;
+      credit: string;
+    }>(sql`SELECT e.id::text AS entry_id, e.doc_no, e.entry_date::text AS entry_date, e.source_type, e.source_id::text AS source_id,
+                  coalesce(l.narration, e.narration) AS narration, l.debit::text AS debit, l.credit::text AS credit
+             ${base}
+             ${period.from ? sql`AND e.entry_date >= ${period.from}` : sql``}
+             ${period.to ? sql`AND e.entry_date <= ${period.to}` : sql``}
+            ORDER BY e.entry_date, e.id, l.line_no`)
+  ).rows;
+  return {
+    opening,
+    lines: rows.map((r) => ({
+      entryId: r.entry_id,
+      docNo: r.doc_no,
+      entryDate: r.entry_date,
+      sourceType: r.source_type,
+      sourceId: r.source_id,
+      narration: r.narration,
+      debit: r.debit,
+      credit: r.credit,
+    })),
+  };
 }

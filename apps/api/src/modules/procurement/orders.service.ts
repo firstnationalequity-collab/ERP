@@ -10,6 +10,7 @@ import {
   PurchaseOrderStatus,
   type CreatePoRequest,
   type Page,
+  type PermissionKey,
   type PoDto,
   type PoLineDto,
   type PurchListQuery,
@@ -306,4 +307,40 @@ export async function cancelPo(auth: AuthContext, id: string, reason: string): P
     await freePrLinesOfCancelledPo(tx, auth, id, po.docNo); // owner 2026-11-25, answer 4
   });
   return getPo(auth, id);
+}
+
+// ---------------------------------------------------------------- PO → CLOSED (M3 task 5; 0031)
+
+const closeMaps = new Map<PermissionKey, typeof PurchaseOrderMoves>();
+/**
+ * RECEIVED → CLOSED once everything received is invoiced on POSTED invoices. Made by the invoice posting, under the
+ * key of whoever posts it: the Accountant (fin.invoice.manage) or the Finance Manager's release (fin.invoice.match_release).
+ */
+function poCloseMoves(key: 'fin.invoice.manage' | 'fin.invoice.match_release') {
+  let map = closeMaps.get(key);
+  if (!map) {
+    map = defineTransitions<PurchaseOrderStatus>({
+      entityTable: PO_TABLE,
+      statuses: PurchaseOrderStatus,
+      moves: [{ from: 'RECEIVED', to: 'CLOSED', permission: key }],
+    });
+    closeMaps.set(key, map);
+  }
+  return map;
+}
+
+/** Inside the invoice posting's transaction: closes the PO when it is RECEIVED and fully invoiced (DB re-checks). */
+export async function closePoIfInvoiced(
+  tx: Tx,
+  actor: Actor,
+  poId: string,
+  invoicedByPoLine: Map<string, string>,
+  key: 'fin.invoice.manage' | 'fin.invoice.match_release',
+): Promise<boolean> {
+  const po = await lockPo(tx, actor.companyId, poId);
+  if (po.status !== 'RECEIVED') return false;
+  const lines = await repo.poLinesOf(tx, [po.id]);
+  if (lines.some((l) => new Decimal(l.receivedQty).gt(invoicedByPoLine.get(l.id) ?? 0))) return false;
+  await transition(tx, poCloseMoves(key), { entityId: po.id, to: 'CLOSED', actor, reason: 'Fully received and invoiced' });
+  return true;
 }

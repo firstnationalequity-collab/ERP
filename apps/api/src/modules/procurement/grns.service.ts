@@ -63,6 +63,7 @@ import { assertStockLocation } from '../masters/stock-refs.service';
 import { rateOn } from '../finance/rates.service';
 import { cancelGrnSampleRequests, requestSample, sampleRequestsOfLots } from '../qc/sample-requests.service';
 import * as repo from './grns.repo';
+import { invoicesNaming } from './invoices.repo';
 import { findPo, listPos, poLinesOf, userNames, type PoLineRow, type PoRow } from './procurement.repo';
 import { minShelfLifePct, overReceiptPct } from './procurement.settings';
 import { cancelChargesOfGrn, chargeIdsOfGrn, landedCostsOfGrns, postChargesWithGrn, reverseChargesOfGrn } from './landed-costs.service';
@@ -566,8 +567,17 @@ export async function reverseGrn(auth: AuthContext, id: string, input: GrnRevers
     const lotIds = lines.flatMap((l) => (l.lotId ? [l.lotId] : []));
     const doc = { refDocType: GRN_DOC_TYPE, refDocId: id };
 
+    // Task 5 (0031): a GRN whose lines or charges are on a vendor invoice (not cancelled) stays; the DB re-checks.
+    const chargeIds = await chargeIdsOfGrn(tx, id);
+    const invoices = await invoicesNaming(tx, { grnLineIds: lines.map((l) => l.id), landedCostIds: chargeIds });
+    if (invoices.length > 0) {
+      throw new AppError('IN_USE', `GRN ${grn.docNo} is on vendor invoice ${invoices.join(', ')}; it is no longer reversed (cancel a draft invoice first)`, {
+        invoices,
+      });
+    }
+
     // Untouched: no movement but the receipt, no status change, no reservation, no sampling started.
-    const own = { refDocType: 'LANDED_COST', refDocIds: await chargeIdsOfGrn(tx, id) };
+    const own = { refDocType: 'LANDED_COST', refDocIds: chargeIds };
     const touched = (await lotsTouchedSinceReceipt(tx, doc, lotIds, own)).filter((t) => t.touches.length > 0);
     if (touched.length > 0) {
       throw new AppError(

@@ -30,6 +30,9 @@ export const DEFAULT_SERIES = [
   { docType: 'MATERIAL_LOT', name: 'Material lot number', prefix: 'ML', pattern: '{PREFIX}{YY}-{SEQ:5}', reset: 'CALENDAR_YEAR' },
   // Landed-cost charges (M3 task 4, 0029), e.g. LC-2627-00001 (format: agent default, PENDING OWNER).
   { docType: 'LANDED_COST', name: 'Landed cost charge', prefix: 'LC', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
+  // Vendor invoices and payments (M3 task 5, 0031), e.g. VI-2627-00001 / VP-2627-00001 (format: agent default, PENDING OWNER).
+  { docType: 'VENDOR_INVOICE', name: 'Vendor invoice', prefix: 'VI', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
+  { docType: 'VENDOR_PAYMENT', name: 'Vendor payment', prefix: 'VP', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
   { docType: 'BATCH', name: 'Batch number', prefix: 'AP', pattern: '{PREFIX}{YY}-{SEQ:4}', reset: 'CALENDAR_YEAR' },
   { docType: 'JV', name: 'Manual journal voucher', prefix: 'JV', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
   { docType: 'SJ', name: 'System journal', prefix: 'SJ', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },

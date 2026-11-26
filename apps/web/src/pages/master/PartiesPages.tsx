@@ -23,7 +23,7 @@ import { statusFilter } from '../../components/DataTable';
 import { DocForm, type FieldDef } from '../../components/DocForm';
 import { ReasonModal } from '../../components/ReasonModal';
 import { StatusTag } from '../../components/StatusTag';
-import { formatPKR } from '../../lib/format';
+import { formatDate, formatPKR } from '../../lib/format';
 import { MasterPage, enumOptions, yesNo } from './MasterPage';
 
 const partyActive = (r: { status: string }) => r.status === 'ACTIVE';
@@ -189,7 +189,11 @@ const vendorFields: FieldDef[] = [
   { name: 'strn', label: 'STRN', kind: 'text', nullable: true },
   { name: 'bankName', label: 'Bank', kind: 'text', nullable: true },
   { name: 'bankAccount', label: 'Bank account / IBAN', kind: 'text', nullable: true },
-  { name: 'paymentTermsDays', label: 'Payment terms (days)', kind: 'int' },
+  { name: 'paymentTermsDays', label: 'Payment terms (days)', kind: 'int', help: 'Due date for AP ageing = invoice date + these days' },
+  // 0031 (owner 2026-11-25): WHT section and filer status; changing either on an active vendor needs a countersign.
+  { name: 'whtTaxCodeId', label: 'WHT section (withholding tax code)', kind: 'ref', path: '/master/tax-codes', nullable: true },
+  { name: 'isFiler', label: 'Filer (on the FBR Active Taxpayers List)', kind: 'switch' },
+  { name: 'filerCheckedOn', label: 'ATL checked on', kind: 'date', nullable: true, help: 'Give it together with the filer status' },
 ];
 
 export function VendorsPage() {
@@ -213,6 +217,7 @@ export function VendorsPage() {
           { key: 'strn', title: 'STRN' },
           { key: 'bankName', title: 'Bank' },
           { key: 'paymentTermsDays', title: 'Terms (d)' },
+          { key: 'isFiler', title: 'Filer (ATL)', render: (r) => (r.isFiler === null ? 'Not checked' : `${r.isFiler ? 'Filer' : 'Non-filer'} · ${formatDate(r.filerCheckedOn)}`) },
           { key: 'status', title: 'Status', render: (r) => <StatusTag status={r.status} /> },
         ],
         isActive: partyActive,
@@ -231,6 +236,9 @@ export function VendorsPage() {
             bankName: r.bankName ?? '',
             bankAccount: r.bankAccount ?? '',
             paymentTermsDays: r.paymentTermsDays,
+            whtTaxCodeId: r.whtTaxCodeId ?? '',
+            isFiler: r.isFiler ?? undefined,
+            filerCheckedOn: r.filerCheckedOn ?? '',
           }),
           fields: () => vendorFields,
         },

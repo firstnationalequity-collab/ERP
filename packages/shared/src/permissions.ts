@@ -118,6 +118,7 @@ export const Permissions = {
   'fin.receipt.manage': action('Customer receipts'),
   'fin.payment.manage': action('Create payments'),
   'fin.payment.approve': action('Approve payments'),
+  'fin.invoice.match_release': action('Release a vendor invoice held in MATCH_EXCEPTION, with an e-signature (Finance Manager; owner Q5)'),
   'fin.master.manage': action('Chart of accounts, cost centres, tax codes, posting rules'),
   'fin.approval_rules.countersign': action('Countersign changes to the approval matrix (Finance Manager)'),
   'fin.bank.reconcile': action('Bank reconciliation'),

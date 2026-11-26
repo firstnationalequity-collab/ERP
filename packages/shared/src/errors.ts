@@ -65,6 +65,10 @@ export const ErrorCodes = [
   'GRN_LOTS_IN_USE',
   /** Landed-cost corrections would take a charge below zero (owner 2026-11-25, 4b; 0030). GRN_HAS_LANDED_COST (0029) is gone: a GRN with posted charges is reversed with them. */
   'CORRECTION_EXCEEDS_CHARGE',
+  /** A currency the document does not allow: PKR-only charge types and GD amounts (owner 2026-11-26; 0031). */
+  'CURRENCY_NOT_ALLOWED',
+  /** An invoice line or payment allocation beyond what is still open on the charge or invoice (0031). */
+  'AMOUNT_EXCEEDS_OPEN',
   'CREDIT_LIMIT_EXCEEDED',
   'OPEN_DEVIATION',
   'DUPLICATE_REQUEST',

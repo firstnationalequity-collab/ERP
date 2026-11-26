@@ -56,7 +56,7 @@ export async function insertType(tx: Tx, v: LandedCostTypeValues): Promise<strin
   return row.id;
 }
 
-export async function updateType(tx: Tx, id: string, v: Partial<Pick<LandedCostTypeRow, 'name' | 'defaultBasis' | 'isActive'>>): Promise<void> {
+export async function updateType(tx: Tx, id: string, v: Partial<Pick<LandedCostTypeRow, 'name' | 'defaultBasis' | 'isActive' | 'pkrOnly'>>): Promise<void> {
   await tx.update(landedCostTypes).set(v).where(eq(landedCostTypes.id, id));
 }
 
@@ -145,4 +145,26 @@ export async function docNosOf(q: Queryable, ids: string[]): Promise<Map<string,
   if (ids.length === 0) return new Map();
   const rows = await q.select({ id: landedCosts.id, docNo: landedCosts.docNo }).from(landedCosts).where(inArray(landedCosts.id, [...new Set(ids)]));
   return new Map(rows.map((r) => [r.id, r.docNo]));
+}
+
+export async function chargesByIds(q: Queryable, companyId: string, ids: string[]): Promise<Map<string, LandedCostRow>> {
+  if (ids.length === 0) return new Map();
+  const rows = await q.select().from(landedCosts).where(and(eq(landedCosts.companyId, companyId), inArray(landedCosts.id, [...new Set(ids)])));
+  return new Map(rows.map((r) => [r.id, r]));
+}
+
+/** POSTED original charges a vendor may bill: billed by this vendor, or with no billing vendor named (task 5). */
+export async function postedOriginalsForVendor(q: Queryable, companyId: string, vendorId: string): Promise<LandedCostRow[]> {
+  return q
+    .select()
+    .from(landedCosts)
+    .where(
+      and(
+        eq(landedCosts.companyId, companyId),
+        eq(landedCosts.status, 'POSTED'),
+        sql`${landedCosts.correctionOf} IS NULL`,
+        or(eq(landedCosts.vendorId, vendorId), sql`${landedCosts.vendorId} IS NULL`),
+      ),
+    )
+    .orderBy(asc(landedCosts.id));
 }

@@ -27,6 +27,7 @@ import {
 import { db, withTransaction, type Tx } from '../../db/client';
 import { customers, vendors } from '../../db/schema/masters';
 import { AppError } from '../../core/errors';
+import { companyToday } from '../../core/dates';
 import { txContext, type AuthContext, type RequestMeta } from '../../core/auth/auth.service';
 import { type SignatureProof } from '../../core/esign/esign.service';
 import { defineTransitions, recordInitialStatus, transition } from '../../core/transition/transition';
@@ -179,6 +180,29 @@ function assertVendorIdentity(v: { isForeign: boolean; ntn: string | null; cnic:
   if (v.isForeign && v.country === 'PK') throw new AppError('VALIDATION_FAILED', 'A foreign vendor needs its country (not PK)', { field: 'country' });
 }
 
+/**
+ * 0031 (owner 2026-11-25 extra): the WHT section is an active WITHHOLDING tax code; filer status (ATL) and the day it
+ * was checked go together and the check is not in the future. The database re-checks (master.guard_vendor_wht).
+ */
+async function assertVendorTax(
+  tx: Tx,
+  companyId: string,
+  v: { whtTaxCodeId?: string | null; isFiler?: boolean | null; filerCheckedOn?: string | null },
+): Promise<void> {
+  if (v.whtTaxCodeId) {
+    const tc = await repo.findTaxCode(tx, companyId, v.whtTaxCodeId);
+    if (!tc || tc.kind !== 'WITHHOLDING' || !tc.isActive) {
+      throw new AppError('VALIDATION_FAILED', 'The WHT section is an active withholding tax code', { field: 'whtTaxCodeId' });
+    }
+  }
+  if ((v.isFiler ?? null) === null !== ((v.filerCheckedOn ?? null) === null)) {
+    throw new AppError('VALIDATION_FAILED', 'Give the filer status (ATL) together with the day it was checked', { field: 'filerCheckedOn' });
+  }
+  if (v.filerCheckedOn && v.filerCheckedOn > companyToday()) {
+    throw new AppError('VALIDATION_FAILED', 'The filer status cannot be checked in the future', { field: 'filerCheckedOn' });
+  }
+}
+
 export async function listVendors(auth: AuthContext, query: MasterListQuery): Promise<Page<VendorDto>> {
   const status = query.status && (PartyStatus as readonly string[]).includes(query.status) ? (query.status as PartyStatus) : undefined;
   const where = repo.listWhere(
@@ -196,6 +220,7 @@ export async function getVendor(auth: AuthContext, id: string): Promise<VendorDt
 
 export async function createVendor(auth: AuthContext, input: CreateVendorRequest): Promise<VendorDto> {
   const row = await withTransaction(txContext(auth), async (tx) => {
+    await assertVendorTax(tx, auth.companyId, input);
     const created = await repo.insertVendor(tx, { ...input, status: 'DRAFT' });
     await recordInitialStatus(tx, VendorMoves, { entityId: created.id, to: 'DRAFT', actor: auth });
     return created;
@@ -210,6 +235,7 @@ export async function updateVendor(auth: AuthContext, id: string, input: UpdateV
     const current = found(await repo.findVendor(tx, auth.companyId, id, true), 'Vendor');
     const changes = sent(fields);
     assertVendorIdentity({ ...current, ...changes });
+    await assertVendorTax(tx, auth.companyId, { ...current, ...changes });
     const sensitive = changedSensitive(current, changes, VendorSensitiveFields);
     await repo.updateVendor(tx, id, changes);
     if (current.status !== 'DRAFT' && sensitive.length > 0) await countersignParty(tx, 'vendor', id, proof, sensitive);

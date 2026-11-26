@@ -229,7 +229,8 @@ export interface LocationDto extends Stamped {
  * who is not the editor (decision 18-11-2026; DB guard 0009). DRAFT edits need none.
  */
 export const CustomerSensitiveFields = ['ntn', 'cnic', 'strn', 'creditLimit', 'isTollCustomer'] as const;
-export const VendorSensitiveFields = ['ntn', 'cnic', 'strn', 'isForeign', 'country', 'currency', 'bankName', 'bankAccount'] as const;
+/** 0031 (owner 2026-11-25 extra): the WHT section and the filer flag are sensitive; the checked-on date is not. */
+export const VendorSensitiveFields = ['ntn', 'cnic', 'strn', 'isForeign', 'country', 'currency', 'bankName', 'bankAccount', 'whtTaxCodeId', 'isFiler'] as const;
 
 const customerFields = {
   name,
@@ -297,6 +298,11 @@ const vendorFields = {
   bankName: optText(100),
   bankAccount: optText(50),
   paymentTermsDays: termsDays.optional(),
+  /** WHT section: a WITHHOLDING tax code (0031). Null = no WHT deducted. */
+  whtTaxCodeId: id.nullable().optional(),
+  /** On the FBR Active Taxpayers List (ATL), and the day it was checked (both or neither). */
+  isFiler: z.boolean().nullable().optional(),
+  filerCheckedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date: YYYY-MM-DD').nullable().optional(),
 };
 export const CreateVendorRequest = z
   .object({ code: code20, ...vendorFields })
@@ -323,6 +329,9 @@ export interface VendorDto extends Stamped {
   bankName: string | null;
   bankAccount: string | null;
   paymentTermsDays: number;
+  whtTaxCodeId: string | null;
+  isFiler: boolean | null;
+  filerCheckedOn: string | null;
   status: PartyStatus;
 }
 

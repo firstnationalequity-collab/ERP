@@ -88,7 +88,7 @@ function ChargeTypes({ canManage }: { canManage: boolean }) {
   const list = useChargeTypes(false);
   const [adding, setAdding] = useState(false);
   const [toggling, setToggling] = useState<LandedCostTypeDto | null>(null);
-  const [form, setForm] = useState({ code: '', name: '', capitalise: true, taxRole: 'INPUT_TAX', isDuty: false, defaultBasis: 'VALUE' as LandedCostBasis });
+  const [form, setForm] = useState({ code: '', name: '', capitalise: true, taxRole: 'INPUT_TAX', isDuty: false, defaultBasis: 'VALUE' as LandedCostBasis, pkrOnly: false });
   const [error, setError] = useState<string | null>(null);
   const reload = () => qc.invalidateQueries({ queryKey: typesKey });
   return (
@@ -110,9 +110,33 @@ function ChargeTypes({ canManage }: { canManage: boolean }) {
           { title: 'Into lot cost', render: (_, t) => (t.capitalise ? 'Yes' : `No — ${TAX_LABEL[t.taxRole ?? ''] ?? ''}`) },
           { title: 'Duty', render: (_, t) => (t.isDuty ? 'Yes' : '—') },
           { title: 'Default basis', render: (_, t) => (t.defaultBasis ? BASIS_LABEL[t.defaultBasis] : '—') },
+          // Owner 2026-11-26: customs assesses duties and import taxes in PKR.
+          { title: 'Currency', render: (_, t) => (t.pkrOnly ? 'PKR only' : 'PKR or foreign') },
           { title: 'Status', render: (_, t) => <StatusTag status={t.isActive ? 'ACTIVE' : 'INACTIVE'} /> },
           ...(canManage
-            ? [{ title: '', render: (_: unknown, t: LandedCostTypeDto) => <Button size="small" onClick={() => setToggling(t)}>{t.isActive ? 'Deactivate' : 'Activate'}</Button> }]
+            ? [
+                {
+                  title: '',
+                  render: (_: unknown, t: LandedCostTypeDto) => (
+                    <Space>
+                      <Button
+                        size="small"
+                        onClick={async () => {
+                          try {
+                            await api(`/purch/landed-cost-types/${t.id}`, { method: 'PATCH', body: { pkrOnly: !t.pkrOnly } });
+                            await reload();
+                          } catch (err) {
+                            void message.error(errorText(err));
+                          }
+                        }}
+                      >
+                        {t.pkrOnly ? 'Allow foreign currency' : 'Make PKR only'}
+                      </Button>
+                      <Button size="small" onClick={() => setToggling(t)}>{t.isActive ? 'Deactivate' : 'Activate'}</Button>
+                    </Space>
+                  ),
+                },
+              ]
             : []),
         ]}
       />
@@ -129,6 +153,7 @@ function ChargeTypes({ canManage }: { canManage: boolean }) {
             taxRole: form.capitalise ? null : form.taxRole,
             isDuty: form.capitalise && form.isDuty,
             defaultBasis: form.capitalise ? form.defaultBasis : null,
+            pkrOnly: form.pkrOnly,
           });
           if (!parsed.success) return setError(parsed.error.issues.map((i) => i.message).join('; '));
           try {
@@ -167,6 +192,15 @@ function ChargeTypes({ canManage }: { canManage: boolean }) {
           ) : (
             <Select aria-label="Tax account" value={form.taxRole} onChange={(v) => setForm({ ...form, taxRole: v })} options={Object.entries(TAX_LABEL).map(([value, label]) => ({ value, label }))} />
           )}
+          <Select
+            aria-label="Currency"
+            value={form.pkrOnly ? 'pkr' : 'any'}
+            onChange={(v) => setForm({ ...form, pkrOnly: v === 'pkr' })}
+            options={[
+              { value: 'any', label: 'Entered in PKR or a foreign currency' },
+              { value: 'pkr', label: 'PKR only (assessed by customs in PKR)' },
+            ]}
+          />
         </Space>
       </Modal>
       <ReasonModal
@@ -208,6 +242,9 @@ export function LandedCostEditor({ grn, charge, onClose, onSaved }: { grn: GrnDt
   const [busy, setBusy] = useState(false);
   const type = types.data?.find((t) => t.id === v.chargeTypeId);
   const basis = type?.capitalise ? (v.basis ?? type.defaultBasis ?? 'VALUE') : null;
+  // Owner 2026-11-26: PKR-only types and GD amounts are in PKR (the API refuses otherwise: CURRENCY_NOT_ALLOWED).
+  const pkrLocked = !!type?.pkrOnly || basis === 'GD_AMOUNTS';
+  const currency = pkrLocked ? 'PKR' : v.currency;
   const poLines = [...new Map(grn.lines.map((l) => [l.poLineId, l])).values()];
 
   const save = async () => {
@@ -215,7 +252,7 @@ export function LandedCostEditor({ grn, charge, onClose, onSaved }: { grn: GrnDt
       chargeTypeId: v.chargeTypeId,
       chargeDate: v.chargeDate,
       amount: v.amount,
-      currency: v.currency,
+      currency,
       basis,
       vendorId: v.vendorId ?? null,
       reference: v.reference || null,
@@ -264,8 +301,8 @@ export function LandedCostEditor({ grn, charge, onClose, onSaved }: { grn: GrnDt
         />
         <Space wrap>
           <DatePicker aria-label="Charge date" format="DD-MM-YYYY" value={dayjs(v.chargeDate)} onChange={(d) => d && setV({ ...v, chargeDate: toBusinessDate(d) })} />
-          <Input aria-label="Currency" value={v.currency} maxLength={3} onChange={(e) => setV({ ...v, currency: e.target.value.toUpperCase() })} style={{ width: 80 }} />
-          <InputNumber<string> aria-label="Amount" placeholder={`Amount (${v.currency})`} stringMode min="0" precision={2} value={v.amount || null} onChange={(a) => setV({ ...v, amount: a ?? '' })} style={{ width: 180 }} />
+          <Input aria-label="Currency" value={currency} disabled={pkrLocked} title={pkrLocked ? 'Assessed in PKR' : undefined} maxLength={3} onChange={(e) => setV({ ...v, currency: e.target.value.toUpperCase() })} style={{ width: 80 }} />
+          <InputNumber<string> aria-label="Amount" placeholder={`Amount (${currency})`} stringMode min="0" precision={2} value={v.amount || null} onChange={(a) => setV({ ...v, amount: a ?? '' })} style={{ width: 180 }} />
           {type?.capitalise && (
             <Select
               aria-label="Basis"
@@ -287,7 +324,7 @@ export function LandedCostEditor({ grn, charge, onClose, onSaved }: { grn: GrnDt
             columns={[
               { title: 'PO line item', render: (_, l) => `${l.itemCode} — ${l.itemName}` },
               {
-                title: basis === 'GD_AMOUNTS' ? `GD amount (${v.currency})` : 'Weight (kg)',
+                title: basis === 'GD_AMOUNTS' ? 'GD amount (PKR)' : 'Weight (kg)',
                 render: (_, l) => (
                   <InputNumber<string>
                     aria-label={`${basis === 'GD_AMOUNTS' ? 'GD amount' : 'Weight'} ${l.itemCode}`}
@@ -302,8 +339,9 @@ export function LandedCostEditor({ grn, charge, onClose, onSaved }: { grn: GrnDt
             ]}
           />
         )}
-        {v.currency !== 'PKR' && (
-          <Typography.Text type="secondary">Converted at Finance's {v.currency} rate for the charge date (latest on or before it), refreshed when posted.</Typography.Text>
+        {pkrLocked && <Typography.Text type="secondary">{type?.pkrOnly ? `${type.code} is assessed by customs in PKR.` : 'GD amounts are in PKR.'}</Typography.Text>}
+        {currency !== 'PKR' && (
+          <Typography.Text type="secondary">Converted at Finance's {currency} rate for the charge date (latest on or before it), refreshed when posted.</Typography.Text>
         )}
         <Input.TextArea rows={2} aria-label="Notes" placeholder="Notes" value={v.notes} onChange={(e) => setV({ ...v, notes: e.target.value })} />
       </Space>

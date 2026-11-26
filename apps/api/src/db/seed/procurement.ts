@@ -14,15 +14,17 @@ export const DEFAULT_LANDED_COST_TYPES: readonly {
   taxRole: LandedCostTaxRole | null;
   isDuty: boolean;
   defaultBasis: LandedCostBasis | null;
+  /** Owner 2026-11-26: customs assesses duties and import taxes in PKR (0031). */
+  pkrOnly: boolean;
 }[] = [
-  { code: 'CD', name: 'Customs duty', capitalise: true, taxRole: null, isDuty: true, defaultBasis: 'VALUE' },
-  { code: 'ACD', name: 'Additional customs duty', capitalise: true, taxRole: null, isDuty: true, defaultBasis: 'VALUE' },
-  { code: 'RD', name: 'Regulatory duty', capitalise: true, taxRole: null, isDuty: true, defaultBasis: 'VALUE' },
-  { code: 'FREIGHT', name: 'Freight', capitalise: true, taxRole: null, isDuty: false, defaultBasis: 'VALUE' },
-  { code: 'INSURANCE', name: 'Insurance', capitalise: true, taxRole: null, isDuty: false, defaultBasis: 'VALUE' },
-  { code: 'CLEARING', name: 'Clearing and handling', capitalise: true, taxRole: null, isDuty: false, defaultBasis: 'VALUE' },
-  { code: 'IMPORT_ST', name: 'Sales tax at import', capitalise: false, taxRole: 'INPUT_TAX', isDuty: false, defaultBasis: null },
-  { code: 'IMPORT_IT', name: 'Income tax collected at import', capitalise: false, taxRole: 'ADVANCE_TAX', isDuty: false, defaultBasis: null },
+  { code: 'CD', name: 'Customs duty', capitalise: true, taxRole: null, isDuty: true, defaultBasis: 'VALUE', pkrOnly: true },
+  { code: 'ACD', name: 'Additional customs duty', capitalise: true, taxRole: null, isDuty: true, defaultBasis: 'VALUE', pkrOnly: true },
+  { code: 'RD', name: 'Regulatory duty', capitalise: true, taxRole: null, isDuty: true, defaultBasis: 'VALUE', pkrOnly: true },
+  { code: 'FREIGHT', name: 'Freight', capitalise: true, taxRole: null, isDuty: false, defaultBasis: 'VALUE', pkrOnly: false },
+  { code: 'INSURANCE', name: 'Insurance', capitalise: true, taxRole: null, isDuty: false, defaultBasis: 'VALUE', pkrOnly: false },
+  { code: 'CLEARING', name: 'Clearing and handling', capitalise: true, taxRole: null, isDuty: false, defaultBasis: 'VALUE', pkrOnly: false },
+  { code: 'IMPORT_ST', name: 'Sales tax at import', capitalise: false, taxRole: 'INPUT_TAX', isDuty: false, defaultBasis: null, pkrOnly: true },
+  { code: 'IMPORT_IT', name: 'Income tax collected at import', capitalise: false, taxRole: 'ADVANCE_TAX', isDuty: false, defaultBasis: null, pkrOnly: true },
 ];
 
 export async function seedLandedCostTypes(tx: Tx): Promise<string[]> {

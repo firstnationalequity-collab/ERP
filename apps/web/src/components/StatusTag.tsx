@@ -16,6 +16,8 @@ const COLOURS: Record<string, string> = {
   OPEN: 'green',
   CLOSED: 'default',
   PENDING: 'gold',
+  PENDING_APPROVAL: 'gold',
+  MATCH_EXCEPTION: 'red', // vendor invoice outside the 3-way match tolerances (owner Q5)
   WAITING: 'default',
   SKIPPED: 'default',
   CANCELLED: 'default',

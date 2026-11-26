@@ -144,6 +144,9 @@ export const vendors = master.table('vendors', {
   bankName: text('bank_name'),
   bankAccount: text('bank_account'),
   paymentTermsDays: integer('payment_terms_days').notNull().default(0),
+  whtTaxCodeId: bigintString('wht_tax_code_id'), // 0031
+  isFiler: boolean('is_filer'),
+  filerCheckedOn: date('filer_checked_on', { mode: 'string' }),
   status: text('status').$type<PartyStatus>().notNull(),
   ...auditColumns(),
 });

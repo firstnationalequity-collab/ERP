@@ -61,6 +61,9 @@ export const JournalPostingKeys: Readonly<Partial<Record<PostingEvent, Permissio
   // M3 task 4 (owner Q21; Q2 2026-11-25): landed costs are entered and later bills posted by the Purchase Officer.
   LANDED_COST: 'purch.landed_cost.manage',
   IMPORT_TAX: 'purch.landed_cost.manage',
+  // M3 task 5 (0031): the Accountant posts vendor invoices; the AP Officer posts approved payments.
+  VENDOR_INVOICE: 'fin.invoice.manage',
+  VENDOR_PAYMENT: 'fin.payment.manage',
 };
 
 /**
@@ -71,6 +74,8 @@ export const JournalPostingKeys: Readonly<Partial<Record<PostingEvent, Permissio
 export const JournalAlternativeKeys: Readonly<Partial<Record<PostingEvent, readonly PermissionKey[]>>> = {
   LANDED_COST: ['purch.grn.post', 'purch.landed_cost.correct'],
   IMPORT_TAX: ['purch.grn.post', 'purch.landed_cost.correct'],
+  // Owner Q5: the Finance Manager's release of an invoice in MATCH_EXCEPTION posts it.
+  VENDOR_INVOICE: ['fin.invoice.match_release'],
 };
 
 /**
@@ -243,6 +248,32 @@ export async function journalsOfSource(
   sourceId: string,
 ): Promise<{ id: string; docNo: string; status: PostingStatus; event: PostingEvent | null }[]> {
   return (await repo.entriesOfSource(q, companyId, sourceType, sourceId)).map((e) => ({ id: e.id, docNo: e.docNo, status: e.status, event: e.event }));
+}
+
+export interface SubledgerLine {
+  entryId: string;
+  docNo: string;
+  entryDate: string;
+  sourceType: string;
+  sourceId: string | null;
+  narration: string;
+  debit: string;
+  credit: string;
+}
+
+/**
+ * Read-only sub-ledger: the POSTED / REVERSED journal lines one vendor has on the accounts a role maps to (every
+ * posting rule of the role), oldest first; lines before `from` are summed into the opening (debit − credit).
+ * The vendor ledger (M3 task 5) reads the GL's payables, never a copy.
+ */
+export async function vendorSubledger(
+  q: Queryable,
+  companyId: string,
+  role: AccountRole,
+  vendorId: string,
+  period: { from?: string; to?: string },
+): Promise<{ opening: string; lines: SubledgerLine[] }> {
+  return repo.vendorSubledger(q, companyId, role, vendorId, period);
 }
 
 /** Posts a system journal for a business event. The actor must hold the event's key (JournalPostingKeys). */

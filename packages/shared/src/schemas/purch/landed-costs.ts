@@ -33,6 +33,8 @@ export const CreateLandedCostTypeRequest = z
     taxRole: z.enum(LandedCostTaxRole).nullable().optional(),
     isDuty: z.boolean().default(false),
     defaultBasis: z.enum(LandedCostBasis).nullable().optional(),
+    /** Owner 2026-11-26: customs-assessed types (duties, import taxes) are entered in PKR only. */
+    pkrOnly: z.boolean().default(false),
   })
   .strict()
   .superRefine((v, ctx) => {
@@ -48,7 +50,9 @@ export const CreateLandedCostTypeRequest = z
 export type CreateLandedCostTypeRequest = z.infer<typeof CreateLandedCostTypeRequest>;
 
 /** Name and default basis; the capitalise flag, tax role and duty flag are fixed at creation. */
-export const UpdateLandedCostTypeRequest = z.object({ name: name.optional(), defaultBasis: z.enum(LandedCostBasis).optional() }).strict();
+export const UpdateLandedCostTypeRequest = z
+  .object({ name: name.optional(), defaultBasis: z.enum(LandedCostBasis).optional(), pkrOnly: z.boolean().optional() })
+  .strict();
 export type UpdateLandedCostTypeRequest = z.infer<typeof UpdateLandedCostTypeRequest>;
 
 export interface LandedCostTypeDto {
@@ -59,6 +63,7 @@ export interface LandedCostTypeDto {
   taxRole: LandedCostTaxRole | null;
   isDuty: boolean;
   defaultBasis: LandedCostBasis | null;
+  pkrOnly: boolean;
   isActive: boolean;
 }
 
