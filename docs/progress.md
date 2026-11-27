@@ -1,12 +1,12 @@
 # Progress
 
-Current milestone: **M3 — Procurement** (M2 done, tag `m2`)
+Current milestone: **M4 — QC** (not started; M3 done, tag `m3`)
 
 | Milestone | Status | Started | Finished | Notes |
 | --- | --- | --- | --- | --- |
 | M1 Foundation | Done | 17-11-2026 | 18-11-2026 | All 12 tasks, rules-review fixes A–F, first-QA-Manager bootstrap; CI run #13 green on `04ef009`; tag `m1` |
 | M2 Masters & engines | Done | 18-11-2026 | 19-11-2026 | All 10 tasks; rules-review fixes (disposal witness 0020, deactivation guards 0021); owner answers 19-11 recorded; CI green; tag `m2` |
-| M3 Procurement | Tasks done; awaiting owner OK to tag | 25-11-2026 | | Tasks 1–6 done (0022–0033); CI run 45947146671 green on `24339ac`; not tagged |
+| M3 Procurement | Done | 25-11-2026 | 27-11-2026 | Tasks 1–6 + owner answers (0022–0033); check-rules fixes; CI run 45948188562 green on `900b052`; tag `m3` |
 | M4 QC | Not started | | | |
 | M5 Sales | Not started | | | |
 | M6 Production | Not started | | | |
@@ -16,9 +16,9 @@ Current milestone: **M3 — Procurement** (M2 done, tag `m2`)
 | M10 Hardening & staging | Not started | | | |
 | M11 UAT & go-live | Not started | | | |
 
-## Handoff (27-11-2026, M3 close-out done, CI green, waiting for the owner's go to tag `m3`)
+## Handoff (27-11-2026, M3 done and tagged `m3`; M4 not started)
 
-**State:** We work on `main`, one commit per task, pushed. API tests need the Docker DB (`docker compose up -d`). 682 tests green locally (638 API, 28 web, 16 shared); `pnpm typecheck` clean. CI run 45947146671 green on `24339ac` (task 6; it covers 5c, whose own run was superseded). Do not tag `m3` until the owner says so.
+**State:** We work on `main`, one commit per task, pushed. API tests need the Docker DB (`docker compose up -d`). 682 tests green (638 API, 28 web, 16 shared); `pnpm typecheck` clean. CI run 45948188562 green on `900b052` (actions on node24, no deprecation warning); tag `m3` (annotated) on that commit, pushed.
 
 **M3 tasks** (details: `docs/progress-log.md`; decisions.md rows 2026-11-25 to 2026-11-27):
 - [x] 1–2d. M2 carry-in (0022); PR → PO, approval matrix, AVL block, rate table (0023); unit rates 6 dp (0024); owner answers (0025, 0026).
