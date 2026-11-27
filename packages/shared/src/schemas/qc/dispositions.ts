@@ -2,7 +2,7 @@
 // apps/api/src/db/migrations/0037_qc_disposition.sql. The QC Manager (qc.lot.change_status) approves or rejects a
 // material lot with an e-signature on the lot; an FG lot is QA's decision. Values travel as decimal strings (rule 10).
 import { z } from 'zod';
-import type { LotStatus, QcResultType, SampleRequestStatus } from '../../enums';
+import { QcRejectCategory, type LotStatus, type QcResultType, type SampleRequestStatus } from '../../enums';
 import { ESignRequest } from '../core/esign';
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date: YYYY-MM-DD');
@@ -11,8 +11,12 @@ export const DispositionListQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(25),
   search: z.string().trim().max(100).optional(),
-  /** UNDER_TEST: sampled lots waiting for approval / rejection; HOLD: material lots QA put on hold (QC may reject). */
-  status: z.enum(['UNDER_TEST', 'HOLD']).optional(),
+  /**
+   * UNDER_TEST: sampled lots waiting for approval / rejection; HOLD: material lots QA put on hold (QC may reject);
+   * QUARANTINE: lots not sampled yet (QC may reject one without a test, e.g. a damaged container; 0038). The default
+   * list is UNDER_TEST and HOLD.
+   */
+  status: z.enum(['QUARANTINE', 'UNDER_TEST', 'HOLD']).optional(),
 });
 export type DispositionListQuery = z.infer<typeof DispositionListQuery>;
 
@@ -23,8 +27,19 @@ export type DispositionListQuery = z.infer<typeof DispositionListQuery>;
 export const ApproveLotRequest = z.object({ retestDate: isoDate.nullable().optional(), signature: ESignRequest }).strict();
 export type ApproveLotRequest = z.infer<typeof ApproveLotRequest>;
 
-/** UNDER_TEST / HOLD → REJECTED. The e-signature meaning is REJECTED; its reason is the rejection reason. */
-export const RejectLotRequest = z.object({ signature: ESignRequest }).strict();
+/**
+ * QUARANTINE / UNDER_TEST / HOLD → REJECTED. The e-signature meaning is REJECTED; its reason is the rejection reason.
+ * `category` + `description`: required when no failed latest result supports the rejection (owner 2026-11-27; 0038),
+ * optional otherwise (given together).
+ */
+export const RejectLotRequest = z
+  .object({
+    category: z.enum(QcRejectCategory).optional(),
+    description: z.string().trim().min(10, 'Describe what was found (at least 10 characters)').max(2000).optional(),
+    signature: ESignRequest,
+  })
+  .strict()
+  .refine((v) => (v.category === undefined) === (v.description === undefined), { message: 'Give the reason category and the description together', path: ['description'] });
 export type RejectLotRequest = z.infer<typeof RejectLotRequest>;
 
 /** One test of the pinned spec with its latest result (a re-test is a newer row, task 4). */
@@ -50,6 +65,8 @@ export interface DispositionDto {
   waterPct: string | null;
   retestDate: string | null;
   reason: string;
+  rejectCategory: QcRejectCategory | null;
+  rejectDescription: string | null;
   decidedBy: string;
   decidedByName: string;
   decidedAt: string;
@@ -68,7 +85,7 @@ export interface DispositionLotDto {
   retestDate: string | null;
   assayPct: string | null;
   waterPct: string | null;
-  /** The SAMPLED request the decision closes (UNDER_TEST lots). */
+  /** The request the decision closes: SAMPLED (UNDER_TEST lots) or OPEN (QUARANTINE lots, cancelled by a rejection). */
   sampleRequestId: string | null;
   sampleStatus: SampleRequestStatus | null;
   specId: string | null;
@@ -81,6 +98,8 @@ export interface DispositionLotDto {
   canApprove: boolean;
   canReject: boolean;
   blockers: string[];
+  /** No failed latest result supports a rejection: rejecting needs a reason category and a description. */
+  rejectNeedsCategory: boolean;
   /** The lot's retest date is reached: approving it needs the next retest date. */
   retestDateRequired: boolean;
   /** Detail only. */

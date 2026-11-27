@@ -1,6 +1,7 @@
-// M4 task 3 (0037): QC lot disposition. The QC Manager approves (all tests passed and reviewed; assay / water written
-// onto the lot; sample request CLOSED) or rejects (a failed result; or a material lot on HOLD) with an e-signature on
-// the lot. FG lots are QA's. Happy paths and every refusal through the HTTP endpoints, plus the database guards.
+// M4 task 3 (0037, 0038): QC lot disposition. The QC Manager approves (all tests passed and reviewed; assay / water
+// written onto the lot; sample request CLOSED) or rejects (a failed result; or, owner 2026-11-27, without one: before
+// sampling, on HOLD or all passed, with a reason category and a description) with an e-signature on the lot. FG lots
+// are QA's. Happy paths and every refusal through the HTTP endpoints, plus the database guards.
 import pg from 'pg';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -34,7 +35,9 @@ const take = (who: string, id: string, body: object) =>
   request(app).post(`/api/v1/qc/samples/${id}/take`).set('Authorization', `Bearer ${tokens[who]}`).set('Idempotency-Key', `qc-disp-${Date.now()}-${++idem}`).send(body);
 const sig = (meaning: string, reason = 'Results meet the specification', password = TEST_PASSWORD) => ({ signature: { password, meaning, reason } });
 const approve = (who: string, lotId: string, extra: object = {}, meaning = 'APPROVED') => call(who, 'post', `/qc/lots/${lotId}/approve`, { ...sig(meaning), ...extra });
-const reject = (who: string, lotId: string, meaning = 'REJECTED') => call(who, 'post', `/qc/lots/${lotId}/reject`, sig(meaning, 'Assay out of limits'));
+const reject = (who: string, lotId: string, meaning = 'REJECTED', extra: object = {}) =>
+  call(who, 'post', `/qc/lots/${lotId}/reject`, { ...sig(meaning, 'Assay out of limits'), ...extra });
+const damaged = { category: 'DAMAGED_CONTAINER', description: 'Two drums dented, inner liner torn' };
 
 async function inTx<T>(userId: string, work: () => Promise<T>): Promise<T> {
   await client.query('BEGIN');
@@ -226,7 +229,7 @@ describe('approval (UNDER_TEST → APPROVED)', () => {
 
     const queue = await call('qcm', 'get', '/qc/lots?status=UNDER_TEST&search=ibu');
     const row = queue.body.items.find((x: { lotId: string }) => x.lotId === m.lotId);
-    expect(row).toMatchObject({ lotStatus: 'UNDER_TEST', sampleStatus: 'SAMPLED', missingCount: 0, unreviewedCount: 0, failedCount: 0, canApprove: true, canReject: false });
+    expect(row).toMatchObject({ lotStatus: 'UNDER_TEST', sampleStatus: 'SAMPLED', missingCount: 0, unreviewedCount: 0, failedCount: 0, canApprove: true, canReject: true, rejectNeedsCategory: true });
     const detail = await call('qcm', 'get', `/qc/lots/${m.lotId}`);
     expect(detail.body).toMatchObject({ approvalAssayPct: '99.1235', approvalWaterPct: '0.2000' });
     expect(detail.body.tests.map((t: { name: string; limit: string; passed: boolean }) => [t.name, t.limit, t.passed])).toEqual([
@@ -259,7 +262,7 @@ describe('approval (UNDER_TEST → APPROVED)', () => {
     const incomplete = await approve('qcm', m.lotId);
     expect([incomplete.status, incomplete.body.error.code, incomplete.body.error.details.tests]).toEqual([422, 'QC_RESULTS_INCOMPLETE', ['Identification (IR)']]);
     const queue = (await call('qcm', 'get', `/qc/lots/${m.lotId}`)).body;
-    expect(queue).toMatchObject({ canApprove: false, canReject: false, missingCount: 1 });
+    expect(queue).toMatchObject({ canApprove: false, canReject: true, rejectNeedsCategory: true, missingCount: 1 });
     expect(queue.blockers.join(' ')).toContain('Identification (IR)');
 
     const f = await testedLot({ assay: '97.5', water: '0.1', complies: true });
@@ -323,9 +326,9 @@ describe('rejection (UNDER_TEST / material HOLD → REJECTED)', () => {
 
     const pass = await testedLot({ assay: '100', water: '0.1', complies: true });
     const refused = await reject('qcm', pass.lotId);
-    expect([refused.status, refused.body.error.code]).toEqual([422, 'QC_RESULTS_PASSED']);
+    expect([refused.status, refused.body.error.code]).toEqual([422, 'QC_REJECT_CATEGORY_REQUIRED']);
     expect((await reject('qcm', pass.lotId, 'APPROVED')).body.error.code).toBe('VALIDATION_FAILED');
-    expect((await reject('analyst', pass.lotId)).status).toBe(403);
+    expect((await reject('analyst', pass.lotId, 'REJECTED', damaged)).status).toBe(403);
   });
 
   it('a material lot QA put on HOLD: QC may reject it but not approve it (only QA lifts a hold)', async () => {
@@ -333,14 +336,73 @@ describe('rejection (UNDER_TEST / material HOLD → REJECTED)', () => {
     expect((await approve('qcm', m.lotId)).status).toBe(200);
     await withTransaction({ userId: users.qa!, companyId: '1' }, (tx) => transition(tx, QaHold, { entityId: m.lotId, to: 'HOLD', actor: actors.qa!, reason: 'Customer complaint on a sister lot' }));
     const queue = await call('qcm', 'get', '/qc/lots?status=HOLD');
-    expect(queue.body.items.find((x: { lotId: string }) => x.lotId === m.lotId)).toMatchObject({ lotStatus: 'HOLD', canApprove: false, canReject: true });
+    expect(queue.body.items.find((x: { lotId: string }) => x.lotId === m.lotId)).toMatchObject({ lotStatus: 'HOLD', canApprove: false, canReject: true, rejectNeedsCategory: true });
     const app2 = await approve('qcm', m.lotId);
     expect([app2.status, app2.body.error.code]).toEqual([409, 'INVALID_TRANSITION']);
-    const res = await reject('qcm', m.lotId);
+    expect((await reject('qcm', m.lotId)).body.error.code).toBe('QC_REJECT_CATEGORY_REQUIRED');
+    const res = await reject('qcm', m.lotId, 'REJECTED', { category: 'VENDOR_ISSUE', description: 'Vendor recalled this batch of the API' });
     expect([res.status, res.body.error]).toEqual([200, undefined]);
     expect(res.body.history.map((d: { fromStatus: string; decision: string; sampleRequestId: string | null }) => [d.fromStatus, d.decision, d.sampleRequestId])).toEqual([
       ['UNDER_TEST', 'APPROVED', m.requestId], ['HOLD', 'REJECTED', null],
     ]);
+  });
+});
+
+describe('rejection without a failed test (owner 2026-11-27; 0038)', () => {
+  it('a lot whose results all passed is rejected with a reason category and a description; the analyst still does not decide', async () => {
+    const m = await testedLot({ assay: '100', water: '0.1', complies: true });
+    expect((await call('qcm', 'get', `/qc/lots/${m.lotId}`)).body).toMatchObject({ canApprove: true, canReject: true, rejectNeedsCategory: true });
+    const noDesc = await reject('qcm', m.lotId, 'REJECTED', { category: 'CONTAMINATION' });
+    expect([noDesc.status, noDesc.body.error.code]).toEqual([400, 'VALIDATION_FAILED']);
+    const shortDesc = await reject('qcm', m.lotId, 'REJECTED', { category: 'CONTAMINATION', description: 'dirty' });
+    expect(shortDesc.status).toBe(400);
+    const badCat = await reject('qcm', m.lotId, 'REJECTED', { category: 'WEATHER', description: 'It rained on the drums' });
+    expect(badCat.status).toBe(400);
+    const res = await reject('qcm', m.lotId, 'REJECTED', { category: 'CONTAMINATION', description: 'Black specks seen in drum 3 at sampling' });
+    expect([res.status, res.body.error]).toEqual([200, undefined]);
+    expect(res.body).toMatchObject({ lotStatus: 'REJECTED', sampleStatus: 'CLOSED' });
+    expect(res.body.history).toMatchObject([
+      { fromStatus: 'UNDER_TEST', decision: 'REJECTED', rejectCategory: 'CONTAMINATION', rejectDescription: 'Black specks seen in drum 3 at sampling' },
+    ]);
+    expect(await tryIssue(m.lotId)).toBe('LOT_NOT_APPROVED');
+
+    // Same segregation: the user who entered results does not reject; unreviewed results are reviewed first.
+    const own = await sampledLot({ itemId: ids.api! });
+    await enter(own, { assay: '100' }, 'both');
+    expect((await reject('qcm', own.lotId, 'REJECTED', damaged)).body.error.code).toBe('QC_RESULTS_NOT_REVIEWED');
+    await review(own, 'qcm');
+    const sod = await reject('both', own.lotId, 'REJECTED', damaged);
+    expect([sod.status, sod.body.error.code]).toEqual([403, 'SEGREGATION_OF_DUTIES']);
+    expect((await reject('qcm2', own.lotId, 'REJECTED', damaged)).status).toBe(200);
+
+    // A failed result supports the rejection: the category is optional.
+    const f = await testedLot({ assay: '96', water: '0.1', complies: true });
+    expect((await call('qcm', 'get', `/qc/lots/${f.lotId}`)).body.rejectNeedsCategory).toBe(false);
+    const both = await reject('qcm', f.lotId, 'REJECTED', { category: 'COA_MISMATCH', description: 'Assay differs from the vendor CoA by 3 %' });
+    expect([both.status, both.body.history[0].rejectCategory]).toEqual([200, 'COA_MISMATCH']);
+  });
+
+  it('a quarantined lot (not sampled) is rejected before sampling: its OPEN request is CANCELLED; nobody else may do it', async () => {
+    const m = await lotWithRequest({ itemId: ids.api! });
+    const queue = await call('qcm', 'get', '/qc/lots?status=QUARANTINE');
+    expect(queue.body.items.find((x: { lotId: string }) => x.lotId === m.lotId)).toMatchObject({ lotStatus: 'QUARANTINE', sampleStatus: 'OPEN', canApprove: false, canReject: true, rejectNeedsCategory: true });
+    expect((await approve('qcm', m.lotId)).body.error.code).toBe('INVALID_TRANSITION');
+    expect((await reject('qcm', m.lotId)).body.error.code).toBe('QC_REJECT_CATEGORY_REQUIRED');
+    for (const who of ['analyst', 'qa', 'wm', 'ceo']) {
+      const res = await reject(who, m.lotId, 'REJECTED', damaged);
+      expect([who, res.status, res.body.error.code]).toEqual([who, 403, 'FORBIDDEN']);
+    }
+    const res = await reject('qcm', m.lotId, 'REJECTED', { category: 'SEAL_BROKEN', description: 'Tamper seal broken on all containers' });
+    expect([res.status, res.body.error]).toEqual([200, undefined]);
+    expect(res.body).toMatchObject({ lotStatus: 'REJECTED', sampleStatus: 'CANCELLED' });
+    expect(res.body.history).toMatchObject([{ fromStatus: 'QUARANTINE', decision: 'REJECTED', rejectCategory: 'SEAL_BROKEN', sampleRequestId: m.requestId }]);
+    expect(await requestStatus(m.requestId)).toBe('CANCELLED');
+    // The request cannot be sampled any more.
+    expect((await take('analyst', m.requestId, { locationId: ids.loc1, testQty: '1' })).body.error.code).toBe('INVALID_TRANSITION');
+
+    // FG lots in quarantine are QA's too.
+    const fg = await lotWithRequest({ itemId: ids.fg!, fg: true });
+    expect((await reject('qcm', fg.lotId, 'REJECTED', damaged)).body.error.code).toBe('FG_LOT_QA_DECIDES');
   });
 });
 
@@ -356,14 +418,14 @@ describe('finished goods are QA\'s decision (build-plan M4)', () => {
     await enter(fail, { assay: '90' });
     await review(fail);
     expect((await lotRow(fail.lotId)).status).toBe('HOLD');
-    expect((await reject('qcm', fail.lotId)).body.error.code).toBe('FG_LOT_QA_DECIDES');
+    expect((await reject('qcm', fail.lotId, 'REJECTED', damaged)).body.error.code).toBe('FG_LOT_QA_DECIDES');
     const queue = await call('qcm', 'get', '/qc/lots?pageSize=200');
     expect(queue.body.items.map((x: { lotId: string }) => x.lotId)).not.toContain(pass.lotId);
     expect(queue.body.items.map((x: { lotId: string }) => x.lotId)).not.toContain(fail.lotId);
   });
 });
 
-describe('database guards (0037)', () => {
+describe('database guards (0037, 0038)', () => {
   it('no lot decision, assay, water or retest change without a disposition; dispositions are insert-only; a request closes only with one', async () => {
     const m = await testedLot({ assay: '100', water: '0.1', complies: true });
     // A raw approval with a status_history row but no disposition.
@@ -387,6 +449,33 @@ describe('database guards (0037)', () => {
       `INSERT INTO qc.dispositions (lot_id, sample_request_id, from_status, decision, reason, esign_id)
        VALUES ($1, $2, 'UNDER_TEST', 'REJECTED', 'Looks bad', (SELECT max(id) FROM core.e_signatures))`, [m.lotId, m.requestId],
     ))).rejects.toThrow(/FORBIDDEN/);
+
+    // 0038: a rejection with no failed result needs the category (the signature here is valid, so only the category fails).
+    await expect(inTx(users.qcm!, async () => {
+      const esign = await one(
+        `INSERT INTO core.e_signatures (user_id, signer_username, signer_name, meaning, reason, record_table, record_id)
+         VALUES ($1, 'dsp_qcm', 'QC Manager', 'REJECTED', 'Bad drums', 'inv.lots', $2) RETURNING id`, [users.qcm, m.lotId],
+      );
+      await client.query(
+        `INSERT INTO qc.dispositions (lot_id, sample_request_id, from_status, decision, reason, esign_id) VALUES ($1, $2, 'UNDER_TEST', 'REJECTED', 'Bad drums', $3)`,
+        [m.lotId, m.requestId, esign],
+      );
+    })).rejects.toThrow(/QC_REJECT_CATEGORY_REQUIRED/);
+    // A category on an approval is refused by the table.
+    await expect(inTx('1', () => client.query(
+      `INSERT INTO qc.dispositions (lot_id, sample_request_id, from_status, decision, reason, reject_category, esign_id)
+       VALUES ($1, $2, 'UNDER_TEST', 'APPROVED', 'x x x', 'OTHER', 1)`, [m.lotId, m.requestId],
+    ))).rejects.toThrow();
+    // QUARANTINE → REJECTED and an OPEN request's cancellation need the disposition.
+    const q = await lotWithRequest({ itemId: ids.api! });
+    await expect(inTx(users.qcm!, async () => {
+      await history('inv.lots', q.lotId, 'QUARANTINE', 'REJECTED', users.qcm!);
+      await client.query(`UPDATE inv.lots SET status = 'REJECTED' WHERE id = $1`, [q.lotId]);
+    })).rejects.toThrow(/only with a QC Manager disposition/);
+    await expect(inTx(users.qcm!, async () => {
+      await history('qc.sample_requests', q.requestId, 'OPEN', 'CANCELLED', users.qcm!);
+      await client.query(`UPDATE qc.sample_requests SET status = 'CANCELLED' WHERE id = $1`, [q.requestId]);
+    })).rejects.toThrow(/reversing its GRN or rejecting its lot/);
 
     expect((await approve('qcm', m.lotId)).status).toBe(200);
     await expect(inTx('1', () => client.query(`UPDATE qc.dispositions SET reason = 'changed' WHERE lot_id = $1`, [m.lotId]))).rejects.toThrow(/APPEND_ONLY/);

@@ -5,8 +5,10 @@
 //                  latest result of every test passed, and the lot is not past expiry. Writes the latest assay and
 //                  water results onto the lot (4 decimals) and, when given, the next retest date (required when the
 //                  retest date is reached). Closes the sample request (SAMPLED → CLOSED).
-//  - rejectLot():  UNDER_TEST → REJECTED when every result is reviewed and the latest result of a test failed (closes
-//                  the request); HOLD → REJECTED for a material lot QA put on hold. Reason = the signature's reason.
+//  - rejectLot():  UNDER_TEST → REJECTED when every result is reviewed (closes the request); QUARANTINE → REJECTED
+//                  before sampling (cancels the OPEN request); HOLD → REJECTED for a material lot QA put on hold.
+//                  Reason = the signature's reason. A rejection no failed latest result supports (QUARANTINE, HOLD, or
+//                  UNDER_TEST with no failure) needs a reason category and a description (owner 2026-11-27; 0038).
 // Never an FG lot (FG_LOT_QA_DECIDES): QC does not approve or reject finished goods; QA decides (build-plan M4). The
 // decider entered none of the sample's results (SEGREGATION_OF_DUTIES). The database (0037) re-checks every rule.
 import { Decimal } from 'decimal.js';
@@ -80,11 +82,12 @@ function limitText(t: specsRepo.SpecTestRow): string {
 async function assessLots(q: Queryable, companyId: string, lots: Lot[], lock = false): Promise<Map<string, Assessment>> {
   const items = await qcItems(q, companyId, lots.map((l) => l.itemId));
   const requests = await samplesRepo.byLots(q, companyId, lots.map((l) => l.id), lock);
-  // The SAMPLED request a decision would close, else the last closed one (for the record).
+  // The SAMPLED (or, before sampling, OPEN) request a decision would close, else the last closed / cancelled one.
+  const rank: Record<string, number> = { SAMPLED: 4, OPEN: 3, CLOSED: 2, CANCELLED: 1 };
   const requestOf = new Map<string, samplesRepo.SampleRequestRow>();
   for (const r of requests) {
     const cur = requestOf.get(r.lotId);
-    if (r.status === 'SAMPLED' || (r.status === 'CLOSED' && cur?.status !== 'SAMPLED')) requestOf.set(r.lotId, r);
+    if (!cur || (rank[r.status] ?? 0) >= (rank[cur.status] ?? 0)) requestOf.set(r.lotId, r);
   }
   const chosen = [...requestOf.values()];
   const results = await samplesRepo.resultsOf(q, chosen.map((r) => r.id));
@@ -143,22 +146,35 @@ async function assessLots(q: Queryable, companyId: string, lots: Lot[], lock = f
 
 type Decision = 'APPROVED' | 'REJECTED';
 
+/** No failed latest result of the sample under decision supports a rejection (HOLD / QUARANTINE never have one). */
+const needsCategory = (a: Assessment) => a.lot.status !== 'UNDER_TEST' || a.failed.length === 0;
+
+interface DecisionInput {
+  retestDate: string | null;
+  /** A reason category (with its description) was given. */
+  categorised: boolean;
+}
+
 const reached = (date: string | null, today: string) => date !== null && date <= today;
 
 /**
- * Every refusal of a decision, in the order the user should fix them. Throws the first one. `retestDate` 'PREVIEW'
- * (queue screens) skips the retest-date checks: the approval form asks for the next retest date.
+ * Every refusal of a decision, in the order the user should fix them. Throws the first one. 'PREVIEW' (queue screens)
+ * skips the retest-date and category checks: the forms ask for them.
  */
-function assertDecision(a: Assessment, decision: Decision, actorId: string, retestDate: string | null | 'PREVIEW', today: string): void {
+function assertDecision(a: Assessment, decision: Decision, actorId: string, input: DecisionInput | 'PREVIEW', today: string): void {
+  const retestDate = input === 'PREVIEW' ? 'PREVIEW' : input.retestDate;
   const { lot } = a;
   const details = { lotId: lot.id, lotNo: lot.lotNo, status: lot.status };
   if (a.isFg) throw new AppError('FG_LOT_QA_DECIDES', `Lot ${lot.lotNo} is a finished-goods lot: QA decides it, not QC`, details);
   if (decision === 'APPROVED' && lot.status === 'HOLD') {
     throw new AppError('INVALID_TRANSITION', `Lot ${lot.lotNo} is on HOLD: only QA lifts a hold (QC may reject the lot)`, details);
   }
-  const allowed = decision === 'APPROVED' ? ['UNDER_TEST'] : ['UNDER_TEST', 'HOLD'];
+  const allowed = decision === 'APPROVED' ? ['UNDER_TEST'] : ['QUARANTINE', 'UNDER_TEST', 'HOLD'];
   if (!allowed.includes(lot.status)) {
     throw new AppError('INVALID_TRANSITION', `Lot ${lot.lotNo} is ${lot.status}; QC ${decision === 'APPROVED' ? 'approves' : 'rejects'} a lot that is ${allowed.join(' or ')}`, details);
+  }
+  if (lot.status === 'QUARANTINE' && a.request?.status !== 'OPEN') {
+    throw new AppError('INVALID_TRANSITION', `Lot ${lot.lotNo} has no open sample request`, details);
   }
   if (lot.status === 'UNDER_TEST') {
     if (a.request?.status !== 'SAMPLED') throw new AppError('INVALID_TRANSITION', `Lot ${lot.lotNo} has no sample waiting for a decision`, details);
@@ -166,11 +182,13 @@ function assertDecision(a: Assessment, decision: Decision, actorId: string, rete
       throw new AppError('SEGREGATION_OF_DUTIES', 'You entered results of this sample; another QC Manager decides the lot', { ...details, rule: 'analyst ≠ decider' });
     }
     if (a.unreviewed > 0) throw new AppError('QC_RESULTS_NOT_REVIEWED', `${a.unreviewed} result(s) of this sample are not reviewed yet`, details);
-    if (decision === 'REJECTED' && a.failed.length === 0) {
-      throw new AppError('QC_RESULTS_PASSED', `No latest result of lot ${lot.lotNo} failed; a lot is rejected on a failed test`, details);
-    }
   }
-  if (decision === 'REJECTED') return;
+  if (decision === 'REJECTED') {
+    if (input !== 'PREVIEW' && !input.categorised && needsCategory(a)) {
+      throw new AppError('QC_REJECT_CATEGORY_REQUIRED', `No failed result supports rejecting lot ${lot.lotNo}: give a reason category and a description`, { ...details, field: 'category' });
+    }
+    return;
+  }
   if (a.missing.length > 0) throw new AppError('QC_RESULTS_INCOMPLETE', `No result yet for: ${a.missing.join(', ')}`, { ...details, tests: a.missing });
   if (a.failed.length > 0) throw new AppError('QC_TEST_FAILED', `Failed: ${a.failed.join(', ')}; the lot is not approved`, { ...details, tests: a.failed });
   if (reached(lot.expiryDate, today)) throw new AppError('LOT_EXPIRED', `Lot ${lot.lotNo} expired on ${lot.expiryDate}; it is not approved`, details);
@@ -229,11 +247,12 @@ function lotDto(a: Assessment, actorId: string, today: string): DispositionLotDt
     unreviewedCount: a.unreviewed,
     failedCount: a.failed.length,
     ...blockersOf(a, actorId, today),
+    rejectNeedsCategory: needsCategory(a),
     retestDateRequired: lot.status === 'UNDER_TEST' && reached(lot.retestDate, today),
   };
 }
 
-/** The decision queue: material lots UNDER_TEST (sampled) and material lots on HOLD. FG lots are QA's. */
+/** The decision queue: material lots UNDER_TEST (sampled) and on HOLD; QUARANTINE (not sampled) on request. FG lots are QA's. */
 export async function listDispositionLots(auth: AuthContext, query: DispositionListQuery): Promise<Page<DispositionLotDto>> {
   let ids = await lotIdsByStatus(db, auth.companyId, query.status ? [query.status] : ['UNDER_TEST', 'HOLD'], 2000);
   if (query.search) {
@@ -265,6 +284,8 @@ export async function getDispositionLot(auth: AuthContext, lotId: string): Promi
     waterPct: r.waterPct,
     retestDate: r.retestDate,
     reason: r.reason,
+    rejectCategory: r.rejectCategory ?? null,
+    rejectDescription: r.rejectDescription ?? null,
     decidedBy: r.decidedBy,
     decidedByName: names.get(r.decidedBy) ?? r.decidedBy,
     decidedAt: r.decidedAt.toISOString(),
@@ -280,9 +301,10 @@ async function decide(
   lotId: string,
   decision: Decision,
   signature: ApproveLotRequest['signature'],
-  retestDate: string | null,
+  input: { retestDate: string | null; category: RejectLotRequest['category']; description: string | undefined },
   meta: RequestMeta,
 ): Promise<DispositionLotDto> {
+  const decisionInput: DecisionInput = { retestDate: input.retestDate, categorised: input.category !== undefined };
   if (signature.meaning !== decision) throw new AppError('VALIDATION_FAILED', `This decision is signed with the meaning ${decision}`);
   if (!auth.permissions.has(DISPOSITION_KEY)) {
     throw new AppError('FORBIDDEN', 'You do not have permission to approve or reject lots', { permission: DISPOSITION_KEY });
@@ -290,7 +312,7 @@ async function decide(
   const check = async (tx: Tx) => {
     const lot = await lockLotForDecision(tx, auth.companyId, lotId);
     const a = (await assessLots(tx, auth.companyId, [lot], true)).get(lot.id)!;
-    assertDecision(a, decision, auth.userId, retestDate, companyToday());
+    assertDecision(a, decision, auth.userId, decisionInput, companyToday());
     return a;
   };
   // Refuse before asking for the password, then again under lock.
@@ -299,28 +321,34 @@ async function decide(
   await withTransaction(txContext(auth, `QC ${decision === 'APPROVED' ? 'approval' : 'rejection'} of lot ${lotId}: ${signature.reason}`), async (tx) => {
     const a = await check(tx);
     const sig = await recordSignature(tx, proof, { table: LOT_TABLE, id: a.lot.id }, [decision]);
-    const fromTest = a.lot.status === 'UNDER_TEST';
-    const values = decision === 'APPROVED' ? { assayPct: a.assay, waterPct: a.water, retestDate } : { assayPct: null, waterPct: null, retestDate: null };
+    const from = a.lot.status as 'QUARANTINE' | 'UNDER_TEST' | 'HOLD';
+    const values =
+      decision === 'APPROVED' ? { assayPct: a.assay, waterPct: a.water, retestDate: input.retestDate } : { assayPct: null, waterPct: null, retestDate: null };
     await repo.insertDisposition(tx, {
       lotId: a.lot.id,
-      sampleRequestId: fromTest ? a.request!.id : null,
-      fromStatus: fromTest ? 'UNDER_TEST' : 'HOLD',
+      sampleRequestId: from === 'HOLD' ? null : a.request!.id,
+      fromStatus: from,
       decision,
       ...values,
       reason: sig.reason,
+      rejectCategory: input.category ?? null,
+      rejectDescription: input.category !== undefined ? (input.description ?? null) : null,
       esignId: sig.id,
     });
     await transition(tx, QcLotMoves, { entityId: a.lot.id, to: decision, actor: auth, signature: sig });
     if (decision === 'APPROVED') await recordLotQcValues(tx, a.lot.id, values);
-    if (fromTest) await transition(tx, SamplingMoves, { entityId: a.request!.id, to: 'CLOSED', actor: auth, reason: `Lot ${decision} (${sig.reason})`.slice(0, 500) });
+    if (from !== 'HOLD') {
+      const to = from === 'QUARANTINE' ? 'CANCELLED' : 'CLOSED';
+      await transition(tx, SamplingMoves, { entityId: a.request!.id, to, actor: auth, reason: `Lot ${decision} (${sig.reason})`.slice(0, 500) });
+    }
   });
   return getDispositionLot(auth, lotId);
 }
 
 export async function approveLot(auth: AuthContext, lotId: string, input: ApproveLotRequest, meta: RequestMeta): Promise<DispositionLotDto> {
-  return decide(auth, lotId, 'APPROVED', input.signature, input.retestDate ?? null, meta);
+  return decide(auth, lotId, 'APPROVED', input.signature, { retestDate: input.retestDate ?? null, category: undefined, description: undefined }, meta);
 }
 
 export async function rejectLot(auth: AuthContext, lotId: string, input: RejectLotRequest, meta: RequestMeta): Promise<DispositionLotDto> {
-  return decide(auth, lotId, 'REJECTED', input.signature, null, meta);
+  return decide(auth, lotId, 'REJECTED', input.signature, { retestDate: null, category: input.category, description: input.description }, meta);
 }

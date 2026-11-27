@@ -1,8 +1,8 @@
 // Drizzle description of the `qc` schema. Source of truth: src/db/migrations/0027_grn.sql (sample requests), 0034 (specs),
-// 0036 (sampling, results, reviews), 0037 (dispositions).
+// 0036 (sampling, results, reviews), 0037 (dispositions), 0038 (rejection without a failed test).
 import { sql } from 'drizzle-orm';
 import { boolean, date, integer, numeric, pgSchema, text } from 'drizzle-orm/pg-core';
-import type { QcResultType, QcSpecStatus, SampleRequestStatus } from '@albert/shared';
+import type { QcRejectCategory, QcResultType, QcSpecStatus, SampleRequestStatus } from '@albert/shared';
 import { auditColumns, bigintString, companyId, identityId, tstz } from './columns';
 
 export const qc = pgSchema('qc');
@@ -91,12 +91,14 @@ export const dispositions = qc.table('dispositions', {
   companyId: companyId(),
   lotId: bigintString('lot_id').notNull(),
   sampleRequestId: bigintString('sample_request_id'),
-  fromStatus: text('from_status').$type<'UNDER_TEST' | 'HOLD'>().notNull(),
+  fromStatus: text('from_status').$type<'QUARANTINE' | 'UNDER_TEST' | 'HOLD'>().notNull(),
   decision: text('decision').$type<'APPROVED' | 'REJECTED'>().notNull(),
   assayPct: numeric('assay_pct', { precision: 9, scale: 4 }),
   waterPct: numeric('water_pct', { precision: 9, scale: 4 }),
   retestDate: date('retest_date', { mode: 'string' }),
   reason: text('reason').notNull(),
+  rejectCategory: text('reject_category').$type<QcRejectCategory>(),
+  rejectDescription: text('reject_description'),
   esignId: bigintString('esign_id').notNull(),
   decidedBy: bigintString('decided_by').notNull().default(sql`core.current_user_id()`),
   decidedAt: tstz('decided_at').notNull().defaultNow(),

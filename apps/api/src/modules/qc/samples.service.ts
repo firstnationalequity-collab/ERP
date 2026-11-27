@@ -49,6 +49,8 @@ export const SamplingMoves = defineTransitions<SampleRequestStatus>({
     { from: 'OPEN', to: 'SAMPLED', permission: ENTER_KEY },
     // M4 task 3 (0037): the QC Manager's disposition of the lot closes its request.
     { from: 'SAMPLED', to: 'CLOSED', permission: DECIDE_KEY, reasonRequired: true },
+    // 0038 (owner 2026-11-27): rejecting a lot before sampling cancels its OPEN request.
+    { from: 'OPEN', to: 'CANCELLED', permission: DECIDE_KEY, reasonRequired: true },
   ],
 });
 
@@ -68,6 +70,8 @@ export const QcLotMoves = defineTransitions<LotStatus>({
     { from: 'UNDER_TEST', to: 'APPROVED', permission: DECIDE_KEY, esign: ['APPROVED'], reasonRequired: true },
     { from: 'UNDER_TEST', to: 'REJECTED', permission: DECIDE_KEY, esign: ['REJECTED'], reasonRequired: true },
     { from: 'HOLD', to: 'REJECTED', permission: DECIDE_KEY, esign: ['REJECTED'], reasonRequired: true },
+    // 0038 (owner 2026-11-27): rejection before sampling (e.g. a damaged container), with a reason category.
+    { from: 'QUARANTINE', to: 'REJECTED', permission: DECIDE_KEY, esign: ['REJECTED'], reasonRequired: true },
   ],
 });
 

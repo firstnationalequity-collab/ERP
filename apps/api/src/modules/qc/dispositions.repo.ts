@@ -6,7 +6,7 @@ import { dispositions } from '../../db/schema/qc';
 export type DispositionRow = typeof dispositions.$inferSelect;
 export type NewDisposition = Pick<
   typeof dispositions.$inferInsert,
-  'lotId' | 'sampleRequestId' | 'fromStatus' | 'decision' | 'assayPct' | 'waterPct' | 'retestDate' | 'reason' | 'esignId'
+  'lotId' | 'sampleRequestId' | 'fromStatus' | 'decision' | 'assayPct' | 'waterPct' | 'retestDate' | 'reason' | 'rejectCategory' | 'rejectDescription' | 'esignId'
 >;
 
 export async function insertDisposition(tx: Tx, values: NewDisposition): Promise<DispositionRow> {

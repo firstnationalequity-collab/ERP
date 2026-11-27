@@ -222,6 +222,12 @@ export type QcSpecStatus = (typeof QcSpecStatus)[number];
 
 /** A spec test is NUMERIC (min and/or max) or TEXT (a text limit the analyst judges, e.g. "Complies"). */
 export const QcResultType = ['NUMERIC', 'TEXT'] as const;
+/**
+ * Why the QC Manager rejects a material lot without a failed test (owner 2026-11-27; 0038): required, with a
+ * description, on every rejection that no failed latest result supports. SQL: qc.dispositions.reject_category CHECK.
+ */
+export const QcRejectCategory = ['DAMAGED_CONTAINER', 'LABELLING', 'SEAL_BROKEN', 'CONTAMINATION', 'COA_MISMATCH', 'VENDOR_ISSUE', 'OTHER'] as const;
+export type QcRejectCategory = (typeof QcRejectCategory)[number];
 export type QcResultType = (typeof QcResultType)[number];
 
 /** Item types a QC specification can be written for (0034 qc.guard_spec). */

@@ -28,7 +28,9 @@ export async function rejectLotForTest(lotId: string, people: { qaUserId: string
       SELECT u.id, u.username, u.full_name, 'REJECTED', ${reason}, 'inv.lots', ${lotId} FROM core.users u WHERE u.id = ${people.qcManagerUserId}
       RETURNING id`);
     const esignId = rows[0]!.id;
-    await tx.execute(sql`INSERT INTO qc.dispositions (lot_id, from_status, decision, reason, esign_id) VALUES (${lotId}, 'HOLD', 'REJECTED', ${reason}, ${esignId})`);
+    // 0038: a HOLD rejection names its reason category and describes what was found.
+    await tx.execute(sql`INSERT INTO qc.dispositions (lot_id, from_status, decision, reason, reject_category, reject_description, esign_id)
+      VALUES (${lotId}, 'HOLD', 'REJECTED', ${reason}, 'OTHER', 'Test fixture: rejected after a QA hold', ${esignId})`);
     await tx.execute(history(lotId, 'HOLD', 'REJECTED', people.qcManagerUserId, esignId, reason));
     await tx.execute(sql`UPDATE inv.lots SET status = 'REJECTED' WHERE id = ${lotId}`);
   });

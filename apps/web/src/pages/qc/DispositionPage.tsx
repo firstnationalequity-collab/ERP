@@ -1,12 +1,13 @@
-// QC lot disposition (M4 task 3; 0037). The QC Manager approves a sampled material lot once every test has a reviewed,
-// passing result (the latest assay and water results are written onto the lot), or rejects it on a failed result;
-// a material lot QA put on HOLD may be rejected (only QA lifts a hold). Each decision is an e-signature on the lot
-// and closes the sample request. Finished-goods lots are QA's decision and are not listed here.
+// QC lot disposition (M4 task 3; 0037, 0038). The QC Manager approves a sampled material lot once every test has a
+// reviewed, passing result (the latest assay and water results are written onto the lot), or rejects it: on a failed
+// result, or without one (quarantined before sampling, on HOLD, or all passed) with a reason category and a description
+// (owner 2026-11-27). Only QA lifts a hold. Each decision is an e-signature on the lot and closes (or, before sampling,
+// cancels) the sample request. Finished-goods lots are QA's decision and are not listed here.
 import { useState } from 'react';
 import dayjs from 'dayjs';
-import { Alert, App, Button, DatePicker, Descriptions, Drawer, Space, Table, Tag, Typography } from 'antd';
+import { Alert, App, Button, DatePicker, Descriptions, Drawer, Input, Select, Space, Table, Tag, Typography } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { DispositionLotDto, DispositionTestDto, SignatureMeaning } from '@albert/shared';
+import { QcRejectCategory, type DispositionLotDto, type DispositionTestDto, type SignatureMeaning } from '@albert/shared';
 import { api } from '../../api/client';
 import { useAuth } from '../../auth/AuthContext';
 import { DataTable, statusFilter } from '../../components/DataTable';
@@ -22,14 +23,14 @@ export function DispositionPage() {
   return (
     <>
       <PageHeader title="Lot disposition">
-        Material lots under test, and material lots QA put on hold. Approve when every test has a reviewed, passing result; reject on a failed result. Finished-goods
-        lots are decided by QA.
+        Material lots under test, and material lots QA put on hold (filter Quarantine for lots not sampled yet). Approve when every test has a reviewed, passing
+        result; reject on a failed result, or without one with a reason category and a description. Finished-goods lots are decided by QA.
       </PageHeader>
       <DataTable<DispositionLotDto>
         title="Lot disposition"
         path="/qc/lots"
         queryKey={queryKey}
-        filters={[statusFilter(['UNDER_TEST', 'HOLD'] as const)]}
+        filters={[statusFilter(['UNDER_TEST', 'HOLD', 'QUARANTINE'] as const)]}
         searchPlaceholder="Search lot number, item code or name"
         rowKey={(r) => r.lotId}
         onRowClick={(r) => setOpenId(r.lotId)}
@@ -72,12 +73,15 @@ function LotDrawer({ id, onClose }: { id: string; onClose(): void }) {
   const { data: l, refetch } = useQuery({ queryKey: [...queryKey, 'one', id], queryFn: () => api<DispositionLotDto>(`/qc/lots/${id}`) });
   const [signing, setSigning] = useState<SignatureMeaning | null>(null);
   const [retestDate, setRetestDate] = useState<string | null>(null);
+  const [category, setCategory] = useState<QcRejectCategory | null>(null);
+  const [description, setDescription] = useState('');
   const reload = async () => {
     await refetch();
     await qc.invalidateQueries({ queryKey });
   };
   const decider = can('qc.lot.change_status');
   const approving = signing === 'APPROVED';
+  const categoryReady = category !== null && description.trim().length >= 10;
 
   return (
     <Drawer open width={900} title={l ? `Lot ${l.lotNo} — disposition` : 'Lot disposition'} onClose={onClose}>
@@ -95,7 +99,7 @@ function LotDrawer({ id, onClose }: { id: string; onClose(): void }) {
           </Descriptions>
 
           {l.itemType === 'FG' && <Alert type="info" showIcon message="Finished goods: QA decides this lot (release or reject). QC does not approve or reject FG lots." />}
-          {l.blockers.length > 0 && (l.lotStatus === 'UNDER_TEST' || l.lotStatus === 'HOLD') && (
+          {l.blockers.length > 0 && (l.lotStatus === 'UNDER_TEST' || l.lotStatus === 'HOLD' || l.lotStatus === 'QUARANTINE') && (
             <Alert type="warning" showIcon message="Not every decision is possible yet" description={<ul style={{ margin: 0, paddingLeft: 18 }}>{l.blockers.map((b) => <li key={b}>{b}</li>)}</ul>} />
           )}
 
@@ -120,6 +124,30 @@ function LotDrawer({ id, onClose }: { id: string; onClose(): void }) {
                   />
                 </Space>
               )}
+              {l.canReject && (
+                <Space direction="vertical" style={{ width: 560 }}>
+                  <span>
+                    Rejection reason category and description
+                    {l.rejectNeedsCategory ? ' (required: no failed result supports a rejection)' : ' (optional: a failed result supports the rejection)'}
+                  </span>
+                  <Select<QcRejectCategory>
+                    aria-label="Reason category"
+                    allowClear
+                    placeholder="Reason category"
+                    value={category ?? undefined}
+                    onChange={(v) => setCategory(v ?? null)}
+                    options={QcRejectCategory.map((c) => ({ value: c, label: c.replace(/_/g, ' ') }))}
+                  />
+                  <Input.TextArea
+                    aria-label="Description"
+                    rows={3}
+                    maxLength={2000}
+                    placeholder="What was found (at least 10 characters)"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                  />
+                </Space>
+              )}
               <Space>
                 {l.canApprove && (
                   <Button type="primary" disabled={l.retestDateRequired && !retestDate} onClick={() => setSigning('APPROVED')}>
@@ -127,7 +155,11 @@ function LotDrawer({ id, onClose }: { id: string; onClose(): void }) {
                   </Button>
                 )}
                 {l.canReject && (
-                  <Button danger onClick={() => setSigning('REJECTED')}>
+                  <Button
+                    danger
+                    disabled={(l.rejectNeedsCategory || category !== null || description.trim() !== '') && !categoryReady}
+                    onClick={() => setSigning('REJECTED')}
+                  >
                     Reject lot
                   </Button>
                 )}
@@ -148,6 +180,10 @@ function LotDrawer({ id, onClose }: { id: string; onClose(): void }) {
                   { title: 'Decision', render: (_, d) => <>{d.fromStatus} → <StatusTag status={d.decision} /></> },
                   { title: 'By', dataIndex: 'decidedByName' },
                   { title: 'Reason', dataIndex: 'reason' },
+                  {
+                    title: 'Category',
+                    render: (_, d) => (d.rejectCategory ? <span title={d.rejectDescription ?? ''}>{d.rejectCategory.replace(/_/g, ' ')}: {d.rejectDescription}</span> : ''),
+                  },
                   { title: 'Assay / water', render: (_, d) => (d.decision === 'APPROVED' ? `${formatDecimal(d.assayPct, 4) || '—'} / ${formatDecimal(d.waterPct, 4) || '—'}` : '') },
                   { title: 'New retest', render: (_, d) => formatDate(d.retestDate) },
                 ]}
@@ -167,7 +203,9 @@ function LotDrawer({ id, onClose }: { id: string; onClose(): void }) {
             okText={approving ? 'Approve' : 'Reject'}
             onCancel={() => setSigning(null)}
             onSubmit={async (r) => {
-              const body = approving ? { signature: r.signature, retestDate } : { signature: r.signature };
+              const body = approving
+                ? { signature: r.signature, retestDate }
+                : { signature: r.signature, ...(category ? { category, description: description.trim() } : {}) };
               await api(`/qc/lots/${id}/${approving ? 'approve' : 'reject'}`, { method: 'POST', body });
               void message.success(approving ? 'Lot approved' : 'Lot rejected');
               setSigning(null);

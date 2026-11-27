@@ -86,8 +86,8 @@ export const ErrorCodes = [
   'QC_RESULTS_NOT_REVIEWED',
   /** Approval refused: the latest result of a test failed. */
   'QC_TEST_FAILED',
-  /** Rejection from UNDER_TEST refused: none of the latest results failed (architecture §4: any test failed). */
-  'QC_RESULTS_PASSED',
+  /** A rejection no failed latest result supports needs a reason category and a description (owner 2026-11-27; 0038). */
+  'QC_REJECT_CATEGORY_REQUIRED',
   /** QC does not approve or reject a finished-goods lot; QA decides (build-plan M4). */
   'FG_LOT_QA_DECIDES',
   'OPEN_DEVIATION',
