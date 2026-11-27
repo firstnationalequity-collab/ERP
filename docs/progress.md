@@ -6,7 +6,7 @@ Current milestone: **M3 — Procurement** (M2 done, tag `m2`)
 | --- | --- | --- | --- | --- |
 | M1 Foundation | Done | 17-11-2026 | 18-11-2026 | All 12 tasks, rules-review fixes A–F, first-QA-Manager bootstrap; CI run #13 green on `04ef009`; tag `m1` |
 | M2 Masters & engines | Done | 18-11-2026 | 19-11-2026 | All 10 tasks; rules-review fixes (disposal witness 0020, deactivation guards 0021); owner answers 19-11 recorded; CI green; tag `m2` |
-| M3 Procurement | Tasks done; awaiting CI check + owner OK to tag | 25-11-2026 | | Tasks 1–6 done (0022–0033); CI not yet confirmed (gh not signed in here); not tagged |
+| M3 Procurement | Tasks done; awaiting owner OK to tag | 25-11-2026 | | Tasks 1–6 done (0022–0033); CI run 45947146671 green on `24339ac`; not tagged |
 | M4 QC | Not started | | | |
 | M5 Sales | Not started | | | |
 | M6 Production | Not started | | | |
@@ -16,9 +16,9 @@ Current milestone: **M3 — Procurement** (M2 done, tag `m2`)
 | M10 Hardening & staging | Not started | | | |
 | M11 UAT & go-live | Not started | | | |
 
-## Handoff (27-11-2026, M3 close-out done, waiting for CI confirmation and the owner's go to tag `m3`)
+## Handoff (27-11-2026, M3 close-out done, CI green, waiting for the owner's go to tag `m3`)
 
-**State:** We work on `main`, one commit per task, pushed. API tests need the Docker DB (`docker compose up -d`). 680 tests green locally (638 API, 26 web, 16 shared); `pnpm typecheck` clean. `gh` is not authenticated on this machine, so CI on the last commit was **not** confirmed: run `gh auth login` (or check GitHub Actions) before tagging. Do not tag `m3` until the owner says so.
+**State:** We work on `main`, one commit per task, pushed. API tests need the Docker DB (`docker compose up -d`). 680 tests green locally (638 API, 26 web, 16 shared); `pnpm typecheck` clean. CI run 45947146671 green on `24339ac` (task 6; it covers 5c, whose own run was superseded). Do not tag `m3` until the owner says so.
 
 **M3 tasks** (details: `docs/progress-log.md`; decisions.md rows 2026-11-25 to 2026-11-27):
 - [x] 1–2d. M2 carry-in (0022); PR → PO, approval matrix, AVL block, rate table (0023); unit rates 6 dp (0024); owner answers (0025, 0026).
@@ -35,7 +35,7 @@ Current milestone: **M3 — Procurement** (M2 done, tag `m2`)
 - /check-rules (since `m2`): no breach of rules 1–12 found. Routes all guarded; status changes only through `core/transition`; no float arithmetic on money / qty / rates (only day counts); each posting in one transaction through the engines; every refusal code thrown by the M3 services is asserted in a test. Nits reported to the owner (not changed): `core.users` read directly by `procurement.repo.ts` and `finance/rates.repo.ts` for display names; `permissions.ts` / `enums.ts` call the matrix "VENDOR_DEBIT_NOTE" (it is `DEBIT_NOTE`); `VendorInvoicesPage.tsx` compares `Number(l.qtyOver) > 0` for display.
 - Docs: architecture §6 rows (debit note, return, payment WHT) and §7.5 (payments, reversals, debit notes) brought up to the code; roles.md, decisions.md, demo/M3.md (step 19 + refusals).
 
-**Next (new chat):** confirm CI green on the last commit (`gh run list`); owner decides on tagging `m3`; then `/milestone M4`.
+**Next (new chat):** owner decides on tagging `m3` and on the three check-rules nits; then `/milestone M4`.
 
 **Open questions for the owner** (agent defaults in decisions.md):
 1. Task 5 defaults (decisions.md 2026-11-26 "choices the owner did not state", items a–n; (g) and (n) superseded by 5b): release key and flow, tolerances 2% price / 0% qty, posting date = invoice date, GRNI / variance / exchange split, CHARGES rules, payment flow, auto PO close, series VI-/VP-. Recommendation: confirm as built. Does not block M4.
