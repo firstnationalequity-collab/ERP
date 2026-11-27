@@ -12,7 +12,7 @@ import {
   type PermissionKey,
   type VoidAttachmentRequest,
 } from '@albert/shared';
-import { db, withTransaction, type Queryable } from '../../db/client';
+import { db, withTransaction, type Queryable, type Tx } from '../../db/client';
 import { attachments, users } from '../../db/schema/core';
 import { AppError } from '../errors';
 import { txContext, type AuthContext, type RequestMeta } from '../auth/auth.service';
@@ -160,6 +160,48 @@ export async function upload(auth: AuthContext, input: UploadInput): Promise<Att
   const [dto] = await listByIds(auth, [id]);
   if (!dto) throw new AppError('NOT_FOUND', 'Attachment not found');
   return dto;
+}
+
+/**
+ * Store a file the system generated (e.g. a CoA PDF, M4 task 4) against a record, inside the caller's transaction, so
+ * the record and its file commit together. The caller checked the permission; no type / size rules (not an upload).
+ */
+export async function storeGeneratedFile(
+  tx: Tx,
+  input: { recordTable: string; recordId: string; fileName: string; contentType: string; bytes: Buffer; description?: string },
+): Promise<{ id: string; sha256: string }> {
+  if (!targets.has(input.recordTable)) throw new Error(`Records of ${input.recordTable} do not take attachments`);
+  const sha256 = createHash('sha256').update(input.bytes).digest('hex');
+  const store = storage();
+  // Written first: if the transaction rolls back, an orphan file remains but no record points to it.
+  const storageKey = await store.put(input.bytes);
+  const [row] = await tx
+    .insert(attachments)
+    .values({
+      recordTable: input.recordTable,
+      recordId: input.recordId,
+      fileName: cleanFileName(input.fileName),
+      contentType: input.contentType,
+      sizeBytes: String(input.bytes.length),
+      sha256,
+      storageDriver: store.driver,
+      storageKey,
+      description: input.description ?? null,
+    })
+    .returning({ id: attachments.id });
+  if (!row) throw new Error('attachment insert returned no row');
+  return { id: row.id, sha256 };
+}
+
+/** The files of several records of one table (ids per record), voided ones included. */
+export async function attachmentIdsOf(q: Queryable, companyId: string, recordTable: string, recordIds: string[]): Promise<Map<string, string>> {
+  if (recordIds.length === 0) return new Map();
+  const rows = await q
+    .select({ id: attachments.id, recordId: attachments.recordId })
+    .from(attachments)
+    .where(and(eq(attachments.companyId, companyId), eq(attachments.recordTable, recordTable), inArray(attachments.recordId, recordIds)))
+    .orderBy(asc(attachments.id));
+  return new Map(rows.map((r) => [r.recordId, r.id]));
 }
 
 async function listByIds(auth: AuthContext, ids: string[]): Promise<AttachmentDto[]> {

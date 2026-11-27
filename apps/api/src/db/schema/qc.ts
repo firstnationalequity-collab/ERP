@@ -1,5 +1,5 @@
 // Drizzle description of the `qc` schema. Source of truth: src/db/migrations/0027_grn.sql (sample requests), 0034 (specs),
-// 0036 (sampling, results, reviews), 0037 (dispositions), 0038 (rejection without a failed test).
+// 0036 (sampling, results, reviews), 0037 (dispositions), 0038 (rejection without a failed test), 0039 (re-tests, CoAs).
 import { sql } from 'drizzle-orm';
 import { boolean, date, integer, numeric, pgSchema, text } from 'drizzle-orm/pg-core';
 import type { QcRejectCategory, QcResultType, QcSpecStatus, SampleRequestStatus } from '@albert/shared';
@@ -39,6 +39,9 @@ export const results = qc.table('results', {
   remarks: text('remarks'),
   enteredBy: bigintString('entered_by').notNull().default(sql`core.current_user_id()`),
   enteredAt: tstz('entered_at').notNull().defaultNow(),
+  /** 0039: a re-test repeats this result (same sample and test), with its reason; each result is re-tested once. */
+  retestOf: bigintString('retest_of'),
+  retestReason: text('retest_reason'),
   ...auditColumns(),
 });
 
@@ -102,5 +105,21 @@ export const dispositions = qc.table('dispositions', {
   esignId: bigintString('esign_id').notNull(),
   decidedBy: bigintString('decided_by').notNull().default(sql`core.current_user_id()`),
   decidedAt: tstz('decided_at').notNull().defaultNow(),
+  ...auditColumns(),
+});
+
+/** 0039: insert-only; one certificate of analysis per QC approval of a material lot; the PDF is its attachment. */
+export const coas = qc.table('coas', {
+  id: identityId(),
+  companyId: companyId(),
+  docNo: text('doc_no').notNull(),
+  lotId: bigintString('lot_id').notNull(),
+  dispositionId: bigintString('disposition_id').notNull(),
+  sampleRequestId: bigintString('sample_request_id').notNull(),
+  fileName: text('file_name').notNull(),
+  sha256: text('sha256').notNull(),
+  esignId: bigintString('esign_id').notNull(),
+  issuedBy: bigintString('issued_by').notNull().default(sql`core.current_user_id()`),
+  issuedAt: tstz('issued_at').notNull().defaultNow(),
   ...auditColumns(),
 });

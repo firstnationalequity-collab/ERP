@@ -9,7 +9,10 @@ import {
   DispositionListQuery,
   RejectLotRequest,
   CreateSpecRequest,
+  CoaListQuery,
   EnterResultsRequest,
+  IssueCoaRequest,
+  RetestResultRequest,
   RejectSpecRequest,
   ReviewResultsRequest,
   SampleListQuery,
@@ -24,6 +27,7 @@ import { idempotent } from '../../core/idempotency/idempotency';
 import * as specs from './specs.service';
 import * as samples from './samples.service';
 import * as dispositions from './dispositions.service';
+import * as coas from './coas.service';
 
 const IdParam = z.object({ id: z.string().regex(/^\d+$/, 'Invalid id') });
 const idOf = (req: Request) => IdParam.parse(req.params).id;
@@ -67,6 +71,12 @@ r.post('/samples/:id/take', requirePermission('qc.result.enter'), idempotent(), 
 r.post('/samples/:id/results', requirePermission('qc.result.enter'), once, asyncHandler(async (req, res) => {
   res.json(await samples.enterResults(authOf(req), idOf(req), EnterResultsRequest.parse(req.body)));
 }));
+// Re-test (task 4; 0039): a new row repeating the test's latest result, with a reason.
+const ResultParam = z.object({ id: z.string().regex(/^\d+$/, 'Invalid id'), resultId: z.string().regex(/^\d+$/, 'Invalid id') });
+r.post('/samples/:id/results/:resultId/retest', requirePermission('qc.result.enter'), once, asyncHandler(async (req, res) => {
+  const p = ResultParam.parse(req.params);
+  res.json(await samples.retestResult(authOf(req), p.id, p.resultId, RetestResultRequest.parse(req.body)));
+}));
 r.post('/samples/:id/review', requirePermission('qc.result.review'), once, asyncHandler(async (req, res) => {
   res.json(await samples.reviewResults(authOf(req), idOf(req), ReviewResultsRequest.parse(req.body), requestMeta(req)));
 }));
@@ -80,4 +90,18 @@ r.post('/lots/:id/approve', requirePermission('qc.lot.change_status'), once, asy
 }));
 r.post('/lots/:id/reject', requirePermission('qc.lot.change_status'), once, asyncHandler(async (req, res) => {
   res.json(await dispositions.rejectLot(authOf(req), idOf(req), RejectLotRequest.parse(req.body), requestMeta(req)));
+}));
+
+// ---------------------------------------------------------------- certificates of analysis (M4 task 4; 0039)
+// QC Manager (qc.coa.issue) issues one certificate per QC approval of a material lot, with an e-signature; the stored
+// PDF is re-checked against its SHA-256 on every download.
+r.get('/coas', VIEW, asyncHandler(async (req, res) => { res.json(await coas.listCoas(authOf(req), CoaListQuery.parse(req.query))); }));
+r.get('/coas/candidates', VIEW, asyncHandler(async (req, res) => { res.json(await coas.listCoaCandidates(authOf(req))); }));
+r.get('/coas/:id', VIEW, asyncHandler(async (req, res) => { res.json(await coas.getCoa(authOf(req), idOf(req))); }));
+r.get('/coas/:id/pdf', VIEW, asyncHandler(async (req, res) => {
+  const { fileName, pdf } = await coas.coaPdf(authOf(req), idOf(req));
+  res.type('application/pdf').set('Content-Disposition', `inline; filename="${fileName}"`).send(pdf);
+}));
+r.post('/coas', requirePermission('qc.coa.issue'), once, asyncHandler(async (req, res) => {
+  res.status(201).json(await coas.issueCoa(authOf(req), IssueCoaRequest.parse(req.body), requestMeta(req)));
 }));

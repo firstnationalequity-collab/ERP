@@ -2,11 +2,12 @@
 // any retention quantity leave the lot's stock; the lot becomes UNDER_TEST; the APPROVED spec version is pinned),
 // then enters one result per test: numeric pass / fail is computed from the limits, text results are judged by the
 // analyst. A failed result on a finished-goods lot puts the lot on HOLD for QA. A QC Manager who did not enter the
-// results reviews them with an e-signature (REVIEWED). Results are never edited (a re-test is a new row, task 4).
+// results reviews them with an e-signature (REVIEWED). Results are never edited: a re-test is a new row with a reason
+// (task 4, 0039); the newest row of a test is its latest result, earlier rows stay listed as superseded.
 import { useState } from 'react';
-import { Alert, App, Button, Descriptions, Drawer, Input, InputNumber, Select, Space, Table, Tag, Typography } from 'antd';
+import { Alert, App, Button, Descriptions, Drawer, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { EnterResultsRequest, SampleRequestStatus, TakeSampleRequest, type ResultDto, type SampleRequestDto, type SpecTestDto } from '@albert/shared';
+import { EnterResultsRequest, RetestResultRequest, SampleRequestStatus, TakeSampleRequest, type ResultDto, type SampleRequestDto, type SpecTestDto } from '@albert/shared';
 import { api, errorText, newIdempotencyKey } from '../../api/client';
 import { useAuth } from '../../auth/AuthContext';
 import { DataTable, statusFilter } from '../../components/DataTable';
@@ -196,7 +197,11 @@ function ResultsTable({ s, canEnter, name, onDone }: { s: SampleRequestDto; canE
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [retesting, setRetesting] = useState<{ test: SpecTestDto; result: ResultDto } | null>(null);
+  // Results come oldest first, so each test maps to its newest row (its latest result).
   const byTest = new Map((s.results ?? []).map((r) => [r.specTestId, r]));
+  const superseded = (s.results ?? []).filter((r) => r.superseded);
+  const testName = (id: string) => (s.tests ?? []).find((t) => t.id === id)?.name ?? id;
   const set = (testId: string, patch: Partial<Draft>) => setDrafts((d) => ({ ...d, [testId]: { value: '', remarks: '', ...d[testId], ...patch } }));
 
   const save = async () => {
@@ -248,7 +253,19 @@ function ResultsTable({ s, canEnter, name, onDone }: { s: SampleRequestDto; canE
             width: 260,
             render: (_, t) => {
               const r = byTest.get(t.id);
-              if (r) return resultText(r);
+              if (r) {
+                return (
+                  <Space size={4} wrap>
+                    {resultText(r)}
+                    {r.retestOf && <Tag title={r.retestReason ?? ''}>re-test</Tag>}
+                    {canEnter && (
+                      <Button size="small" type="link" onClick={() => setRetesting({ test: t, result: r })}>
+                        Re-test
+                      </Button>
+                    )}
+                  </Space>
+                );
+              }
               if (!canEnter) return '—';
               const d = drafts[t.id];
               return t.resultType === 'NUMERIC' ? (
@@ -305,6 +322,89 @@ function ResultsTable({ s, canEnter, name, onDone }: { s: SampleRequestDto; canE
           Save results
         </Button>
       )}
+      {superseded.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <Typography.Text strong>Superseded results (kept unchanged; a later re-test is the latest)</Typography.Text>
+          <Table<ResultDto>
+            rowKey="id"
+            size="small"
+            pagination={false}
+            dataSource={superseded}
+            columns={[
+              { title: 'Test', render: (_, r) => testName(r.specTestId) },
+              { title: 'Result', render: (_, r) => resultText(r) },
+              { title: 'Pass', render: (_, r) => <Tag color={r.passed ? 'green' : 'red'}>{r.passed ? 'PASS' : 'FAIL'}</Tag> },
+              { title: 'Entered', render: (_, r) => `${name(r.enteredBy)} · ${formatDateTime(r.enteredAt)}` },
+              { title: 'Reviewed', render: (_, r) => (r.reviewedBy ? name(r.reviewedBy) : 'Not reviewed') },
+            ]}
+          />
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Re-test reasons: {(s.results ?? []).filter((r) => r.retestOf).map((r) => `${testName(r.specTestId)}: ${r.retestReason}`).join('; ')}
+          </Typography.Text>
+        </div>
+      )}
+      {retesting && <RetestModal sampleId={s.id} test={retesting.test} result={retesting.result} onClose={() => setRetesting(null)} onDone={onDone} />}
     </div>
+  );
+}
+
+/** Re-test (0039): a new result for the test, repeating its latest result; the original is never edited. */
+function RetestModal({ sampleId, test, result, onClose, onDone }: { sampleId: string; test: SpecTestDto; result: ResultDto; onClose(): void; onDone(): Promise<void> }) {
+  const { message } = App.useApp();
+  const [value, setValue] = useState('');
+  const [complies, setComplies] = useState<boolean | undefined>(undefined);
+  const [remarks, setRemarks] = useState('');
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    const body =
+      test.resultType === 'NUMERIC'
+        ? { numericValue: value.trim(), remarks: remarks.trim() || null, reason }
+        : { textValue: value.trim(), complies: complies ?? null, remarks: remarks.trim() || null, reason };
+    const parsed = RetestResultRequest.safeParse(body);
+    if (!parsed.success) {
+      setError(parsed.error.issues.map((i) => i.message).join('; '));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/qc/samples/${sampleId}/results/${result.id}/retest`, { method: 'POST', body: parsed.data });
+      void message.success('Re-test saved');
+      onClose();
+      await onDone();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal open title={`Re-test: ${test.name}`} okText="Save re-test" confirmLoading={busy} onOk={() => void submit()} onCancel={onClose}>
+      <Space direction="vertical" style={{ width: '100%' }}>
+        <Typography.Text type="secondary">
+          The current result stays on record unchanged; the re-test becomes the latest result and is reviewed like any other. Limit: {limitText(test)}.
+        </Typography.Text>
+        {error && <Alert type="error" showIcon message={error} />}
+        {test.resultType === 'NUMERIC' ? (
+          <Input aria-label="Re-test result" inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} suffix={test.unit ?? undefined} />
+        ) : (
+          <Space.Compact style={{ width: '100%' }}>
+            <Input aria-label="Re-test observation" placeholder="Observation" value={value} onChange={(e) => setValue(e.target.value)} />
+            <Select
+              aria-label="Re-test complies"
+              placeholder="Complies?"
+              style={{ width: 120 }}
+              value={complies === undefined ? undefined : complies ? 'yes' : 'no'}
+              onChange={(v: string) => setComplies(v === 'yes')}
+              options={[{ value: 'yes', label: 'Complies' }, { value: 'no', label: 'Does not' }]}
+            />
+          </Space.Compact>
+        )}
+        <Input aria-label="Re-test remarks" placeholder="Remarks (optional)" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+        <Input.TextArea aria-label="Re-test reason" rows={3} maxLength={500} placeholder="Why the test is repeated (at least 10 characters)" value={reason} onChange={(e) => setReason(e.target.value)} />
+      </Space>
+    </Modal>
   );
 }

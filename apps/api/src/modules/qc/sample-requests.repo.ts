@@ -6,7 +6,8 @@ import { resultReviews, results, sampleRequests } from '../../db/schema/qc';
 
 export type SampleRequestRow = typeof sampleRequests.$inferSelect;
 export type ResultRow = typeof results.$inferSelect;
-export type NewResult = Pick<typeof results.$inferInsert, 'sampleRequestId' | 'specTestId' | 'resultType' | 'numericValue' | 'textValue' | 'passed' | 'remarks'>;
+export type NewResult = Pick<typeof results.$inferInsert, 'sampleRequestId' | 'specTestId' | 'resultType' | 'numericValue' | 'textValue' | 'passed' | 'remarks'> &
+  Partial<Pick<typeof results.$inferInsert, 'retestOf' | 'retestReason'>>;
 export interface ResultWithReview extends ResultRow {
   reviewedBy: string | null;
   reviewedAt: Date | null;

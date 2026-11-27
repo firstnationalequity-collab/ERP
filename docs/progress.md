@@ -18,7 +18,7 @@ Current milestone: **M4 — QC** (in progress; M3 done, tag `m3`)
 
 ## Handoff (27-11-2026, M4 in progress: tasks 1–3 done)
 
-**State:** We work on `main`, one commit per task, pushed. API tests need the Docker DB (`docker compose up -d`). `pnpm typecheck` clean; 744 tests green after task 3 (686 API, 28 web, 30 shared). M3 is tagged `m3` (details in `docs/progress-log.md`).
+**State:** We work on `main`, one commit per task, pushed. API tests need the Docker DB (`docker compose up -d`). `pnpm typecheck` clean; 753 tests green after task 4 (695 API, 28 web, 30 shared). M3 is tagged `m3` (details in `docs/progress-log.md`).
 **Working rule (owner 27-11, CLAUDE.md 11–12):** don't wait for answers; build the recommended answer, add a line to `docs/verification-list.md` and a PENDING OWNER row in decisions.md; stop only for a rule change, a hard-to-migrate structure change, or a failure you cannot fix.
 
 **M4 plan** (build-plan M4; decisions.md 2026-11-27 rows):
@@ -26,11 +26,11 @@ Current milestone: **M4 — QC** (in progress; M3 done, tag `m3`)
 - [x] 2. Sample queue, results, review (0036) + owner corrections 27-11 (0035): sampling posts SAMPLE_ISSUE (TEST / RETENTION) with a QC_SAMPLE journal (6400 placeholder), lot → UNDER_TEST, spec pinned; expiry / retest checked at issue, reserve and dispatch (LOT_EXPIRED / LOT_RETEST_DUE, service + DB); `qc.results` / `qc.result_reviews` insert-only; reviewer ≠ analyst, REVIEWED e-sign per sample; failed FG result → HOLD. `/api/v1/qc/samples`; web Sample queue, Results review; `samples.test.ts`, engine tests, M2 GL = ledger walk covers SAMPLE_ISSUE.
 - [x] 3. Disposition (0037): `qc.dispositions` insert-only; `POST /qc/lots/:id/approve | /reject` (`qc.lot.change_status`, e-sign on the lot); approve = every test with a reviewed passing latest result, not expired, next retest date when reached; writes assay / water (4 dp); reject = reviewed failure or material HOLD; FG refused (`FG_LOT_QA_DECIDES`); decider ≠ analyst; request SAMPLED → CLOSED; DB refuses these moves and assay / water / retest changes without a disposition. Web Lot disposition; `dispositions.test.ts`. Also: GRN expiry / retest accept MM-YYYY (last day of month), QA to verify.
 - [x] Owner decisions 27-11 (0038): rejection without a failed test (reason category + description + e-sign; also QUARANTINE → REJECTED, cancels the OPEN request; `QC_REJECT_CATEGORY_REQUIRED`); FG lots: QA releases UNDER_TEST → RELEASED (architecture §4 / §7.8 fixed; M6 / M7 tasks added; not built).
-- [ ] 4. Re-test as new row (`retest_of`, reason; original never edited, DB; replace the unique `results_one_per_test_uq`; disposition and `qc.latest_results()` already take the latest row per test) and CoA PDF (pdfmake, `qc.coa.issue`, stored attachment with sha256, `qc.coas`, series COA-{FY}-{SEQ:5}).
+- [x] 4. Re-test + CoA (0039): `qc.results.retest_of` + reason (one original per test, each row re-tested once; `POST /qc/samples/:id/results/:resultId/retest`; superseded rows shown); `qc.coas` insert-only, one per QC approval of a material lot, e-sign APPROVED on the disposition, COA-{FY}-{SEQ:5}, PDF stored as the only (GMP) attachment with SHA-256 (`/qc/coas`, `/candidates`, `/:id/pdf`); web re-test on the sample, Certificates of analysis page; `retests-coas.test.ts`.
 - [ ] 5. Nightly pg-boss job (statuses only; use-time expiry checks already in 0035; new `jobs/` runner started in server.ts, 00:30 Asia/Karachi, SYSTEM): APPROVED → EXPIRED (expiry reached) / RETEST_DUE (retest reached, opens a RETEST sample request); RETEST_DUE → EXPIRED when expiry reached.
 - [ ] 6. Close-out: Done-when test (quarantined lot issuable only after QC approval; rejected lot moves only by destroy / return), carried-over test "GRN reversal refused once a sample is taken", /check-rules, demo/M4.md, docs.
 
-**Next (new chat):** M4 task 4 (re-test as new row; CoA PDF). For task 6 /check-rules: in the DB, lot moves other than QC disposition and disposal (e.g. → HOLD, HOLD → APPROVED) are checked only by core/transition history, not by key (keep on the task 6 list, owner 27-11).
+**Next (new chat):** M4 task 5 (nightly pg-boss job). For task 6 /check-rules: in the DB, lot moves other than QC disposition and disposal (e.g. → HOLD, HOLD → APPROVED) are checked only by core/transition history, not by key (keep on the task 6 list, owner 27-11).
 
 **Open questions for the owner:** see `docs/verification-list.md` (QC section has the M4 defaults; standing go-live items under Finance / QA / Management).
 
@@ -47,4 +47,4 @@ Current milestone: **M4 — QC** (in progress; M3 done, tag `m3`)
 - Test DBs have no fiscal periods; tests that post must create them. `glEqualsLedger()` and the §6 role check `expectJournal()` are in `__tests__/m3-done-when.test.ts`.
 - Roles: `pnpm db:seed` adds keys from `docs/roles.md` that roles are missing. If it stops with `RoleBundleDriftError`, ask the owner per key and never remove keys yourself.
 
-**Local dev DB:** migrated to 0037 and seeded (6400 + QC_SAMPLE rules added) (FINANCE_MANAGER has `fin.debit_note.reverse`). `demo.<role>` users (password = `DEV_DEMO_PASSWORD` in `.env`), FY 2026-27 periods OPEN, `demo.qa_manager` holds the QA countersign. Demo data loaded 27-11 (`pnpm db:seed:demo-data`: PO-2627-00001 APPROVED, PO-2627-00002 waiting for demo.finance_manager).
+**Local dev DB:** migrated to 0039 and seeded (6400 + QC_SAMPLE rules; COA number series) (FINANCE_MANAGER has `fin.debit_note.reverse`). `demo.<role>` users (password = `DEV_DEMO_PASSWORD` in `.env`), FY 2026-27 periods OPEN, `demo.qa_manager` holds the QA countersign. Demo data loaded 27-11 (`pnpm db:seed:demo-data`: PO-2627-00001 APPROVED, PO-2627-00002 waiting for demo.finance_manager).

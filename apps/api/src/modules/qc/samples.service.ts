@@ -7,9 +7,11 @@
 //  - enterResults(): insert-only rows, one per spec test; NUMERIC pass is computed from the pinned limits, TEXT pass
 //                    is the analyst's complies judgement. A failed result on an FG lot moves the lot UNDER_TEST →
 //                    HOLD in the same transaction under qc.result.enter (owner 2026-11-18; QA decides from there).
+//  - retestResult(): a re-test is a NEW row for the same test (task 4, 0039): it repeats the test's latest result,
+//                    which is never edited, and carries the reason; its newest row is the test's latest result.
 //  - reviewResults(): qc.result.review, e-signature REVIEWED on the sample; the reviewer is never the analyst who
 //                    entered a result (SEGREGATION_OF_DUTIES, service + DB).
-// The database (0035, 0036) re-checks every rule.
+// The database (0035, 0036, 0039) re-checks every rule.
 import { Decimal } from 'decimal.js';
 import {
   LotStatus,
@@ -17,6 +19,8 @@ import {
   type EnterResultsRequest,
   type Page,
   type ResultDto,
+  type ResultInput,
+  type RetestResultRequest,
   type ReviewResultsRequest,
   type SampleListQuery,
   type SampleRequestDto,
@@ -79,7 +83,17 @@ export const QcLotMoves = defineTransitions<LotStatus>({
 
 const iso = (d: Date | null) => d?.toISOString() ?? null;
 
-const resultDto = (r: repo.ResultWithReview): ResultDto => ({
+/** The newest row of each test of a sample (re-tests are newer rows; 0037 qc.latest_results()). */
+export function latestPerTest<T extends { id: string; specTestId: string }>(rows: T[]): Map<string, T> {
+  const latest = new Map<string, T>();
+  for (const r of rows) {
+    const cur = latest.get(r.specTestId);
+    if (!cur || BigInt(r.id) > BigInt(cur.id)) latest.set(r.specTestId, r);
+  }
+  return latest;
+}
+
+const resultDto = (r: repo.ResultWithReview, latestIds: Set<string>): ResultDto => ({
   id: r.id,
   specTestId: r.specTestId,
   resultType: r.resultType,
@@ -91,7 +105,15 @@ const resultDto = (r: repo.ResultWithReview): ResultDto => ({
   enteredAt: r.enteredAt.toISOString(),
   reviewedBy: r.reviewedBy,
   reviewedAt: iso(r.reviewedAt),
+  retestOf: r.retestOf,
+  retestReason: r.retestReason,
+  superseded: !latestIds.has(r.id),
 });
+
+const resultDtos = (rows: repo.ResultWithReview[]): ResultDto[] => {
+  const latestIds = new Set([...latestPerTest(rows).values()].map((r) => r.id));
+  return rows.map((r) => resultDto(r, latestIds));
+};
 
 async function toDtos(q: Queryable, companyId: string, rows: repo.SampleRequestRow[]): Promise<SampleRequestDto[]> {
   const lots = await lotsByIds(q, companyId, rows.map((r) => r.lotId));
@@ -129,7 +151,7 @@ async function toDtos(q: Queryable, companyId: string, rows: repo.SampleRequestR
       retentionQty: r.retentionQty,
       sampleNotes: r.sampleNotes,
       resultCount: mine.length,
-      failedCount: mine.filter((x) => !x.passed).length,
+      failedCount: [...latestPerTest(mine).values()].filter((x) => !x.passed).length,
       unreviewedCount: mine.filter((x) => x.reviewedBy === null).length,
       userNames: Object.fromEntries([...new Set(who)].map((u) => [u, names.get(u) ?? u])),
     };
@@ -169,7 +191,7 @@ export async function getSample(auth: AuthContext, id: string): Promise<SampleRe
   return {
     ...dto!,
     tests,
-    results: (await repo.resultsOf(db, [id])).map(resultDto),
+    results: resultDtos(await repo.resultsOf(db, [id])),
     locations: stock.map((s) => ({ locationId: s.locationId, locationCode: where.get(s.locationId)?.code ?? s.locationId, qty: s.qty })),
   };
 }
@@ -234,6 +256,38 @@ function assertLotTakesResults(lot: Lot, isFg: boolean): void {
   throw new AppError('INVALID_TRANSITION', `Lot ${lot.lotNo} is ${lot.status}; results are entered while it is under test`, { status: lot.status });
 }
 
+type ResultValues = Pick<ResultInput, 'numericValue' | 'textValue' | 'complies' | 'remarks'>;
+
+/** One result row for test `t`: NUMERIC pass from the pinned limits, TEXT pass = the analyst's complies judgement. */
+function resultRow(id: string, t: specsRepo.SpecTestRow, r: ResultValues, label: string, at: object): repo.NewResult {
+  if (t.resultType === 'NUMERIC') {
+    if (!r.numericValue) throw new AppError('VALIDATION_FAILED', `${label}${t.name}: enter the numeric result`, at);
+    if (r.textValue || (r.complies !== undefined && r.complies !== null)) {
+      throw new AppError('VALIDATION_FAILED', `${label}${t.name} is numeric: pass / fail is computed from the limits`, at);
+    }
+    return {
+      sampleRequestId: id,
+      specTestId: t.id,
+      resultType: 'NUMERIC',
+      numericValue: r.numericValue,
+      textValue: null,
+      passed: withinLimits(r.numericValue, t.minValue, t.maxValue),
+      remarks: r.remarks ?? null,
+    };
+  }
+  if (!r.textValue) throw new AppError('VALIDATION_FAILED', `${label}${t.name}: record what was observed`, at);
+  if (typeof r.complies !== 'boolean') throw new AppError('VALIDATION_FAILED', `${label}${t.name}: say whether it complies with "${t.textLimit}"`, at);
+  if (r.numericValue) throw new AppError('VALIDATION_FAILED', `${label}${t.name} is a text test`, at);
+  return { sampleRequestId: id, specTestId: t.id, resultType: 'TEXT', numericValue: null, textValue: r.textValue, passed: r.complies, remarks: r.remarks ?? null };
+}
+
+/** Owner 2026-11-18: QC never rejects an FG lot; a failed result puts it on HOLD for QA's investigation. */
+async function holdFgOnFailure(tx: Tx, auth: AuthContext, lot: Lot, isFg: boolean, failed: string[], id: string): Promise<void> {
+  if (isFg && failed.length > 0 && lot.status === 'UNDER_TEST') {
+    await transition(tx, QcLotMoves, { entityId: lot.id, to: 'HOLD', actor: auth, reason: `QC result failed: ${failed.join(', ')} (sample request ${id})`.slice(0, 500) });
+  }
+}
+
 export async function enterResults(auth: AuthContext, id: string, input: EnterResultsRequest): Promise<SampleRequestDto> {
   await withTransaction(txContext(auth, `enter QC results for sample ${id}`), async (tx) => {
     const req = await lockRequest(tx, auth, id, 'SAMPLED');
@@ -251,34 +305,39 @@ export async function enterResults(auth: AuthContext, id: string, input: EnterRe
       if (seen.has(r.specTestId)) throw new AppError('VALIDATION_FAILED', `Result ${i + 1}: ${t.name} is given twice`, at);
       seen.add(r.specTestId);
       if (entered.has(r.specTestId)) {
-        throw new AppError('ALREADY_EXISTS', `${t.name} already has a result; a result is never changed (a re-test is a new row)`, at);
+        throw new AppError('ALREADY_EXISTS', `${t.name} already has a result; a result is never changed (re-test it: a new row)`, at);
       }
-      if (t.resultType === 'NUMERIC') {
-        if (!r.numericValue) throw new AppError('VALIDATION_FAILED', `${t.name}: enter the numeric result`, at);
-        if (r.textValue || (r.complies !== undefined && r.complies !== null)) {
-          throw new AppError('VALIDATION_FAILED', `${t.name} is numeric: pass / fail is computed from the limits`, at);
-        }
-        return {
-          sampleRequestId: id,
-          specTestId: t.id,
-          resultType: 'NUMERIC',
-          numericValue: r.numericValue,
-          textValue: null,
-          passed: withinLimits(r.numericValue, t.minValue, t.maxValue),
-          remarks: r.remarks ?? null,
-        };
-      }
-      if (!r.textValue) throw new AppError('VALIDATION_FAILED', `${t.name}: record what was observed`, at);
-      if (typeof r.complies !== 'boolean') throw new AppError('VALIDATION_FAILED', `${t.name}: say whether it complies with "${t.textLimit}"`, at);
-      if (r.numericValue) throw new AppError('VALIDATION_FAILED', `${t.name} is a text test`, at);
-      return { sampleRequestId: id, specTestId: t.id, resultType: 'TEXT', numericValue: null, textValue: r.textValue, passed: r.complies, remarks: r.remarks ?? null };
+      return resultRow(id, t, r, '', at);
     });
     await repo.insertResults(tx, rows);
-    const failed = rows.filter((r) => !r.passed).map((r) => tests.get(r.specTestId)!.name);
-    // Owner 2026-11-18: QC never rejects an FG lot; a failure puts it on HOLD for QA's investigation.
-    if (isFg && failed.length > 0 && lot.status === 'UNDER_TEST') {
-      await transition(tx, QcLotMoves, { entityId: lot.id, to: 'HOLD', actor: auth, reason: `QC result failed: ${failed.join(', ')} (sample request ${id})`.slice(0, 500) });
+    await holdFgOnFailure(tx, auth, lot, isFg, rows.filter((r) => !r.passed).map((r) => tests.get(r.specTestId)!.name), id);
+  });
+  return getSample(auth, id);
+}
+
+/**
+ * Re-test (task 4; 0039): a new result for the test of `resultId`, which must be that test's latest result on this
+ * sample (re-test the newest row; the chain of re-tests stays linear). The original is never edited. A failed
+ * re-test on an FG lot puts it on HOLD as any failed result does; a passing re-test does not lift a hold (QA).
+ */
+export async function retestResult(auth: AuthContext, id: string, resultId: string, input: RetestResultRequest): Promise<SampleRequestDto> {
+  await withTransaction(txContext(auth, `re-test QC result ${resultId} of sample ${id}: ${input.reason}`), async (tx) => {
+    const req = await lockRequest(tx, auth, id, 'SAMPLED');
+    const lot = await getLot(tx, auth.companyId, req.lotId);
+    const item = (await qcItems(tx, auth.companyId, [lot.itemId])).get(lot.itemId);
+    const isFg = item?.type === 'FG';
+    assertLotTakesResults(lot, isFg);
+    const all = await repo.resultsOf(tx, [id]);
+    const orig = all.find((r) => r.id === resultId);
+    if (!orig) throw new AppError('NOT_FOUND', 'This result is not on this sample');
+    const latest = latestPerTest(all).get(orig.specTestId)!;
+    if (latest.id !== orig.id) {
+      throw new AppError('INVALID_TRANSITION', `Result ${orig.id} was already re-tested; re-test its latest result (${latest.id})`, { latestResultId: latest.id });
     }
+    const t = (await specsRepo.specTestsOf(tx, req.specId!)).find((x) => x.id === orig.specTestId)!;
+    const row = { ...resultRow(id, t, input, 'Re-test of ', { resultId }), retestOf: orig.id, retestReason: input.reason };
+    await repo.insertResults(tx, [row]);
+    await holdFgOnFailure(tx, auth, lot, isFg, row.passed ? [] : [t.name], id);
   });
   return getSample(auth, id);
 }

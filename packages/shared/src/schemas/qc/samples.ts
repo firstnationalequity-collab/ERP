@@ -62,6 +62,21 @@ export type ResultInput = z.infer<typeof ResultInput>;
 export const EnterResultsRequest = z.object({ results: z.array(ResultInput).min(1).max(100) }).strict();
 export type EnterResultsRequest = z.infer<typeof EnterResultsRequest>;
 
+/**
+ * Re-test (M4 task 4; 0039): a NEW result for the same test of the same sample, repeating the test's latest result
+ * (which is never edited). `reason` says why (10–500 characters). Values as in ResultInput.
+ */
+export const RetestResultRequest = z
+  .object({
+    numericValue: resultValue.nullable().optional(),
+    textValue: optText(500),
+    complies: z.boolean().nullable().optional(),
+    remarks: optText(1000),
+    reason: z.string().trim().min(10, 'Say why the test is repeated (at least 10 characters)').max(500),
+  })
+  .strict();
+export type RetestResultRequest = z.infer<typeof RetestResultRequest>;
+
 /** Review every result of the sample not yet reviewed (or the ones named), with one REVIEWED e-signature. */
 export const ReviewResultsRequest = z.object({ resultIds: z.array(id).min(1).max(100).optional(), signature: ESignRequest }).strict();
 export type ReviewResultsRequest = z.infer<typeof ReviewResultsRequest>;
@@ -84,6 +99,11 @@ export interface ResultDto {
   enteredAt: string;
   reviewedBy: string | null;
   reviewedAt: string | null;
+  /** Re-test rows (0039): the result this one repeats, and why. */
+  retestOf: string | null;
+  retestReason: string | null;
+  /** A newer re-test of this test exists: this row is no longer the test's latest result. */
+  superseded: boolean;
 }
 
 export interface SampleRequestDto {
@@ -109,7 +129,7 @@ export interface SampleRequestDto {
   testQty: string | null;
   retentionQty: string | null;
   sampleNotes: string | null;
-  /** Results entered / failed / not yet reviewed. */
+  /** Results entered (all rows) / tests whose latest result failed / results not yet reviewed. */
   resultCount: number;
   failedCount: number;
   unreviewedCount: number;

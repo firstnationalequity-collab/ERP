@@ -21,3 +21,4 @@ export * from './schemas/purch/invoices';
 export * from './schemas/qc/specs';
 export * from './schemas/qc/samples';
 export * from './schemas/qc/dispositions';
+export * from './schemas/qc/coas';

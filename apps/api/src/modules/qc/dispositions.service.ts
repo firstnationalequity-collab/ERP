@@ -40,7 +40,7 @@ import {
   type Lot,
 } from '../../engines/inventory';
 import { qcItemIdsMatching, qcItems, type QcItemRef } from '../masters/qc-refs.service';
-import { QcLotMoves, SamplingMoves } from './samples.service';
+import { latestPerTest, QcLotMoves, SamplingMoves } from './samples.service';
 import * as specsRepo from './specs.repo';
 import * as samplesRepo from './sample-requests.repo';
 import * as repo from './dispositions.repo';
@@ -68,7 +68,7 @@ interface Assessment {
 
 const pct4 = (v: string) => new Decimal(v).toDecimalPlaces(4, Decimal.ROUND_HALF_UP).toFixed(4);
 
-function limitText(t: specsRepo.SpecTestRow): string {
+export function limitText(t: specsRepo.SpecTestRow): string {
   if (t.resultType === 'TEXT') return t.textLimit ?? '';
   const unit = t.unit ? ` ${t.unit}` : '';
   const n = (v: string) => new Decimal(v).toString();
@@ -100,11 +100,7 @@ async function assessLots(q: Queryable, companyId: string, lots: Lot[], lock = f
     const item = items.get(lot.itemId);
     const request = requestOf.get(lot.id) ?? null;
     const mine = request ? results.filter((r) => r.sampleRequestId === request.id) : [];
-    const latest = new Map<string, samplesRepo.ResultWithReview>();
-    for (const r of mine) {
-      const cur = latest.get(r.specTestId);
-      if (!cur || BigInt(r.id) > BigInt(cur.id)) latest.set(r.specTestId, r);
-    }
+    const latest = latestPerTest(mine);
     const specTests = request?.specId ? (testsOf.get(request.specId) ?? []) : [];
     const tests: DispositionTestDto[] = specTests.map((t) => {
       const r = latest.get(t.id);
