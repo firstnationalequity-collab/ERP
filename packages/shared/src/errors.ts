@@ -74,6 +74,8 @@ export const ErrorCodes = [
   /** A return debit note is not reversed: its lot is no longer REJECTED (the return emptied it: RETURNED; or destroyed) (owner 2026-11-27; 0033). */
   'LOT_RETURN_NOT_REVERSIBLE',
   'CREDIT_LIMIT_EXCEEDED',
+  /** The item has no APPROVED QC specification (M4; 0034). */
+  'SPEC_NOT_APPROVED',
   'OPEN_DEVIATION',
   'DUPLICATE_REQUEST',
   'INTERNAL_ERROR',

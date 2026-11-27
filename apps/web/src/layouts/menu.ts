@@ -6,7 +6,7 @@ export interface MenuEntry {
   key: string;
   label: string;
   path: string;
-  group?: 'Procurement' | 'Masters' | 'Finance' | 'Compliance' | 'Administration';
+  group?: 'Procurement' | 'Quality control' | 'Masters' | 'Finance' | 'Compliance' | 'Administration';
   /** Visible when the user holds ANY of these; omitted = everyone signed in. */
   anyOf?: PermissionKey[];
 }
@@ -23,6 +23,7 @@ export const MENU: MenuEntry[] = [
   { key: 'debit-notes', label: 'Debit notes', path: '/purch/debit-notes', group: 'Procurement', anyOf: ['purch.view', 'fin.view'] },
   { key: 'vendor-ledger', label: 'Vendor ledger', path: '/purch/vendor-ledger', group: 'Procurement', anyOf: ['purch.view', 'fin.view'] },
   { key: 'ap-ageing', label: 'AP ageing', path: '/purch/ap-ageing', group: 'Procurement', anyOf: ['purch.view', 'fin.view'] },
+  { key: 'qc-specs', label: 'Specifications', path: '/qc/specs', group: 'Quality control', anyOf: ['qc.view'] },
   { key: 'items', label: 'Items', path: '/master/items', group: 'Masters', anyOf: ['master.view'] },
   { key: 'formulas', label: 'Master formulas', path: '/master/formulas', group: 'Masters', anyOf: ['master.view'] },
   { key: 'products', label: 'Products', path: '/master/products', group: 'Masters', anyOf: ['master.view'] },

@@ -16,6 +16,7 @@ import { auditRouter } from './core/audit/audit.routes';
 import { mastersRouter } from './modules/masters/masters.routes';
 import { financeRouter } from './modules/finance/finance.routes';
 import { procurementRouter } from './modules/procurement/procurement.routes';
+import { qcRouter } from './modules/qc/qc.routes';
 
 export function createApp(): express.Express {
   const app = express();
@@ -38,6 +39,7 @@ export function createApp(): express.Express {
   api.use('/master', authenticate, requireCurrentPassword, mastersRouter);
   api.use('/fin', authenticate, requireCurrentPassword, financeRouter);
   api.use('/purch', authenticate, requireCurrentPassword, procurementRouter);
+  api.use('/qc', authenticate, requireCurrentPassword, qcRouter);
 
   app.use('/api/v1', api);
   app.use(notFound);

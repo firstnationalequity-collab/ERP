@@ -32,7 +32,9 @@ When an item is verified, strike it through and add "verified DD-MM-YYYY by <nam
 - Standing · M9 · Serialization / track-and-trace vendor (DRAP) · not chosen · QA + Management · vendor named and interface agreed
 
 ## QC
-(M4 items are added as they are built.)
+- 27-11-2026 · M4 · Specs approved directly by a QC Manager with e-signature (not the approval matrix); approver ≠ drafter ≠ submitter; rejection → DRAFT with reason · simplest flow meeting "QC Manager approval" · QC · draft, submit and approve a spec in Specifications; try approving your own (refused)
+- 27-11-2026 · M4 · Spec items: RM, PM, API, EXCIPIENT, BULK, FG; tests NUMERIC (min/max, negative allowed, 6 decimals) or TEXT (e.g. "Complies"); one assay and one water test per spec · covers pharmacopoeial monographs · QC · enter one real monograph (e.g. Paracetamol BP) and check every test fits
+- 27-11-2026 · M4 · A lot cannot be sampled until its item has an APPROVED spec (SPEC_NOT_APPROVED) · results need limits · QC · confirm every QC-required item gets a spec before go-live
 
 ## Production
 - See Finance (conversion cost) and QA (checker steps, line clearance).

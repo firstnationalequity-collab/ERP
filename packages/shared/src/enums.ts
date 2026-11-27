@@ -203,6 +203,20 @@ export type LandedCostTaxRole = (typeof LandedCostTaxRole)[number];
 export const SampleRequestStatus = ['OPEN', 'CANCELLED'] as const;
 export type SampleRequestStatus = (typeof SampleRequestStatus)[number];
 
+/**
+ * QC specification version (M4 task 1; 0034): DRAFT → PENDING_APPROVAL → APPROVED (QC Manager, e-signature)
+ * → OBSOLETE when the next version is approved; a rejection returns it to DRAFT.
+ */
+export const QcSpecStatus = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'OBSOLETE'] as const;
+export type QcSpecStatus = (typeof QcSpecStatus)[number];
+
+/** A spec test is NUMERIC (min and/or max) or TEXT (a text limit the analyst judges, e.g. "Complies"). */
+export const QcResultType = ['NUMERIC', 'TEXT'] as const;
+export type QcResultType = (typeof QcResultType)[number];
+
+/** Item types a QC specification can be written for (0034 qc.guard_spec). */
+export const QcSpecItemTypes = ['RM', 'PM', 'API', 'EXCIPIENT', 'BULK', 'FG'] as const;
+
 export const DeviationClass = ['MINOR', 'MAJOR', 'CRITICAL'] as const;
 export type DeviationClass = (typeof DeviationClass)[number];
 

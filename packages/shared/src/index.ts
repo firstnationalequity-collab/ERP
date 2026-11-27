@@ -18,3 +18,4 @@ export * from './schemas/purch/orders';
 export * from './schemas/purch/grns';
 export * from './schemas/purch/landed-costs';
 export * from './schemas/purch/invoices';
+export * from './schemas/qc/specs';
