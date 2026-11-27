@@ -1,8 +1,9 @@
 // "My approvals": steps waiting for one of my roles (never my own documents). Approve/reject = e-signature.
+// A document may raise a warning the approver must acknowledge (vendor payment: FILER_CHECK_STALE, task 5b).
 import { useState } from 'react';
-import { App, Button, Descriptions, Drawer, Space, Table, Timeline, Typography } from 'antd';
+import { Alert, App, Button, Checkbox, Descriptions, Drawer, Space, Table, Timeline, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ApprovalDto, ApprovedSourceDto, FormulaDto, InboxItemDto, Page } from '@albert/shared';
+import type { ApprovalDto, ApprovedSourceDto, FormulaDto, InboxItemDto, Page, VendorPaymentDto } from '@albert/shared';
 import { AttachmentList } from '../../components/Attachments';
 import { RefLabel } from '../../components/RefSelect';
 import { FormulaLinesTable } from '../master/FormulasPage';
@@ -10,7 +11,7 @@ import { api, newIdempotencyKey } from '../../api/client';
 import { ESignModal, type ESignResult } from '../../components/ESignModal';
 import { PageHeader } from '../../components/PageHeader';
 import { StatusTag } from '../../components/StatusTag';
-import { formatDateTime, formatDecimal, formatPKR } from '../../lib/format';
+import { formatDate, formatDateTime, formatDecimal, formatPKR } from '../../lib/format';
 
 function valueText(v: { measure: string; measuredValue: string | null; amount?: string | null; currency?: string | null }): string {
   if (v.measure === 'NONE' || v.measuredValue === null) return '—';
@@ -25,6 +26,7 @@ export function InboxPage() {
   const [page, setPage] = useState(1);
   const [openId, setOpenId] = useState<string | null>(null);
   const [decision, setDecision] = useState<'approve' | 'reject' | null>(null);
+  const [acknowledged, setAcknowledged] = useState<string[]>([]);
 
   const inbox = useQuery({
     queryKey: ['approvals', 'inbox', page],
@@ -41,7 +43,7 @@ export function InboxPage() {
       if (!openId || !decision) return;
       await api<ApprovalDto>(`/core/approvals/${openId}/${decision}`, {
         method: 'POST',
-        body: { signature: r.signature },
+        body: decision === 'approve' && acknowledged.length ? { signature: r.signature, acknowledgements: acknowledged } : { signature: r.signature },
         idempotencyKey: newIdempotencyKey(),
       });
     },
@@ -49,6 +51,7 @@ export function InboxPage() {
       void message.success(decision === 'approve' ? 'Approved' : 'Rejected');
       setDecision(null);
       setOpenId(null);
+      setAcknowledged([]);
       await qc.invalidateQueries({ queryKey: ['approvals'] });
     },
   });
@@ -62,7 +65,7 @@ export function InboxPage() {
         loading={inbox.isLoading}
         dataSource={inbox.data?.items ?? []}
         pagination={{ current: page, pageSize: 25, total: inbox.data?.total ?? 0, onChange: setPage }}
-        onRow={(r) => ({ onClick: () => setOpenId(r.approvalId), style: { cursor: 'pointer' } })}
+        onRow={(r) => ({ onClick: () => { setOpenId(r.approvalId); setAcknowledged([]); }, style: { cursor: 'pointer' } })}
         columns={[
           { title: 'Document', render: (_, r) => <Typography.Link>{r.docNo ?? `${r.docType} #${r.docId}`}</Typography.Link> },
           { title: 'Type', dataIndex: 'docType' },
@@ -87,7 +90,7 @@ export function InboxPage() {
               <Descriptions.Item label="Requested by">{a.requestedBy.fullName}</Descriptions.Item>
               <Descriptions.Item label="Requested">{formatDateTime(a.createdAt)}</Descriptions.Item>
             </Descriptions>
-            <ApprovalDocument approval={a} />
+            <ApprovalDocument approval={a} acknowledged={acknowledged} onAcknowledge={setAcknowledged} />
             {(a.attachments.length > 0 || a.docType === 'AVL') && (
               <>
                 <Typography.Title level={5} style={{ marginTop: 16 }}>Attachments</Typography.Title>
@@ -133,8 +136,13 @@ export function InboxPage() {
   );
 }
 
-/** What is being approved, for the document types that have a detail view (AVL source, master formula). */
-function ApprovalDocument({ approval }: { approval: ApprovalDto }) {
+/** What is being approved, for the document types that have a detail view (AVL source, master formula, vendor payment). */
+function ApprovalDocument({ approval, acknowledged, onAcknowledge }: { approval: ApprovalDto; acknowledged: string[]; onAcknowledge: (codes: string[]) => void }) {
+  const payment = useQuery({
+    queryKey: ['approvals', 'doc', 'VENDOR_PAYMENT', approval.docId],
+    queryFn: () => api<VendorPaymentDto>(`/purch/vendor-payments/${approval.docId}`),
+    enabled: approval.docType === 'VENDOR_PAYMENT',
+  });
   const avl = useQuery({
     queryKey: ['approvals', 'doc', 'AVL', approval.docId],
     queryFn: () => api<ApprovedSourceDto>(`/master/approved-sources/${approval.docId}`),
@@ -179,6 +187,35 @@ function ApprovalDocument({ approval }: { approval: ApprovalDto }) {
         <div style={{ marginTop: 8 }}>
           <FormulaLinesTable lines={f.lines ?? []} />
         </div>
+      </>
+    );
+  }
+  if (approval.docType === 'VENDOR_PAYMENT' && payment.data) {
+    const p = payment.data;
+    return (
+      <>
+        <Typography.Title level={5} style={{ marginTop: 16 }}>Vendor payment</Typography.Title>
+        <Descriptions column={1} size="small" bordered>
+          <Descriptions.Item label="Vendor">{p.vendorCode} — {p.vendorName}</Descriptions.Item>
+          <Descriptions.Item label="Payment date">{formatDate(p.paymentDate)}</Descriptions.Item>
+          <Descriptions.Item label="WHT">{p.whtTaxCode ? `${p.whtTaxCode} at ${formatDecimal(p.whtRate, 4)}%: ${formatDecimal(p.whtAmount)}` : 'None'}</Descriptions.Item>
+          <Descriptions.Item label="Filer (ATL)">
+            {p.payeeIsFiler === null ? 'Not checked (non-filer rate)' : `${p.payeeIsFiler ? 'Filer' : 'Non-filer'}, checked ${formatDate(p.payeeFilerCheckedOn)}`}
+          </Descriptions.Item>
+        </Descriptions>
+        {p.filerCheckStale && approval.status === 'PENDING' && (
+          <Alert
+            style={{ marginTop: 8 }}
+            type="warning"
+            showIcon
+            message={`The vendor's filer status was ${p.payeeFilerCheckedOn ? `last checked on ${formatDate(p.payeeFilerCheckedOn)}` : 'never checked'} (limit ${p.filerCheckMaxDays} days)`}
+            description={
+              <Checkbox checked={acknowledged.includes('FILER_CHECK_STALE')} onChange={(e) => onAcknowledge(e.target.checked ? ['FILER_CHECK_STALE'] : [])}>
+                I have read this warning and approve the WHT rate as shown
+              </Checkbox>
+            }
+          />
+        )}
       </>
     );
   }

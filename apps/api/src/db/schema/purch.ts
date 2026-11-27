@@ -1,6 +1,6 @@
-// Drizzle description of the `purch` schema. Source of truth: src/db/migrations/0023_procurement_pr_po.sql, 0025, 0027 (GRN), 0029 (landed cost), 0030 (landed-cost currency, corrections, reversal), 0031 (vendor invoices, payments; PKR-only charge types).
+// Drizzle description of the `purch` schema. Source of truth: src/db/migrations/0023_procurement_pr_po.sql, 0025, 0027 (GRN), 0029 (landed cost), 0030 (landed-cost currency, corrections, reversal), 0031 (vendor invoices, payments; PKR-only charge types), 0032 (reversals, WHT base, debit notes).
 import { boolean, date, integer, numeric, pgSchema, text } from 'drizzle-orm/pg-core';
-import type { VendorInvoiceStatus, VendorInvoiceType, VendorPaymentStatus, GrnStatus, LandedCostBasis, LandedCostStatus, LandedCostTaxRole, Incoterm, PurchaseOrderStatus, PurchaseOrderType, PurchaseRequisitionStatus } from '@albert/shared';
+import type { DebitNoteReason, DebitNoteStatus, WhtBase, VendorInvoiceStatus, VendorInvoiceType, VendorPaymentStatus, GrnStatus, LandedCostBasis, LandedCostStatus, LandedCostTaxRole, Incoterm, PurchaseOrderStatus, PurchaseOrderType, PurchaseRequisitionStatus } from '@albert/shared';
 import { auditColumns, bigintString, companyId, identityId, tstz } from './columns';
 
 export const purch = pgSchema('purch');
@@ -196,6 +196,10 @@ export const vendorInvoices = purch.table('vendor_invoices', {
   postingDate: date('posting_date', { mode: 'string' }),
   postedBy: bigintString('posted_by'),
   postedAt: tstz('posted_at'),
+  reversedBy: bigintString('reversed_by'),
+  reversedAt: tstz('reversed_at'),
+  reversalDate: date('reversal_date', { mode: 'string' }),
+  reversalReason: text('reversal_reason'),
   ...auditColumns(),
 });
 
@@ -237,6 +241,9 @@ export const vendorPayments = purch.table('vendor_payments', {
   whtTaxCodeId: bigintString('wht_tax_code_id'),
   whtRate: numeric('wht_rate', { precision: 9, scale: 4 }).notNull(),
   whtAmount: numeric('wht_amount', { precision: 18, scale: 2 }).notNull(),
+  /** 0032: the code's base and the PKR the WHT is worked out on (NULL on payments drafted before 0032: gross PKR). */
+  whtBase: text('wht_base').$type<WhtBase>(),
+  whtBasePkr: numeric('wht_base_pkr', { precision: 18, scale: 2 }),
   netPaid: numeric('net_paid', { precision: 18, scale: 2 }).notNull(),
   payeeIsFiler: boolean('payee_is_filer'),
   payeeFilerCheckedOn: date('payee_filer_checked_on', { mode: 'string' }),
@@ -250,6 +257,12 @@ export const vendorPayments = purch.table('vendor_payments', {
   postingDate: date('posting_date', { mode: 'string' }),
   postedBy: bigintString('posted_by'),
   postedAt: tstz('posted_at'),
+  filerWarningAckBy: bigintString('filer_warning_ack_by'),
+  filerWarningAckAt: tstz('filer_warning_ack_at'),
+  reversedBy: bigintString('reversed_by'),
+  reversedAt: tstz('reversed_at'),
+  reversalDate: date('reversal_date', { mode: 'string' }),
+  reversalReason: text('reversal_reason'),
   ...auditColumns(),
 });
 
@@ -260,5 +273,51 @@ export const paymentAllocations = purch.table('payment_allocations', {
   invoiceId: bigintString('invoice_id').notNull(),
   foreignAmount: numeric('foreign_amount', { precision: 18, scale: 2 }).notNull(),
   carryingPkr: numeric('carrying_pkr', { precision: 18, scale: 2 }),
+  ...auditColumns(),
+});
+
+// 0032 (owner 2026-11-26): debit notes against a POSTED GOODS vendor invoice.
+export const debitNotes = purch.table('debit_notes', {
+  id: identityId(),
+  companyId: companyId(),
+  docNo: text('doc_no').notNull(),
+  reason: text('reason').$type<DebitNoteReason>().notNull(),
+  vendorId: bigintString('vendor_id').notNull(),
+  invoiceId: bigintString('invoice_id').notNull(),
+  dnDate: date('dn_date', { mode: 'string' }).notNull(),
+  currency: text('currency').notNull(),
+  exchangeRate: numeric('exchange_rate', { precision: 18, scale: 6 }).notNull(),
+  goodsAmount: numeric('goods_amount', { precision: 18, scale: 2 }).notNull(),
+  taxAmount: numeric('tax_amount', { precision: 18, scale: 2 }).notNull(),
+  totalAmount: numeric('total_amount', { precision: 18, scale: 2 }).notNull(),
+  totalPkr: numeric('total_pkr', { precision: 18, scale: 2 }).notNull(),
+  notes: text('notes'),
+  status: text('status').$type<DebitNoteStatus>().notNull(),
+  submittedBy: bigintString('submitted_by'),
+  submittedAt: tstz('submitted_at'),
+  postingDate: date('posting_date', { mode: 'string' }),
+  postedBy: bigintString('posted_by'),
+  postedAt: tstz('posted_at'),
+  ...auditColumns(),
+});
+
+export const debitNoteLines = purch.table('debit_note_lines', {
+  id: identityId(),
+  companyId: companyId(),
+  debitNoteId: bigintString('debit_note_id').notNull(),
+  lineNo: integer('line_no').notNull(),
+  invoiceLineId: bigintString('invoice_line_id').notNull(),
+  qty: numeric('qty', { precision: 18, scale: 4 }),
+  unitPrice: numeric('unit_price', { precision: 18, scale: 6 }),
+  amount: numeric('amount', { precision: 18, scale: 2 }).notNull(),
+  taxCodeId: bigintString('tax_code_id'),
+  taxRate: numeric('tax_rate', { precision: 9, scale: 4 }).notNull(),
+  taxAmount: numeric('tax_amount', { precision: 18, scale: 2 }).notNull(),
+  amountPkr: numeric('amount_pkr', { precision: 18, scale: 2 }).notNull(),
+  taxPkr: numeric('tax_pkr', { precision: 18, scale: 2 }).notNull(),
+  lotId: bigintString('lot_id'),
+  movementId: bigintString('movement_id'),
+  stockValuePkr: numeric('stock_value_pkr', { precision: 18, scale: 2 }),
+  priceVariancePkr: numeric('price_variance_pkr', { precision: 18, scale: 2 }),
   ...auditColumns(),
 });

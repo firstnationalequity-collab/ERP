@@ -24,7 +24,13 @@ export const APPROVAL_MATRIX_COUNTERSIGN_KEY: PermissionKey = 'fin.approval_rule
 const decimal = z.string().regex(/^\d{1,14}(\.\d{1,4})?$/, 'Decimal number with up to 4 decimals');
 const id = z.string().regex(/^\d+$/, 'Invalid id');
 
-export const ApprovalDecisionRequest = z.object({ signature: ESignRequest }).strict();
+/**
+ * `acknowledgements`: warnings the approver has read and accepts, by code, when the document raises one (e.g.
+ * FILER_CHECK_STALE on a vendor payment, owner 2026-11-26); without it the approval is refused (ACKNOWLEDGEMENT_REQUIRED).
+ */
+export const ApprovalDecisionRequest = z
+  .object({ signature: ESignRequest, acknowledgements: z.array(z.string().trim().regex(/^[A-Z_]{3,40}$/)).max(10).optional() })
+  .strict();
 export type ApprovalDecisionRequest = z.infer<typeof ApprovalDecisionRequest>;
 
 export const ApprovalBand = z

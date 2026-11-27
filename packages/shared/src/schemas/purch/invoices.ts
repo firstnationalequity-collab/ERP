@@ -2,9 +2,9 @@
 // architecture §6 "Vendor invoice posted" / "Vendor payment", §7.5; owner Q3, Q4, Q5 and "extra" (2026-11-25).
 // Amounts are decimal strings (rule 10): money 2 decimals, quantities 4, unit prices 6.
 import { z } from 'zod';
-import { VendorInvoiceType, type VendorInvoiceStatus, type VendorPaymentStatus } from '../../enums';
+import { DebitNoteReason, VendorInvoiceType, type DebitNoteStatus, type VendorInvoiceStatus, type VendorPaymentStatus, type WhtBase } from '../../enums';
 import { decimalString, unitRate } from '../master/masters';
-import { ESignRequest } from '../core/esign';
+import { ESignRequest, WitnessSignRequest } from '../core/esign';
 
 const id = z.string().regex(/^\d+$/, 'Invalid id');
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date: YYYY-MM-DD');
@@ -68,6 +68,13 @@ export type UpdateVendorInvoiceRequest = z.infer<typeof UpdateVendorInvoiceReque
 export const ReleaseVendorInvoiceRequest = z.object({ signature: ESignRequest }).strict();
 export type ReleaseVendorInvoiceRequest = z.infer<typeof ReleaseVendorInvoiceRequest>;
 
+/**
+ * Owner 2026-11-26 (task 5b): a Finance Manager reverses a POSTED vendor invoice (nothing paid or debited against it)
+ * or a POSTED payment (bounced cheque, wrong payment) with an e-signature, meaning REVERSED, and a reason.
+ */
+export const ReverseVendorDocumentRequest = z.object({ signature: ESignRequest }).strict();
+export type ReverseVendorDocumentRequest = z.infer<typeof ReverseVendorDocumentRequest>;
+
 export const VendorInvoiceListQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(25),
@@ -129,8 +136,9 @@ export interface VendorInvoiceDto {
   taxAmount: string;
   totalAmount: string;
   totalPkr: string;
-  /** Settled by POSTED payments, and what is left (invoice currency; PKR at the carrying amount). */
+  /** Settled by POSTED payments, taken off by POSTED debit notes, and what is left (invoice currency; PKR at the carrying amount). */
   paidAmount: string;
+  debitedAmount: string;
   openAmount: string;
   openPkr: string;
   notes: string | null;
@@ -143,6 +151,12 @@ export interface VendorInvoiceDto {
   postedByName: string | null;
   postedAt: string | null;
   journalDocNo: string | null;
+  /** REVERSED (owner 2026-11-26): who, when, the reversal's date, reason and journal. */
+  reversedByName: string | null;
+  reversedAt: string | null;
+  reversalDate: string | null;
+  reversalReason: string | null;
+  reversalJournalDocNo: string | null;
   createdBy: string;
   createdByName: string;
   createdAt: string;
@@ -202,6 +216,9 @@ const paymentFields = {
   notes: optText(1000),
   allocations: z.array(allocation).min(1, 'Settle at least one invoice').max(200),
 };
+/** Owner 2026-11-26: posting needs the bank reference or cheque number; it may be given here if the draft had none. */
+export const PostVendorPaymentRequest = z.object({ reference: z.string().trim().min(1).max(60).optional() }).strict();
+export type PostVendorPaymentRequest = z.infer<typeof PostVendorPaymentRequest>;
 export const CreateVendorPaymentRequest = z.object({ vendorId: id, ...paymentFields }).strict();
 export type CreateVendorPaymentRequest = z.infer<typeof CreateVendorPaymentRequest>;
 export const UpdateVendorPaymentRequest = z.object(paymentFields).strict();
@@ -230,11 +247,23 @@ export interface VendorPaymentDto {
   whtTaxCode: string | null;
   whtRate: string;
   whtAmount: string;
-  /** The WHT code's rate is still a placeholder: the payment cannot be submitted or posted (TAX_RATE_NOT_CONFIRMED). */
+  /** The WHT code's rates or base are not confirmed by Finance: the payment cannot be submitted or posted (TAX_RATE_NOT_CONFIRMED). */
   whtRateUnconfirmed: boolean;
+  /** Owner 2026-11-26: the code's base (incl. / excl. sales tax) and the PKR the WHT is worked out on. */
+  whtBase: WhtBase | null;
+  whtBasePkr: string;
   netPaid: string;
+  /** The vendor's filer status (ATL), copied at draft and submit: the filer rate applies only when true. */
   payeeIsFiler: boolean | null;
   payeeFilerCheckedOn: string | null;
+  /**
+   * The filer status was checked more than setting purch.vendor.filer_check_max_days ago (or never): the approver
+   * acknowledges the warning (FILER_CHECK_STALE) when approving.
+   */
+  filerCheckStale: boolean;
+  filerCheckMaxDays: number;
+  filerWarningAckByName: string | null;
+  filerWarningAckAt: string | null;
   carryingPkr: string | null;
   exchangeDiffPkr: string | null;
   reference: string | null;
@@ -246,10 +275,154 @@ export interface VendorPaymentDto {
   postedByName: string | null;
   postedAt: string | null;
   journalDocNo: string | null;
+  reversedByName: string | null;
+  reversedAt: string | null;
+  reversalDate: string | null;
+  reversalReason: string | null;
+  reversalJournalDocNo: string | null;
   createdBy: string;
   createdByName: string;
   createdAt: string;
   allocations: PaymentAllocationDto[];
+}
+
+/** The warning code an approver acknowledges for a stale filer status (ApprovalDecisionRequest.acknowledgements). */
+export const FILER_CHECK_STALE = 'FILER_CHECK_STALE';
+
+// ---------------------------------------------------------------- debit notes (fin.debit_note.manage / approve; 0032)
+
+/**
+ * A line takes an invoice line of the debit note's invoice. PRICE_CLAIM: the amount off (invoice currency).
+ * SHORT_SUPPLY and RETURN_TO_VENDOR: the quantity; the amount is quantity × the invoice unit price. Tax follows the
+ * invoice line's tax code. A RETURN_TO_VENDOR note has one line (one lot, one witnessed movement).
+ */
+const debitNoteLine = z
+  .object({ invoiceLineId: id, qty: qty.optional(), amount: above0(money('Amount'), 'Amount').optional() })
+  .strict()
+  .refine((l) => !!l.qty !== !!l.amount, { message: 'A line takes the quantity (short supply, return) or the amount (price claim)', path: ['qty'] });
+export type DebitNoteLineInput = z.infer<typeof debitNoteLine>;
+
+const debitNoteFields = {
+  dnDate: isoDate,
+  notes: optText(1000),
+  lines: z.array(debitNoteLine).min(1, 'Add at least one line').max(200),
+};
+export const CreateDebitNoteRequest = z
+  .object({ invoiceId: id, reason: z.enum(DebitNoteReason), ...debitNoteFields })
+  .strict()
+  .superRefine((v, ctx) => {
+    const wantsQty = v.reason !== 'PRICE_CLAIM';
+    if (v.lines.some((l) => !!l.qty !== wantsQty)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['lines'], message: wantsQty ? 'Give the quantity on each line' : 'Give the amount on each line' });
+    }
+    if (v.reason === 'RETURN_TO_VENDOR' && v.lines.length !== 1) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['lines'], message: 'A return note returns one lot (one line)' });
+    }
+  });
+export type CreateDebitNoteRequest = z.infer<typeof CreateDebitNoteRequest>;
+export const UpdateDebitNoteRequest = z.object(debitNoteFields).strict();
+export type UpdateDebitNoteRequest = z.infer<typeof UpdateDebitNoteRequest>;
+
+/**
+ * Posting a RETURN_TO_VENDOR note is the Warehouse Manager's disposal (inv.lot.dispose): the location the lot leaves and
+ * the QA witness signature (qa.lot.witness) for the movement, entered at the same terminal (rule 1, 0020).
+ */
+export const PostDebitNoteRequest = z.object({ locationId: id.optional(), witness: WitnessSignRequest.optional() }).strict();
+export type PostDebitNoteRequest = z.infer<typeof PostDebitNoteRequest>;
+
+export const DebitNoteListQuery = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).default(25),
+  search: z.string().trim().max(100).optional(),
+  status: z.string().trim().max(30).optional(),
+  vendorId: id.optional(),
+  invoiceId: id.optional(),
+});
+export type DebitNoteListQuery = z.infer<typeof DebitNoteListQuery>;
+
+export interface DebitNoteLineDto {
+  id: string;
+  lineNo: number;
+  invoiceLineId: string;
+  invoiceLineNo: number;
+  itemCode: string | null;
+  itemName: string | null;
+  grnDocNo: string | null;
+  lotId: string | null;
+  lotNo: string | null;
+  qty: string | null;
+  unitPrice: string | null;
+  amount: string;
+  taxCode: string | null;
+  taxRate: string;
+  taxAmount: string;
+  amountPkr: string | null;
+  taxPkr: string | null;
+  /** RETURN_TO_VENDOR: the movement posted and the stock value it took off the lot; the rest of the PKR → price variance. */
+  movementId: string | null;
+  stockValuePkr: string | null;
+  priceVariancePkr: string | null;
+}
+export interface DebitNoteDto {
+  id: string;
+  docNo: string;
+  reason: DebitNoteReason;
+  vendorId: string;
+  vendorCode: string;
+  vendorName: string;
+  invoiceId: string;
+  invoiceDocNo: string;
+  vendorInvoiceNo: string;
+  dnDate: string;
+  currency: string;
+  exchangeRate: string;
+  goodsAmount: string;
+  taxAmount: string;
+  totalAmount: string;
+  totalPkr: string;
+  notes: string | null;
+  status: DebitNoteStatus;
+  approvalId: string | null;
+  submittedByName: string | null;
+  postingDate: string | null;
+  postedByName: string | null;
+  postedAt: string | null;
+  journalDocNo: string | null;
+  createdBy: string;
+  createdByName: string;
+  createdAt: string;
+  lines: DebitNoteLineDto[];
+}
+
+/** For the debit-note form: what can still be debited on each line of a POSTED GOODS invoice. */
+export interface DebitableLineDto {
+  invoiceLineId: string;
+  lineNo: number;
+  itemCode: string;
+  itemName: string;
+  grnDocNo: string;
+  lotId: string | null;
+  lotNo: string;
+  lotStatus: string | null;
+  qty: string;
+  matchedQty: string;
+  unitPrice: string;
+  amount: string;
+  taxCode: string | null;
+  taxRate: string;
+  /** On POSTED debit notes and on notes not yet posted (DRAFT, PENDING_APPROVAL, APPROVED). */
+  debitedAmount: string;
+  shortQtyOpen: string;
+  returnQtyOpen: string;
+  amountOpen: string;
+}
+export interface DebitableDto {
+  invoiceId: string;
+  docNo: string;
+  currency: string;
+  /** Still open on the invoice (total − POSTED payments − POSTED debit notes): a note never takes more. */
+  openAmount: string;
+  lines: DebitableLineDto[];
 }
 
 /** A vendor's POSTED invoice with something still open (the payment screen). */

@@ -1,7 +1,7 @@
 // Master data the procurement module needs, exported so modules/procurement never reads master tables itself
 // (CLAUDE.md "Modules talk to each other only through exported service functions"). Run inside the caller's
 // query or transaction; no permission checks here (the calling module's route did them).
-import { AvlItemTypes, type ItemStatus, type ItemType, type PartyStatus, type TaxKind } from '@albert/shared';
+import { AvlItemTypes, type ItemStatus, type ItemType, type PartyStatus, type TaxKind, type WhtBase } from '@albert/shared';
 import type { Queryable } from '../../db/client';
 import { AppError } from '../../core/errors';
 import * as repo from './purch-refs.repo';
@@ -26,9 +26,14 @@ export interface PurchTaxCodeRef {
   code: string;
   name: string;
   kind: TaxKind;
+  /** WITHHOLDING: the filer (ATL) rate. */
   rate: string;
   isPlaceholder: boolean;
   isActive: boolean;
+  /** WITHHOLDING only (owner 2026-11-26, 0032). */
+  nonFilerRate: string | null;
+  whtBase: WhtBase | null;
+  whtBaseConfirmed: boolean;
 }
 
 /** Tax codes for vendor invoices (sales tax on the bill) and payments (WHT). */

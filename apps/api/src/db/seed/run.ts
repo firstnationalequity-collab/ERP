@@ -33,6 +33,8 @@ export const DEFAULT_SERIES = [
   // Vendor invoices and payments (M3 task 5, 0031), e.g. VI-2627-00001 / VP-2627-00001 (format: agent default, PENDING OWNER).
   { docType: 'VENDOR_INVOICE', name: 'Vendor invoice', prefix: 'VI', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
   { docType: 'VENDOR_PAYMENT', name: 'Vendor payment', prefix: 'VP', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
+  // Debit notes (M3 task 5b, 0032), e.g. DN-2627-00001 (owner 2026-11-26).
+  { docType: 'DEBIT_NOTE', name: 'Vendor debit note', prefix: 'DN', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
   { docType: 'BATCH', name: 'Batch number', prefix: 'AP', pattern: '{PREFIX}{YY}-{SEQ:4}', reset: 'CALENDAR_YEAR' },
   { docType: 'JV', name: 'Manual journal voucher', prefix: 'JV', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
   { docType: 'SJ', name: 'System journal', prefix: 'SJ', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
@@ -66,6 +68,8 @@ export const DEFAULT_APPROVAL_RULES: {
   },
   { docType: 'SO_CREDIT', measure: 'AMOUNT_PKR', bands: [{ lower: '0', upper: null, steps: [[1, 'FINANCE_MANAGER']] }] },
   { docType: 'VENDOR_PAYMENT', measure: 'AMOUNT_PKR', bands: [{ lower: null, upper: null, steps: [[1, 'FINANCE_MANAGER']] }] },
+  // Owner 2026-11-26: the approval matrix applies to debit notes (band: agent default, like payments; PENDING OWNER).
+  { docType: 'DEBIT_NOTE', measure: 'AMOUNT_PKR', bands: [{ lower: null, upper: null, steps: [[1, 'FINANCE_MANAGER']] }] },
   {
     docType: 'STOCK_ADJUSTMENT',
     measure: 'AMOUNT_PKR',

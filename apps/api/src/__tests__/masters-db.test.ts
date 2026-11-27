@@ -70,7 +70,7 @@ beforeAll(async () => {
     uom = await one(`INSERT INTO master.uoms (code, name) VALUES ('KG', 'Kilogram') RETURNING id`);
     category = await one(`INSERT INTO master.item_categories (code, name) VALUES ('RM', 'Raw material') RETURNING id`);
     salesTax = await one(`INSERT INTO master.tax_codes (code, name, kind, rate) VALUES ('GST18', 'GST', 'SALES_TAX', 18) RETURNING id`);
-    wht = await one(`INSERT INTO master.tax_codes (code, name, kind, rate) VALUES ('WHT4', 'WHT', 'WITHHOLDING', 4.5) RETURNING id`);
+    wht = await one(`INSERT INTO master.tax_codes (code, name, kind, rate, non_filer_rate) VALUES ('WHT4', 'WHT', 'WITHHOLDING', 4.5, 9) RETURNING id`);
     const item = (code: string, type: string) =>
       insertWithStatus('master.items', 'code, name, type, category_id, base_uom_id', [code, code, type, category, uom], 'DRAFT', '1');
     fgItem = await item('FG-1', 'FG');

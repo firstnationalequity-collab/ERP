@@ -11,6 +11,7 @@ import type {
   PartyStatus,
   StorageZone,
   TaxKind,
+  WhtBase,
 } from '@albert/shared';
 import { auditColumns, bigintString, companyId, identityId } from './columns';
 
@@ -25,6 +26,10 @@ export const taxCodes = master.table('tax_codes', {
   rate: numeric('rate', { precision: 9, scale: 4 }).notNull(),
   isPlaceholder: boolean('is_placeholder').notNull().default(false),
   isActive: boolean('is_active').notNull().default(true),
+  // 0032 (owner 2026-11-26), WITHHOLDING only: `rate` is the filer rate.
+  nonFilerRate: numeric('non_filer_rate', { precision: 9, scale: 4 }),
+  whtBase: text('wht_base').$type<WhtBase>(),
+  whtBaseConfirmed: boolean('wht_base_confirmed').notNull().default(false),
   ...auditColumns(),
 });
 

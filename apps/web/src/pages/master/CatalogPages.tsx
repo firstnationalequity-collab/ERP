@@ -9,6 +9,7 @@ import {
   StorageZone,
   TaxKind,
   UpdateLocationRequest,
+  WhtBase,
   UpdateNameRequest,
   UpdateTaxCodeRequest,
   UpdateWarehouseRequest,
@@ -34,12 +35,16 @@ const activeCol = <T extends { isActive: boolean }>() => ({
 });
 const isActive = (r: { isActive: boolean }) => r.isActive;
 
+const WHT_BASE_LABEL: Record<WhtBase, string> = { INCL_SALES_TAX: 'Gross incl. sales tax', EXCL_SALES_TAX: 'Excl. sales tax' };
+const WHT_BASE_OPTIONS = WhtBase.map((b) => ({ value: b, label: WHT_BASE_LABEL[b] }));
+
 export function TaxCodesPage() {
   return (
     <MasterPage<TaxCodeDto, typeof CreateTaxCodeRequest, typeof UpdateTaxCodeRequest>
       config={{
         title: 'Tax codes',
-        intro: 'Sales tax and withholding tax rates. A rate marked "not confirmed" cannot be posted until Finance confirms it.',
+        intro:
+          'Sales tax and withholding tax rates. A withholding code has a filer (ATL) rate, a non-filer rate and a base (gross incl. or excl. sales tax); WHT is not posted until Finance confirms the rates and the base.',
         path: '/master/tax-codes',
         noun: 'tax code',
         manageKey: 'fin.master.manage',
@@ -48,8 +53,16 @@ export function TaxCodesPage() {
           { key: 'code', title: 'Code' },
           { key: 'name', title: 'Name' },
           { key: 'kind', title: 'Kind', render: (r) => r.kind.replace(/_/g, ' ') },
-          { key: 'rate', title: 'Rate %', render: (r) => formatDecimal(r.rate, 4), exportValue: (r) => r.rate },
-          { key: 'isPlaceholder', title: 'Confirmed', render: (r) => (r.isPlaceholder ? <Tag color="orange">NOT CONFIRMED</Tag> : 'Yes'), exportValue: (r) => yesNo(!r.isPlaceholder) },
+          { key: 'rate', title: 'Rate % (filer)', render: (r) => formatDecimal(r.rate, 4), exportValue: (r) => r.rate },
+          { key: 'nonFilerRate', title: 'Non-filer %', render: (r) => (r.nonFilerRate === null ? '—' : formatDecimal(r.nonFilerRate, 4)), exportValue: (r) => r.nonFilerRate ?? '' },
+          { key: 'whtBase', title: 'WHT base', render: (r) => (r.whtBase ? WHT_BASE_LABEL[r.whtBase] : '—'), exportValue: (r) => r.whtBase ?? '' },
+          { key: 'isPlaceholder', title: 'Rates confirmed', render: (r) => (r.isPlaceholder ? <Tag color="orange">NOT CONFIRMED</Tag> : 'Yes'), exportValue: (r) => yesNo(!r.isPlaceholder) },
+          {
+            key: 'whtBaseConfirmed',
+            title: 'Base confirmed',
+            render: (r) => (r.kind !== 'WITHHOLDING' ? '—' : r.whtBaseConfirmed ? 'Yes' : <Tag color="orange">NOT CONFIRMED</Tag>),
+            exportValue: (r) => (r.kind === 'WITHHOLDING' ? yesNo(r.whtBaseConfirmed) : ''),
+          },
           activeCol<TaxCodeDto>(),
         ],
         isActive,
@@ -60,17 +73,37 @@ export function TaxCodesPage() {
             { name: 'code', label: 'Code', kind: 'text' },
             { name: 'name', label: 'Name', kind: 'text' },
             { name: 'kind', label: 'Kind', kind: 'select', options: enumOptions(TaxKind) },
-            { name: 'rate', label: 'Rate % (0–100, up to 4 decimals)', kind: 'decimal' },
+            { name: 'rate', label: 'Rate % (0–100, up to 4 decimals; for WHT the filer / ATL rate)', kind: 'decimal' },
+            { name: 'nonFilerRate', label: 'Non-filer rate % (withholding only)', kind: 'decimal', help: 'Needed before the rates of a withholding code can be confirmed' },
+            { name: 'whtBase', label: 'WHT base (withholding only)', kind: 'select', options: WHT_BASE_OPTIONS, help: 'Left empty: incl. sales tax, unconfirmed' },
             { name: 'isPlaceholder', label: 'Rate not confirmed yet', kind: 'switch' },
           ],
         },
         edit: {
           schema: UpdateTaxCodeRequest,
           readOnly: (r) => [{ label: 'Code', value: r.code }, { label: 'Kind', value: r.kind }],
-          initial: (r) => ({ name: r.name, rate: r.rate, isPlaceholder: r.isPlaceholder }),
+          initial: (r) => ({
+            name: r.name,
+            rate: r.rate,
+            isPlaceholder: r.isPlaceholder,
+            ...(r.kind === 'WITHHOLDING' ? { nonFilerRate: r.nonFilerRate ?? '', whtBase: r.whtBase ?? undefined, whtBaseConfirmed: r.whtBaseConfirmed } : {}),
+          }),
           fields: (r) => [
             { name: 'name', label: 'Name', kind: 'text' },
-            { name: 'rate', label: 'Rate %', kind: 'decimal' },
+            { name: 'rate', label: r.kind === 'WITHHOLDING' ? 'Filer (ATL) rate %' : 'Rate %', kind: 'decimal' },
+            ...(r.kind === 'WITHHOLDING'
+              ? ([
+                  { name: 'nonFilerRate', label: 'Non-filer rate %', kind: 'decimal' },
+                  { name: 'whtBase', label: 'WHT base', kind: 'select', options: WHT_BASE_OPTIONS, disabled: r.whtBaseConfirmed },
+                  {
+                    name: 'whtBaseConfirmed',
+                    label: 'Base confirmed by Finance',
+                    kind: 'switch',
+                    disabled: r.whtBaseConfirmed,
+                    help: r.whtBaseConfirmed ? 'A confirmed base stays confirmed' : undefined,
+                  },
+                ] as const)
+              : []),
             {
               name: 'isPlaceholder',
               label: 'Rate not confirmed yet (switch off to confirm)',

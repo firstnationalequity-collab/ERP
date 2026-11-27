@@ -2,10 +2,12 @@
 // ageing on the vendor's payment terms).
 //   - Vendor ledger: the GL's payables lines for the vendor (engines/posting vendorSubledger: every account the
 //     ACCOUNTS_PAYABLE posting rules map to), with a running balance owed; invoice and payment lines show their
-//     currency and foreign amount. Debit notes (LOT_RETURNED) appear when their journal names the vendor.
-//   - AP ageing as of a date: POSTED invoices posted on or before it, less POSTED payments posted on or before it, by
-//     days past the due date (invoice date + payment terms): not due, 1–30, 31–60, 61–90, over 90. PKR at the carrying
-//     amount (open foreign balances are revalued in M8, owner Q4).
+//     currency and foreign amount. Debit notes (VENDOR_DEBIT_NOTE, and LOT_RETURNED for returns) and reversals
+//     (mirror entries) are lines of their own (owner 2026-11-26, task 5b).
+//   - AP ageing as of a date: the invoices in force that day (posted on or before it, not reversed by then), less the
+//     payments in force that day and the debit notes posted by then, by days past the due date (invoice date +
+//     payment terms): not due, 1–30, 31–60, 61–90, over 90. PKR at the carrying amount (open foreign balances are
+//     revalued in M8, owner Q4).
 import { Decimal } from 'decimal.js';
 import type { AgeingBuckets, ApAgeingDto, ApAgeingQuery, ApAgeingVendorDto, VendorLedgerDto, VendorLedgerQuery } from '@albert/shared';
 import { db } from '../../db/client';
@@ -17,6 +19,7 @@ import { purchVendors } from '../masters/purch-refs.service';
 import * as repo from './invoices.repo';
 import { INVOICE_DOC_TYPE } from './invoices.service';
 import { PAYMENT_DOC_TYPE } from './payments.service';
+import { DEBIT_NOTE_DOC_TYPE } from './debit-notes.service';
 
 const D = (v: string | number | null | undefined) => new Decimal(v ?? 0);
 const days = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
@@ -27,7 +30,12 @@ export async function vendorLedger(auth: AuthContext, vendorId: string, query: V
   if (query.from && query.to && query.from > query.to) throw new AppError('VALIDATION_FAILED', 'From is after to', { field: 'from' });
   const { opening, lines } = await vendorSubledger(db, auth.companyId, 'ACCOUNTS_PAYABLE', vendorId, { from: query.from, to: query.to });
   const ids = (type: string) => lines.flatMap((l) => (l.sourceType === type && l.sourceId ? [l.sourceId] : []));
-  const [invoices, payments] = await Promise.all([repo.docNos(db, 'invoice', ids(INVOICE_DOC_TYPE)), repo.docNos(db, 'payment', ids(PAYMENT_DOC_TYPE))]);
+  const [invoices, payments, notes] = await Promise.all([
+    repo.docNos(db, 'invoice', ids(INVOICE_DOC_TYPE)),
+    repo.docNos(db, 'payment', ids(PAYMENT_DOC_TYPE)),
+    repo.docNos(db, 'debit_note', ids(DEBIT_NOTE_DOC_TYPE)),
+  ]);
+  const docs: Record<string, typeof invoices> = { [INVOICE_DOC_TYPE]: invoices, [PAYMENT_DOC_TYPE]: payments, [DEBIT_NOTE_DOC_TYPE]: notes };
   let balance = D(opening).neg(); // owed = credit − debit
   return {
     vendorId,
@@ -39,8 +47,7 @@ export async function vendorLedger(auth: AuthContext, vendorId: string, query: V
     opening: balance.toFixed(2),
     lines: lines.map((l) => {
       balance = balance.plus(l.credit).minus(l.debit);
-      const doc =
-        l.sourceType === INVOICE_DOC_TYPE && l.sourceId ? invoices.get(l.sourceId) : l.sourceType === PAYMENT_DOC_TYPE && l.sourceId ? payments.get(l.sourceId) : undefined;
+      const doc = l.sourceId ? docs[l.sourceType]?.get(l.sourceId) : undefined;
       return {
         date: l.entryDate,
         journalDocNo: l.docNo,
@@ -82,13 +89,14 @@ export async function apAgeing(auth: AuthContext, query: ApAgeingQuery): Promise
   const asOf = query.asOf ?? companyToday();
   const invoices = await repo.postedInvoices(db, auth.companyId, { vendorId: query.vendorId, asOf });
   const paid = await repo.paidOnInvoices(db, invoices.map((i) => i.id), asOf);
+  const debited = await repo.debitedOnInvoices(db, invoices.map((i) => i.id), asOf);
   const vendors = await purchVendors(db, auth.companyId, invoices.map((i) => i.vendorId));
   const byVendor = new Map<string, { buckets: Record<keyof AgeingBuckets, Decimal>; dto: ApAgeingVendorDto }>();
   const totals = zero();
   for (const inv of invoices) {
-    const openForeign = D(inv.totalAmount).minus(D(paid.get(inv.id)?.foreign));
+    const openForeign = D(inv.totalAmount).minus(D(paid.get(inv.id)?.foreign)).minus(D(debited.get(inv.id)?.foreign));
     if (!openForeign.gt(0)) continue;
-    const openPkr = D(inv.totalPkr).minus(D(paid.get(inv.id)?.carrying));
+    const openPkr = D(inv.totalPkr).minus(D(paid.get(inv.id)?.carrying)).minus(D(debited.get(inv.id)?.pkr));
     const v = vendors.get(inv.vendorId);
     let entry = byVendor.get(inv.vendorId);
     if (!entry) {

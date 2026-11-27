@@ -64,3 +64,16 @@ export const invoiceTolerances = async (q: Queryable, companyId: string) => ({
   pricePct: await getSetting<number>(q, companyId, INVOICE_PRICE_TOLERANCE_PCT),
   qtyPct: await getSetting<number>(q, companyId, INVOICE_QTY_TOLERANCE_PCT),
 });
+
+/**
+ * Owner 2026-11-26 (answer 4): a vendor's filer status (ATL) checked more than this many days before a payment is
+ * approved (or never) is a warning the approver must acknowledge. Mirrored by SQL purch.vendor_filer_check_max_days (0032).
+ */
+export const FILER_CHECK_MAX_DAYS = 'purch.vendor.filer_check_max_days';
+registerSetting({
+  key: FILER_CHECK_MAX_DAYS,
+  description: "Vendor payments: days after which a vendor's filer (ATL) check is stale and the approver must acknowledge it (1–365)",
+  schema: z.number().int().min(1).max(365),
+  defaultValue: 30,
+});
+export const filerCheckMaxDays = (q: Queryable, companyId: string) => getSetting<number>(q, companyId, FILER_CHECK_MAX_DAYS);

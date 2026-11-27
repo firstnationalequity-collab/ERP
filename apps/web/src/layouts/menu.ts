@@ -20,6 +20,7 @@ export const MENU: MenuEntry[] = [
   { key: 'landed-costs', label: 'Landed costs', path: '/purch/landed-costs', group: 'Procurement', anyOf: ['purch.view'] },
   { key: 'vendor-invoices', label: 'Vendor invoices', path: '/purch/vendor-invoices', group: 'Procurement', anyOf: ['purch.view', 'fin.view'] },
   { key: 'vendor-payments', label: 'Vendor payments', path: '/purch/vendor-payments', group: 'Procurement', anyOf: ['purch.view', 'fin.view'] },
+  { key: 'debit-notes', label: 'Debit notes', path: '/purch/debit-notes', group: 'Procurement', anyOf: ['purch.view', 'fin.view'] },
   { key: 'vendor-ledger', label: 'Vendor ledger', path: '/purch/vendor-ledger', group: 'Procurement', anyOf: ['purch.view', 'fin.view'] },
   { key: 'ap-ageing', label: 'AP ageing', path: '/purch/ap-ageing', group: 'Procurement', anyOf: ['purch.view', 'fin.view'] },
   { key: 'items', label: 'Items', path: '/master/items', group: 'Masters', anyOf: ['master.view'] },

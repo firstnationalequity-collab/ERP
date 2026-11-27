@@ -101,7 +101,18 @@ export async function locationsByIds(q: Queryable, companyId: string, ids: strin
 export async function taxCodesByIds(q: Queryable, companyId: string, ids: string[]) {
   if (ids.length === 0) return [];
   return q
-    .select({ id: taxCodes.id, code: taxCodes.code, name: taxCodes.name, kind: taxCodes.kind, rate: taxCodes.rate, isPlaceholder: taxCodes.isPlaceholder, isActive: taxCodes.isActive })
+    .select({
+      id: taxCodes.id,
+      code: taxCodes.code,
+      name: taxCodes.name,
+      kind: taxCodes.kind,
+      rate: taxCodes.rate,
+      isPlaceholder: taxCodes.isPlaceholder,
+      isActive: taxCodes.isActive,
+      nonFilerRate: taxCodes.nonFilerRate,
+      whtBase: taxCodes.whtBase,
+      whtBaseConfirmed: taxCodes.whtBaseConfirmed,
+    })
     .from(taxCodes)
     .where(and(eq(taxCodes.companyId, companyId), inArray(taxCodes.id, ids)));
 }

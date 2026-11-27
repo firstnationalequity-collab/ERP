@@ -1,7 +1,9 @@
-// Vendor payments (M3 task 5). The AP Officer drafts a payment to one vendor, settling its posted invoices; submits it
-// to the approval matrix (Finance Manager, never the creator); posts it once approved. WHT comes from the vendor's
-// WHT section and is refused while Finance has not confirmed the rate. A foreign payment records the PKR paid; the
-// difference from the invoices' PKR is an exchange gain or loss (owner Q4).
+// Vendor payments (M3 task 5, 5b). The AP Officer drafts a payment to one vendor, settling its posted invoices; submits
+// it to the approval matrix (Finance Manager, never the creator); posts it once approved, with the bank reference or
+// cheque number. WHT comes from the vendor's WHT section: the filer or non-filer rate by the vendor's ATL status, on the
+// gross or the amount excluding sales tax (the code's base), refused while Finance has not confirmed them. A stale
+// filer check is acknowledged by the approver. A foreign payment records the PKR paid; the difference from the
+// invoices' PKR is an exchange gain or loss (owner Q4). A Finance Manager reverses a posted payment (bounced cheque).
 import { useState } from 'react';
 import dayjs from 'dayjs';
 import { Alert, App, Button, DatePicker, Descriptions, Drawer, Input, InputNumber, Modal, Space, Table, Typography } from 'antd';
@@ -17,6 +19,7 @@ import { api, errorText, newIdempotencyKey } from '../../api/client';
 import { useAuth } from '../../auth/AuthContext';
 import { DataTable, statusFilter } from '../../components/DataTable';
 import { PageHeader } from '../../components/PageHeader';
+import { ESignModal } from '../../components/ESignModal';
 import { ReasonModal } from '../../components/ReasonModal';
 import { RefSelect } from '../../components/RefSelect';
 import { StatusTag } from '../../components/StatusTag';
@@ -156,6 +159,9 @@ function PaymentDrawer({ id, onClose, onChanged }: { id: string; onClose(): void
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [posting, setPosting] = useState(false);
+  const [reference, setReference] = useState('');
+  const [reversing, setReversing] = useState(false);
   const detail = useQuery({ queryKey: [...paymentsKey, 'detail', id], queryFn: () => api<VendorPaymentDto>(`/purch/vendor-payments/${id}`) });
   const p = detail.data;
   const reload = async () => {
@@ -163,11 +169,11 @@ function PaymentDrawer({ id, onClose, onChanged }: { id: string; onClose(): void
     await onChanged();
   };
   const manage = can('fin.payment.manage');
-  const action = (path: 'submit' | 'post', title: string, content: string, done: string) =>
+  const action = (path: 'submit', title: string, content: string, done: string) =>
     modal.confirm({
       title,
       content,
-      okText: path === 'submit' ? 'Submit' : 'Post',
+      okText: 'Submit',
       onOk: async () => {
         try {
           await api(`/purch/vendor-payments/${id}/${path}`, { method: 'POST', idempotencyKey: newIdempotencyKey() });
@@ -193,8 +199,9 @@ function PaymentDrawer({ id, onClose, onChanged }: { id: string; onClose(): void
               <Button type="primary" onClick={() => action('submit', `Submit ${p.docNo} for approval?`, 'A Finance Manager approves it in My approvals.', 'Submitted for approval')}>Submit</Button>
             )}
             {manage && p.status === 'APPROVED' && (
-              <Button type="primary" onClick={() => action('post', `Post ${p.docNo}?`, 'Posted on the payment date: payables down, bank and WHT out. It cannot be changed afterwards.', 'Payment posted')}>Post</Button>
+              <Button type="primary" onClick={() => { setReference(p.reference ?? ''); setPosting(true); }}>Post</Button>
             )}
+            {can('fin.payment.reverse') && p.status === 'POSTED' && <Button danger onClick={() => setReversing(true)}>Reverse</Button>}
           </Space>
         )
       }
@@ -202,7 +209,19 @@ function PaymentDrawer({ id, onClose, onChanged }: { id: string; onClose(): void
       {p && (
         <>
           {p.whtRateUnconfirmed && (
-            <Alert style={{ marginBottom: 12 }} type="warning" showIcon message={`WHT rate ${p.whtTaxCode} is not confirmed by Finance`} description="The payment cannot be submitted or posted until Finance confirms the rate (Masters → Tax codes)." />
+            <Alert style={{ marginBottom: 12 }} type="warning" showIcon message={`WHT ${p.whtTaxCode} is not confirmed by Finance`} description="The payment cannot be submitted or posted until Finance confirms the filer and non-filer rates and the base (Masters → Tax codes)." />
+          )}
+          {p.filerCheckStale && (
+            <Alert
+              style={{ marginBottom: 12 }}
+              type="warning"
+              showIcon
+              message={p.payeeFilerCheckedOn ? `The vendor's filer status was checked on ${formatDate(p.payeeFilerCheckedOn)}, more than ${p.filerCheckMaxDays} days ago` : "The vendor's filer status was never checked: the non-filer rate applies"}
+              description="The approver must acknowledge this when approving. Re-check the ATL and update the vendor if the status changed."
+            />
+          )}
+          {p.status === 'REVERSED' && (
+            <Alert style={{ marginBottom: 12 }} type="error" showIcon message={`Reversed on ${formatDate(p.reversalDate)} by ${p.reversedByName}`} description={`${p.reversalReason} · journal ${p.reversalJournalDocNo ?? '—'}. The invoices it settled are open again.`} />
           )}
           {p.status === 'PENDING_APPROVAL' && <Alert style={{ marginBottom: 12 }} type="info" showIcon message="Waiting for a Finance Manager in My approvals" />}
           <Descriptions size="small" column={2} bordered>
@@ -212,9 +231,16 @@ function PaymentDrawer({ id, onClose, onChanged }: { id: string; onClose(): void
             <Descriptions.Item label="Reference">{p.reference ?? '—'}</Descriptions.Item>
             <Descriptions.Item label="Settles">{p.currency} {formatDecimal(p.foreignAmount)}</Descriptions.Item>
             <Descriptions.Item label="Gross PKR">{formatDecimal(p.pkrPaid)}</Descriptions.Item>
-            <Descriptions.Item label="WHT">{p.whtTaxCode ? `${p.whtTaxCode} at ${formatDecimal(p.whtRate, 4)}%: ${formatDecimal(p.whtAmount)}` : 'None (no WHT section on the vendor)'}</Descriptions.Item>
+            <Descriptions.Item label="WHT">
+              {p.whtTaxCode
+                ? `${p.whtTaxCode} at ${formatDecimal(p.whtRate, 4)}% on ${formatDecimal(p.whtBasePkr)} (${p.whtBase === 'EXCL_SALES_TAX' ? 'excl.' : 'incl.'} sales tax): ${formatDecimal(p.whtAmount)}`
+                : 'None (no WHT section on the vendor)'}
+            </Descriptions.Item>
             <Descriptions.Item label="Out of the bank">{formatDecimal(p.netPaid)}</Descriptions.Item>
-            <Descriptions.Item label="Filer (ATL)">{p.payeeIsFiler === null ? 'Not checked' : `${p.payeeIsFiler ? 'Filer' : 'Non-filer'}, checked ${formatDate(p.payeeFilerCheckedOn)}`}</Descriptions.Item>
+            <Descriptions.Item label="Filer (ATL)">
+              {p.payeeIsFiler === null ? 'Not checked (non-filer rate)' : `${p.payeeIsFiler ? 'Filer' : 'Non-filer'}, checked ${formatDate(p.payeeFilerCheckedOn)}`}
+              {p.filerWarningAckByName && <div style={{ fontSize: 12 }}>Stale check acknowledged by {p.filerWarningAckByName}</div>}
+            </Descriptions.Item>
             <Descriptions.Item label="Exchange difference">{p.exchangeDiffPkr ? formatDecimal(p.exchangeDiffPkr) : '—'}</Descriptions.Item>
             <Descriptions.Item label="Drafted by">{p.createdByName}</Descriptions.Item>
             <Descriptions.Item label="Posted">{p.postedByName ? `${formatDate(p.postingDate)} by ${p.postedByName} · journal ${p.journalDocNo ?? '—'}` : '—'}</Descriptions.Item>
@@ -236,6 +262,40 @@ function PaymentDrawer({ id, onClose, onChanged }: { id: string; onClose(): void
         </>
       )}
       {editing && p && <PaymentEditor payment={p} onClose={() => setEditing(false)} onSaved={async () => { await reload(); }} />}
+      <Modal
+        open={posting}
+        title={`Post ${p?.docNo ?? ''}?`}
+        okText="Post"
+        okButtonProps={{ disabled: !reference.trim() }}
+        onCancel={() => setPosting(false)}
+        onOk={async () => {
+          try {
+            await api(`/purch/vendor-payments/${id}/post`, { method: 'POST', body: p?.reference ? {} : { reference: reference.trim() }, idempotencyKey: newIdempotencyKey() });
+            void message.success('Payment posted');
+            setPosting(false);
+            await reload();
+          } catch (err) {
+            void message.error(errorText(err));
+          }
+        }}
+      >
+        <Typography.Paragraph>Posted on the payment date: payables down, bank and WHT out. It cannot be changed afterwards.</Typography.Paragraph>
+        <Input aria-label="Bank reference or cheque number" placeholder="Bank reference or cheque number" value={reference} disabled={!!p?.reference} onChange={(e) => setReference(e.target.value)} />
+      </Modal>
+      <ESignModal
+        open={reversing}
+        title={`Reverse ${p?.docNo ?? ''}`}
+        meaning="REVERSED"
+        summary="Mirrors the payment's journal today (bank, WHT and payables back). The invoices it settled are open again. Give the reason (e.g. cheque bounced)."
+        okText="Reverse payment"
+        onCancel={() => setReversing(false)}
+        onSubmit={async (r) => {
+          await api(`/purch/vendor-payments/${id}/reverse`, { method: 'POST', body: { signature: r.signature }, idempotencyKey: newIdempotencyKey() });
+          void message.success('Payment reversed');
+          setReversing(false);
+          await reload();
+        }}
+      />
       <ReasonModal
         open={cancelling}
         title={`Cancel ${p?.docNo ?? ''}?`}

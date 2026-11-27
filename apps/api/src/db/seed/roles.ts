@@ -35,7 +35,7 @@ const roles: RoleSeed[] = [
   {
     code: 'ACCOUNTANT',
     name: 'Accountant',
-    keys: ['fin.view', 'fin.report.view', 'purch.view', 'master.view', 'fin.journal.manage', 'fin.invoice.manage', 'fin.bank.reconcile'],
+    keys: ['fin.view', 'fin.report.view', 'purch.view', 'master.view', 'fin.journal.manage', 'fin.invoice.manage', 'fin.bank.reconcile', 'fin.debit_note.manage'],
   },
   {
     code: 'AR_OFFICER',
@@ -55,6 +55,7 @@ const roles: RoleSeed[] = [
       'fin.payment.approve', 'sales.order.credit_override', 'sales.quotation.approve', 'purch.po.approve',
       'inv.adjustment.approve', 'core.period.manage', 'core.period.close', 'fin.approval_rules.countersign',
       'fin.master.manage', 'fin.rate.manage', 'purch.landed_cost.correct', 'fin.invoice.match_release',
+      'fin.invoice.reverse', 'fin.payment.reverse', 'fin.debit_note.approve',
     ],
   },
   {

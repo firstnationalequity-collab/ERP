@@ -69,6 +69,8 @@ export const ErrorCodes = [
   'CURRENCY_NOT_ALLOWED',
   /** An invoice line or payment allocation beyond what is still open on the charge or invoice (0031). */
   'AMOUNT_EXCEEDS_OPEN',
+  /** A warning the actor must acknowledge first, e.g. a vendor's filer status checked too long ago (owner 2026-11-26; 0032). */
+  'ACKNOWLEDGEMENT_REQUIRED',
   'CREDIT_LIMIT_EXCEEDED',
   'OPEN_DEVIATION',
   'DUPLICATE_REQUEST',

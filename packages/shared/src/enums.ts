@@ -152,9 +152,10 @@ export type LandedCostStatus = (typeof LandedCostStatus)[number];
  * Vendor invoice (M3 task 5; 0031). GOODS: 3-way match against GRN lines of one PO; CHARGES: settles landed-cost
  * clearing (owner Q3). DRAFT → POSTED (within the match tolerances) or → MATCH_EXCEPTION (outside), which a Finance
  * Manager releases with an e-signature and a reason, creator ≠ releaser (owner Q5), or returns to DRAFT;
- * DRAFT / MATCH_EXCEPTION → CANCELLED (reason).
+ * DRAFT / MATCH_EXCEPTION → CANCELLED (reason). POSTED → REVERSED (M3 task 5b, 0032; owner 2026-11-26): Finance
+ * Manager, reason + e-signature (REVERSED), only while nothing is paid or debited against it.
  */
-export const VendorInvoiceStatus = ['DRAFT', 'MATCH_EXCEPTION', 'POSTED', 'CANCELLED'] as const;
+export const VendorInvoiceStatus = ['DRAFT', 'MATCH_EXCEPTION', 'POSTED', 'CANCELLED', 'REVERSED'] as const;
 export type VendorInvoiceStatus = (typeof VendorInvoiceStatus)[number];
 export const VendorInvoiceType = ['GOODS', 'CHARGES'] as const;
 export type VendorInvoiceType = (typeof VendorInvoiceType)[number];
@@ -162,9 +163,29 @@ export type VendorInvoiceType = (typeof VendorInvoiceType)[number];
 /**
  * Vendor payment (M3 task 5; 0031): DRAFT → PENDING_APPROVAL (approval matrix VENDOR_PAYMENT) → APPROVED → POSTED;
  * a rejection returns it to DRAFT; DRAFT / APPROVED → CANCELLED (reason). Creator ≠ approver (§3).
+ * POSTED → REVERSED (bounced cheque, wrong payment; M3 task 5b, 0032; owner 2026-11-26): Finance Manager, reason +
+ * e-signature (REVERSED); the invoices it settled are open again.
  */
-export const VendorPaymentStatus = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'POSTED', 'CANCELLED'] as const;
+export const VendorPaymentStatus = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'POSTED', 'CANCELLED', 'REVERSED'] as const;
 export type VendorPaymentStatus = (typeof VendorPaymentStatus)[number];
+
+/**
+ * Debit note against a POSTED GOODS vendor invoice (M3 task 5b, 0032; owner 2026-11-26), DN-{FY}-{SEQ:5}:
+ * DRAFT → PENDING_APPROVAL (approval matrix VENDOR_DEBIT_NOTE) → APPROVED → POSTED; a rejection returns it to DRAFT;
+ * DRAFT / PENDING_APPROVAL / APPROVED → CANCELLED (reason). Creator ≠ approver.
+ */
+export const DebitNoteStatus = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'POSTED', 'CANCELLED'] as const;
+export type DebitNoteStatus = (typeof DebitNoteStatus)[number];
+/**
+ * PRICE_CLAIM: an amount off invoice lines; SHORT_SUPPLY: quantity billed but not received; RETURN_TO_VENDOR: a
+ * REJECTED lot sent back (the debit note posts the witnessed RETURN_TO_VENDOR movement and links it).
+ */
+export const DebitNoteReason = ['PRICE_CLAIM', 'SHORT_SUPPLY', 'RETURN_TO_VENDOR'] as const;
+export type DebitNoteReason = (typeof DebitNoteReason)[number];
+
+/** What a WHT code is deducted on (owner 2026-11-26, 0032): the gross paid including sales tax, or excluding it. */
+export const WhtBase = ['INCL_SALES_TAX', 'EXCL_SALES_TAX'] as const;
+export type WhtBase = (typeof WhtBase)[number];
 
 export const LandedCostBasis = ['VALUE', 'WEIGHT', 'GD_AMOUNTS'] as const;
 export type LandedCostBasis = (typeof LandedCostBasis)[number];
@@ -278,6 +299,7 @@ export const PostingEvent = [
   'IMPORT_TAX', // import-stage sales tax and income tax collected at import: not capitalised (owner Q21; 0029)
   'VENDOR_INVOICE',
   'VENDOR_PAYMENT',
+  'VENDOR_DEBIT_NOTE', // price claim / short supply against a vendor invoice (owner 2026-11-26; 0032)
   'MATERIAL_ISSUE',
   'MATERIAL_RETURN',
   'CONVERSION_ABSORB',
@@ -334,6 +356,8 @@ export const PostingEventRoles: Readonly<Record<PostingEvent, readonly AccountRo
   // 0031: a CHARGES invoice settles landed-cost clearing (owner Q3); the rate difference → exchange gain/loss (Q4).
   VENDOR_INVOICE: ['GRNI', 'LANDED_COST_CLEARING', 'INPUT_TAX', 'PRICE_VARIANCE', 'EXCHANGE_DIFFERENCE', 'ACCOUNTS_PAYABLE'],
   VENDOR_PAYMENT: ['ACCOUNTS_PAYABLE', 'BANK', 'WHT_PAYABLE', 'EXCHANGE_DIFFERENCE'],
+  // 0032 (owner 2026-11-26): Dr AP / Cr price variance + input tax reversal.
+  VENDOR_DEBIT_NOTE: ['ACCOUNTS_PAYABLE', 'PRICE_VARIANCE', 'INPUT_TAX'],
   MATERIAL_ISSUE: ['WIP', 'INVENTORY'],
   MATERIAL_RETURN: ['INVENTORY', 'WIP'],
   CONVERSION_ABSORB: ['WIP', 'LABOUR_ABSORBED', 'OVERHEAD_ABSORBED'],
@@ -346,6 +370,7 @@ export const PostingEventRoles: Readonly<Record<PostingEvent, readonly AccountRo
   CUSTOMER_RECEIPT: ['BANK', 'WHT_RECEIVABLE', 'ACCOUNTS_RECEIVABLE'],
   STOCK_ADJUSTMENT: ['INVENTORY', 'INVENTORY_LOSS', 'INVENTORY_GAIN'],
   LOT_DESTROYED: ['REJECTION_WRITE_OFF', 'INVENTORY'],
-  LOT_RETURNED: ['ACCOUNTS_PAYABLE', 'INVENTORY'],
+  // 0032: a return on a debit note also books the difference to the billed price and reverses the input tax.
+  LOT_RETURNED: ['ACCOUNTS_PAYABLE', 'INVENTORY', 'PRICE_VARIANCE', 'INPUT_TAX'],
   ROUNDING_DIFFERENCE: ['INVENTORY', 'ROUNDING_DIFFERENCE'],
 };

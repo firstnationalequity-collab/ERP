@@ -27,6 +27,10 @@ import { RefSelect } from '../../components/RefSelect';
 import { StatusTag } from '../../components/StatusTag';
 import { companyToday, formatDate, formatDecimal, toBusinessDate } from '../../lib/format';
 
+/** Something paid or debited against the invoice (amount strings compared as text: no floats for money). */
+const isZeroAmount = (s: string) => /^-?0*(\.0*)?$/.test(s.trim());
+const settledAgainst = (inv: { paidAmount: string; debitedAmount: string }) => !isZeroAmount(inv.paidAmount) || !isZeroAmount(inv.debitedAmount);
+
 export const invoicesKey = ['purch', 'vendor-invoices'];
 
 function useSalesTaxCodes() {
@@ -244,6 +248,7 @@ function InvoiceDrawer({ id, onClose, onChanged }: { id: string; onClose(): void
   const [cancelling, setCancelling] = useState(false);
   const [returning, setReturning] = useState(false);
   const [releasing, setReleasing] = useState(false);
+  const [reversing, setReversing] = useState(false);
   const detail = useQuery({ queryKey: [...invoicesKey, 'detail', id], queryFn: () => api<VendorInvoiceDto>(`/purch/vendor-invoices/${id}`) });
   const inv = detail.data;
   const reload = async () => {
@@ -317,6 +322,16 @@ function InvoiceDrawer({ id, onClose, onChanged }: { id: string; onClose(): void
                 Release and post
               </Button>
             )}
+            {can('fin.invoice.reverse') && inv.status === 'POSTED' && (
+              <Button
+                danger
+                disabled={settledAgainst(inv)}
+                title={settledAgainst(inv) ? 'Paid or debited: reverse the payment first; a debited invoice is not reversed' : undefined}
+                onClick={() => setReversing(true)}
+              >
+                Reverse
+              </Button>
+            )}
           </Space>
         )
       }
@@ -325,6 +340,15 @@ function InvoiceDrawer({ id, onClose, onChanged }: { id: string; onClose(): void
         <>
           {inv.status === 'MATCH_EXCEPTION' && (
             <Alert style={{ marginBottom: 12 }} type="warning" showIcon message="Outside the 3-way match tolerances" description="A Finance Manager releases it with an e-signature and a reason, or returns it to the Accountant." />
+          )}
+          {inv.status === 'REVERSED' && (
+            <Alert
+              style={{ marginBottom: 12 }}
+              type="error"
+              showIcon
+              message={`Reversed on ${formatDate(inv.reversalDate)} by ${inv.reversedByName}`}
+              description={`${inv.reversalReason} · journal ${inv.reversalJournalDocNo ?? '—'}. What it billed can be billed again.`}
+            />
           )}
           <Descriptions size="small" column={2} bordered>
             <Descriptions.Item label="Vendor">{inv.vendorCode} — {inv.vendorName}</Descriptions.Item>
@@ -340,7 +364,11 @@ function InvoiceDrawer({ id, onClose, onChanged }: { id: string; onClose(): void
               {formatDecimal(inv.totalPkr)}
               {inv.currency !== 'PKR' && ` at ${inv.exchangeRate} (rate of ${formatDate(inv.exchangeRateDate)})`}
             </Descriptions.Item>
-            {inv.status === 'POSTED' && <Descriptions.Item label="Paid / open">{formatDecimal(inv.paidAmount)} / {formatDecimal(inv.openAmount)} {inv.currency}</Descriptions.Item>}
+            {inv.status === 'POSTED' && (
+              <Descriptions.Item label="Paid / debited / open">
+                {formatDecimal(inv.paidAmount)} / {formatDecimal(inv.debitedAmount)} / {formatDecimal(inv.openAmount)} {inv.currency}
+              </Descriptions.Item>
+            )}
             <Descriptions.Item label="Posted">{inv.postedByName ? `${formatDate(inv.postingDate)} by ${inv.postedByName} · journal ${inv.journalDocNo ?? '—'}` : '—'}</Descriptions.Item>
             {inv.releasedByName && <Descriptions.Item label="Released" span={2}>by {inv.releasedByName}: {inv.releaseReason}</Descriptions.Item>}
             <Descriptions.Item label="Entered by">{inv.createdByName}</Descriptions.Item>
@@ -362,6 +390,20 @@ function InvoiceDrawer({ id, onClose, onChanged }: { id: string; onClose(): void
           await api(`/purch/vendor-invoices/${id}/release`, { method: 'POST', body: { signature: r.signature }, idempotencyKey: newIdempotencyKey() });
           void message.success('Invoice released and posted');
           setReleasing(false);
+          await reload();
+        }}
+      />
+      <ESignModal
+        open={reversing}
+        title={`Reverse ${inv?.docNo ?? ''}`}
+        meaning="REVERSED"
+        summary="Mirrors the invoice's journal today. The GRN quantities and charges it billed are open again and a closed PO re-opens. Give the reason (e.g. entered against the wrong PO)."
+        okText="Reverse invoice"
+        onCancel={() => setReversing(false)}
+        onSubmit={async (r) => {
+          await api(`/purch/vendor-invoices/${id}/reverse`, { method: 'POST', body: { signature: r.signature }, idempotencyKey: newIdempotencyKey() });
+          void message.success('Invoice reversed');
+          setReversing(false);
           await reload();
         }}
       />

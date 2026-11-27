@@ -10,6 +10,12 @@ import {
   ConvertPrRequest,
   CreateVendorInvoiceRequest,
   CreateVendorPaymentRequest,
+  CreateDebitNoteRequest,
+  DebitNoteListQuery,
+  PostDebitNoteRequest,
+  PostVendorPaymentRequest,
+  ReverseVendorDocumentRequest,
+  UpdateDebitNoteRequest,
   ReleaseVendorInvoiceRequest,
   UpdateVendorInvoiceRequest,
   UpdateVendorPaymentRequest,
@@ -45,6 +51,7 @@ import * as landed from './landed-costs.service';
 import * as invoices from './invoices.service';
 import * as payments from './payments.service';
 import * as ap from './ap.service';
+import * as notes from './debit-notes.service';
 
 const IdParam = z.object({ id: z.string().regex(/^\d+$/, 'Invalid id') });
 const idOf = (req: Request) => IdParam.parse(req.params).id;
@@ -191,6 +198,10 @@ r.post('/vendor-invoices/:id/return', requirePermission('fin.invoice.match_relea
 r.post('/vendor-invoices/:id/cancel', requirePermission('fin.invoice.manage'), once, asyncHandler(async (req, res) => {
   res.json(await invoices.cancelVendorInvoice(authOf(req), idOf(req), PurchActionRequest.parse(req.body).reason));
 }));
+// Owner 2026-11-26 (task 5b): a Finance Manager reverses a posted invoice nothing is paid or debited against.
+r.post('/vendor-invoices/:id/reverse', requirePermission('fin.invoice.reverse'), idempotent(), asyncHandler(async (req, res) => {
+  res.json(await invoices.reverseVendorInvoice(authOf(req), idOf(req), ReverseVendorDocumentRequest.parse(req.body), requestMeta(req)));
+}));
 
 // Payments: the AP Officer drafts, submits and posts (fin.payment.manage); the approval matrix (Finance Manager,
 // /core/approvals/:id/approve) approves; creator ≠ approver.
@@ -206,10 +217,36 @@ r.post('/vendor-payments/:id/submit', requirePermission('fin.payment.manage'), o
   res.json(await payments.submitVendorPayment(authOf(req), idOf(req)));
 }));
 r.post('/vendor-payments/:id/post', requirePermission('fin.payment.manage'), idempotent(), asyncHandler(async (req, res) => {
-  res.json(await payments.postVendorPayment(authOf(req), idOf(req)));
+  res.json(await payments.postVendorPayment(authOf(req), idOf(req), PostVendorPaymentRequest.parse(req.body ?? {})));
+}));
+// Owner 2026-11-26 (task 5b): bounced cheque, wrong payment.
+r.post('/vendor-payments/:id/reverse', requirePermission('fin.payment.reverse'), idempotent(), asyncHandler(async (req, res) => {
+  res.json(await payments.reverseVendorPayment(authOf(req), idOf(req), ReverseVendorDocumentRequest.parse(req.body), requestMeta(req)));
 }));
 r.post('/vendor-payments/:id/cancel', requirePermission('fin.payment.manage'), once, asyncHandler(async (req, res) => {
   res.json(await payments.cancelVendorPayment(authOf(req), idOf(req), PurchActionRequest.parse(req.body).reason));
+}));
+
+// Debit notes (owner 2026-11-26, task 5b; 0032): the Accountant enters, submits and posts price-claim / short-supply
+// notes (fin.debit_note.manage); the approval matrix DEBIT_NOTE approves (fin.debit_note.approve); a return note is
+// posted by the Warehouse Manager with a QA witness (inv.lot.dispose; the service picks the key by the note's reason).
+r.get('/debit-notes', AP_VIEW, asyncHandler(async (req, res) => { res.json(await notes.listDebitNotes(authOf(req), DebitNoteListQuery.parse(req.query))); }));
+r.get('/debit-notes/:id', AP_VIEW, asyncHandler(async (req, res) => { res.json(await notes.getDebitNote(authOf(req), idOf(req))); }));
+r.get('/vendor-invoices/:id/debitable', AP_VIEW, asyncHandler(async (req, res) => { res.json(await notes.debitable(authOf(req), idOf(req))); }));
+r.post('/debit-notes', requirePermission('fin.debit_note.manage'), asyncHandler(async (req, res) => {
+  res.status(201).json(await notes.createDebitNote(authOf(req), CreateDebitNoteRequest.parse(req.body)));
+}));
+r.patch('/debit-notes/:id', requirePermission('fin.debit_note.manage'), asyncHandler(async (req, res) => {
+  res.json(await notes.updateDebitNote(authOf(req), idOf(req), UpdateDebitNoteRequest.parse(req.body)));
+}));
+r.post('/debit-notes/:id/submit', requirePermission('fin.debit_note.manage'), once, asyncHandler(async (req, res) => {
+  res.json(await notes.submitDebitNote(authOf(req), idOf(req)));
+}));
+r.post('/debit-notes/:id/post', requireAnyPermission('fin.debit_note.manage', 'inv.lot.dispose'), idempotent(), asyncHandler(async (req, res) => {
+  res.json(await notes.postDebitNote(authOf(req), idOf(req), PostDebitNoteRequest.parse(req.body ?? {}), requestMeta(req)));
+}));
+r.post('/debit-notes/:id/cancel', requirePermission('fin.debit_note.manage'), once, asyncHandler(async (req, res) => {
+  res.json(await notes.cancelDebitNote(authOf(req), idOf(req), PurchActionRequest.parse(req.body).reason));
 }));
 
 // Vendor ledger and AP ageing.

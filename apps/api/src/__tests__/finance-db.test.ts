@@ -358,7 +358,11 @@ describe('withholding tax needs a confirmed rate (0013)', () => {
     await expect(post(id)).rejects.toThrow(/TAX_RATE_NOT_CONFIRMED/);
     expect((await entry(id)).status).toBe('DRAFT');
 
-    await tx(fm, () => client.query(`UPDATE master.tax_codes SET is_placeholder = false WHERE id = $1`, [wht]));
+    // Owner 2026-11-26 (0032): the rates are confirmed with the non-filer rate, and the base on its own.
+    await expect(tx(fm, () => client.query(`UPDATE master.tax_codes SET is_placeholder = false WHERE id = $1`, [wht]))).rejects.toThrow(/non-filer rate/);
+    await tx(fm, () => client.query(`UPDATE master.tax_codes SET is_placeholder = false, non_filer_rate = 8 WHERE id = $1`, [wht]));
+    await expect(post(id)).rejects.toThrow(/TAX_RATE_NOT_CONFIRMED: the base/);
+    await tx(fm, () => client.query(`UPDATE master.tax_codes SET wht_base_confirmed = true WHERE id = $1`, [wht]));
     await post(id);
     expect((await entry(id)).status).toBe('POSTED');
   });
@@ -375,6 +379,9 @@ describe('withholding tax needs a confirmed rate (0013)', () => {
   it('a confirmed tax code is never marked placeholder again, and its kind never changes', async () => {
     const wht = await taxId('WHT-153-1A');
     await expect(tx(fm, () => client.query(`UPDATE master.tax_codes SET is_placeholder = true WHERE id = $1`, [wht]))).rejects.toThrow(/placeholder again/);
-    await expect(tx(fm, () => client.query(`UPDATE master.tax_codes SET kind = 'SALES_TAX' WHERE id = $1`, [wht]))).rejects.toThrow(/kind never changes/);
+    await expect(tx(fm, () => client.query(`UPDATE master.tax_codes SET kind = 'SALES_TAX' WHERE id = $1`, [wht]))).rejects.toThrow(/kind never changes|only a withholding/);
+    await expect(tx(fm, () => client.query(`UPDATE master.tax_codes SET wht_base_confirmed = false WHERE id = $1`, [wht]))).rejects.toThrow(/stays confirmed/);
+    const st = await taxId('ST-18');
+    await expect(tx(fm, () => client.query(`UPDATE master.tax_codes SET wht_base = 'INCL_SALES_TAX' WHERE id = $1`, [st]))).rejects.toThrow(/only a withholding/);
   });
 });

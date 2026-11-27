@@ -16,6 +16,10 @@
 // the rest (price difference, extra quantity, paisa) → price variance. Per CHARGES line: clearing taken off in
 // proportion to what is open; the rest → exchange gain/loss. AP keeps the invoice currency and foreign amount.
 // Posting date = invoice date (open period, rule 11). A fully received PO whose receipts are all billed → CLOSED.
+// Reversal (M3 task 5b, owner 2026-11-26): a Finance Manager (fin.invoice.reverse) reverses a POSTED invoice that no
+// payment (not cancelled / reversed) and no debit note (not cancelled) names, with an e-signature (REVERSED) and a
+// reason: the journal is mirrored on the reversal day (open period), the GRN quantities and charges are open for
+// billing again, and a CLOSED PO goes back to RECEIVED.
 import { Decimal } from 'decimal.js';
 import {
   VendorInvoiceStatus,
@@ -24,6 +28,7 @@ import {
   type Page,
   type PermissionKey,
   type ReleaseVendorInvoiceRequest,
+  type ReverseVendorDocumentRequest,
   type UpdateVendorInvoiceRequest,
   type VendorInvoiceDto,
   type VendorInvoiceLineInput,
@@ -38,14 +43,14 @@ import { recordSignature, verifySignature, type SignatureRecord } from '../../co
 import { defineTransitions, recordInitialStatus, transition, type Actor, type TransitionMap } from '../../core/transition/transition';
 import { nextDocNo } from '../../core/settings/numbering.service';
 import { lotsByIds, movementsOfDocument } from '../../engines/inventory';
-import { journalsOfSource, postJournal, type JournalLineInput } from '../../engines/posting';
+import { journalsOfSource, postJournal, reverseJournal, type JournalLineInput, type SourceJournal } from '../../engines/posting';
 import { rateOn } from '../finance/rates.service';
 import { assertPurchVendor, purchItems, purchTaxCodes, purchVendors, type PurchVendorRef } from '../masters/purch-refs.service';
 import * as grnRepo from './grns.repo';
 import * as landedRepo from './landed-costs.repo';
 import * as repo from './invoices.repo';
 import { findPo, poLinesOf, userNames, type PoRow } from './procurement.repo';
-import { closePoIfInvoiced } from './orders.service';
+import { closePoIfInvoiced, reopenPoAfterInvoiceReversal } from './orders.service';
 import { invoiceTolerances } from './procurement.settings';
 import { splitByWeights } from './landed-costs.service';
 
@@ -55,13 +60,15 @@ export const INVOICE_TABLE = 'purch.vendor_invoices';
 export const INVOICE_DOC_TYPE = 'VENDOR_INVOICE'; // number series, journal source_type
 const MANAGE_KEY = 'fin.invoice.manage' as const;
 const RELEASE_KEY = 'fin.invoice.match_release' as const;
+const REVERSE_KEY = 'fin.invoice.reverse' as const;
 
 const maps = new Map<PermissionKey, TransitionMap<VendorInvoiceStatus>>();
 /**
  * One map per key (rule 7): fin.invoice.manage enters, posts (or holds in MATCH_EXCEPTION) and cancels;
- * fin.invoice.match_release releases a held invoice with an e-signature (it posts) or returns it to DRAFT.
+ * fin.invoice.match_release releases a held invoice with an e-signature (it posts) or returns it to DRAFT;
+ * fin.invoice.reverse reverses a posted one with an e-signature (owner 2026-11-26).
  */
-export function vendorInvoiceMoves(key: typeof MANAGE_KEY | typeof RELEASE_KEY): TransitionMap<VendorInvoiceStatus> {
+export function vendorInvoiceMoves(key: typeof MANAGE_KEY | typeof RELEASE_KEY | typeof REVERSE_KEY): TransitionMap<VendorInvoiceStatus> {
   let map = maps.get(key);
   if (!map) {
     map = defineTransitions<VendorInvoiceStatus>({
@@ -76,10 +83,12 @@ export function vendorInvoiceMoves(key: typeof MANAGE_KEY | typeof RELEASE_KEY):
               { from: 'DRAFT', to: 'CANCELLED', permission: key, reasonRequired: true },
               { from: 'MATCH_EXCEPTION', to: 'CANCELLED', permission: key, reasonRequired: true },
             ]
-          : [
-              { from: 'MATCH_EXCEPTION', to: 'POSTED', permission: key, esign: ['APPROVED'], reasonRequired: true },
-              { from: 'MATCH_EXCEPTION', to: 'DRAFT', permission: key, reasonRequired: true },
-            ],
+          : key === RELEASE_KEY
+            ? [
+                { from: 'MATCH_EXCEPTION', to: 'POSTED', permission: key, esign: ['APPROVED'], reasonRequired: true },
+                { from: 'MATCH_EXCEPTION', to: 'DRAFT', permission: key, reasonRequired: true },
+              ]
+            : [{ from: 'POSTED', to: 'REVERSED', permission: key, esign: ['REVERSED'], reasonRequired: true }],
     });
     maps.set(key, map);
   }
@@ -96,7 +105,7 @@ async function toDtos(q: Queryable, companyId: string, rows: repo.InvoiceRow[]):
   const ids = rows.map((r) => r.id);
   const lines = await repo.linesOf(q, ids);
   const grnLines = await grnRepo.grnLinesByIds(q, lines.flatMap((l) => (l.grnLineId ? [l.grnLineId] : [])));
-  const [vendors, grns, charges, taxCodes, items, lots, paid, names, pos] = await Promise.all([
+  const [vendors, grns, charges, taxCodes, items, lots, paid, debited, names, pos] = await Promise.all([
     purchVendors(q, companyId, rows.map((r) => r.vendorId)),
     grnRepo.grnsByIds(q, companyId, grnLines.map((g) => g.grnId)),
     landedRepo.chargesByIds(q, companyId, lines.flatMap((l) => (l.landedCostId ? [l.landedCostId] : []))),
@@ -104,19 +113,25 @@ async function toDtos(q: Queryable, companyId: string, rows: repo.InvoiceRow[]):
     purchItems(q, companyId, grnLines.map((g) => g.itemId)),
     lotsByIds(q, companyId, grnLines.flatMap((g) => (g.lotId ? [g.lotId] : []))),
     repo.paidOnInvoices(q, ids),
-    userNames(q, rows.flatMap((r) => [r.createdBy, ...(r.postedBy ? [r.postedBy] : []), ...(r.releasedBy ? [r.releasedBy] : [])])),
+    repo.debitedOnInvoices(q, ids),
+    userNames(q, rows.flatMap((r) => [r.createdBy, ...(r.postedBy ? [r.postedBy] : []), ...(r.releasedBy ? [r.releasedBy] : []), ...(r.reversedBy ? [r.reversedBy] : [])])),
     Promise.all([...new Set(rows.flatMap((r) => (r.poId ? [r.poId] : [])))].map((p) => findPo(q, companyId, p))),
   ]);
   const types = await landedRepo.typesByIds(q, companyId, [...charges.values()].map((c) => c.chargeTypeId));
   const poById = new Map(pos.flatMap((p) => (p ? [[p.id, p] as const] : [])));
   const journals = new Map(
     await Promise.all(
-      rows.filter((r) => r.status === 'POSTED').map(async (r) => [r.id, await journalsOfSource(q, companyId, INVOICE_DOC_TYPE, r.id)] as const),
+      rows
+        .filter((r) => r.status === 'POSTED' || r.status === 'REVERSED')
+        .map(async (r) => [r.id, await journalsOfSource(q, companyId, INVOICE_DOC_TYPE, r.id)] as const),
     ),
   );
+  const original = (js: SourceJournal[] | undefined) => js?.find((j) => j.reversalOf === null)?.docNo ?? null;
+  const reversal = (js: SourceJournal[] | undefined) => js?.find((j) => j.reversalOf !== null)?.docNo ?? null;
   return rows.map((r) => {
     const v = vendors.get(r.vendorId);
     const p = paid.get(r.id);
+    const dn = debited.get(r.id);
     return {
       id: r.id,
       docNo: r.docNo,
@@ -137,8 +152,9 @@ async function toDtos(q: Queryable, companyId: string, rows: repo.InvoiceRow[]):
       totalAmount: r.totalAmount,
       totalPkr: r.totalPkr,
       paidAmount: D(p?.foreign).toFixed(2),
-      openAmount: r.status === 'POSTED' ? D(r.totalAmount).minus(D(p?.foreign)).toFixed(2) : '0.00',
-      openPkr: r.status === 'POSTED' ? D(r.totalPkr).minus(D(p?.carrying)).toFixed(2) : '0.00',
+      debitedAmount: D(dn?.foreign).toFixed(2),
+      openAmount: r.status === 'POSTED' ? D(r.totalAmount).minus(D(p?.foreign)).minus(D(dn?.foreign)).toFixed(2) : '0.00',
+      openPkr: r.status === 'POSTED' ? D(r.totalPkr).minus(D(p?.carrying)).minus(D(dn?.pkr)).toFixed(2) : '0.00',
       notes: r.notes,
       status: r.status,
       exceptionAt: r.exceptionAt ? r.exceptionAt.toISOString() : null,
@@ -148,7 +164,12 @@ async function toDtos(q: Queryable, companyId: string, rows: repo.InvoiceRow[]):
       postingDate: r.postingDate,
       postedByName: r.postedBy ? (names.get(r.postedBy) ?? '') : null,
       postedAt: r.postedAt ? r.postedAt.toISOString() : null,
-      journalDocNo: journals.get(r.id)?.[0]?.docNo ?? null,
+      journalDocNo: original(journals.get(r.id)),
+      reversedByName: r.reversedBy ? (names.get(r.reversedBy) ?? '') : null,
+      reversedAt: r.reversedAt ? r.reversedAt.toISOString() : null,
+      reversalDate: r.reversalDate,
+      reversalReason: r.reversalReason,
+      reversalJournalDocNo: reversal(journals.get(r.id)),
       createdBy: r.createdBy,
       createdByName: names.get(r.createdBy) ?? '',
       createdAt: r.createdAt.toISOString(),
@@ -750,7 +771,49 @@ export async function releaseVendorInvoice(auth: AuthContext, id: string, input:
   return getVendorInvoice(auth, id);
 }
 
-/** For the GRN reversal: the invoices (not cancelled) that bill this GRN's lines or charges. */
+// ---------------------------------------------------------------- reversal (owner 2026-11-26, task 5b)
+
+/**
+ * A Finance Manager reverses a POSTED invoice with an e-signature (REVERSED) and a reason, only while no payment and
+ * no debit note names it: its journal is mirrored on the reversal day, what it billed is open again (GRN quantities,
+ * landed costs) and a CLOSED PO re-opens to RECEIVED. The DB (0032) re-checks.
+ */
+export async function reverseVendorInvoice(auth: AuthContext, id: string, input: ReverseVendorDocumentRequest, meta: RequestMeta): Promise<VendorInvoiceDto> {
+  if (input.signature.meaning !== 'REVERSED') throw new AppError('VALIDATION_FAILED', 'Reversing an invoice needs the meaning REVERSED');
+  const proof = await verifySignature(auth, input.signature, meta);
+  const reason = input.signature.reason;
+  await withTransaction(txContext(auth, `reverse vendor invoice: ${reason}`), async (tx) => {
+    const row = await lockInvoice(tx, auth.companyId, id);
+    if (row.status !== 'POSTED') {
+      throw new AppError(row.status === 'REVERSED' || row.status === 'CANCELLED' ? 'RECORD_LOCKED' : 'INVALID_TRANSITION',
+        `Vendor invoice ${row.docNo} is ${row.status}; only a POSTED invoice is reversed`, { status: row.status });
+    }
+    const on = await repo.documentsOnInvoice(tx, id);
+    if (on.payments.length) {
+      throw new AppError('IN_USE', `${row.docNo} is paid on ${on.payments.join(', ')}; reverse or cancel the payment first`, { payments: on.payments });
+    }
+    if (on.debitNotes.length) {
+      throw new AppError('IN_USE', `${row.docNo} has debit note ${on.debitNotes.join(', ')}; it is no longer reversed`, { debitNotes: on.debitNotes });
+    }
+    const entry = (await journalsOfSource(tx, auth.companyId, INVOICE_DOC_TYPE, id)).find((j) => j.status === 'POSTED' && j.reversalOf === null);
+    if (!entry) throw new AppError('VALIDATION_FAILED', `${row.docNo} has no posted journal to reverse`);
+    const date = companyToday();
+    await reverseJournal(tx, auth, { entryId: entry.id, date, reason: `${row.docNo} reversed: ${reason}` });
+    const signature = await recordSignature(tx, proof, { table: INVOICE_TABLE, id }, ['REVERSED']);
+    await transition(tx, vendorInvoiceMoves(REVERSE_KEY), {
+      entityId: id,
+      to: 'REVERSED',
+      actor: auth,
+      signature,
+      reason,
+      alsoSet: { reversed_by: auth.userId, reversed_at: new Date().toISOString(), reversal_date: date, reversal_reason: reason },
+    });
+    if (row.poId) await reopenPoAfterInvoiceReversal(tx, auth, row.poId, row.docNo);
+  });
+  return getVendorInvoice(auth, id);
+}
+
+/** For the GRN reversal: the invoices (neither cancelled nor reversed) that bill this GRN's lines or charges. */
 export async function invoicesOfGrn(q: Queryable, grnLineIds: string[], landedCostIds: string[]): Promise<string[]> {
   return repo.invoicesNaming(q, { grnLineIds, landedCostIds });
 }

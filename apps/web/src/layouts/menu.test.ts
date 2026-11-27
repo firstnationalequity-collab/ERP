@@ -19,7 +19,7 @@ describe('permission-driven sidebar', () => {
 
   it('shows the CEO (view keys only) the audit trail and fiscal periods, no admin pages', () => {
     expect(keys(['core.audit.view', 'fin.view', 'dash.ceo.view'])).toEqual([
-      'home', 'vendor-invoices', 'vendor-payments', 'vendor-ledger', 'ap-ageing', // fin.view reads payables (M3 task 5)
+      'home', 'vendor-invoices', 'vendor-payments', 'debit-notes', 'vendor-ledger', 'ap-ageing', // fin.view reads payables (M3 tasks 5, 5b)
       'journals', 'accounts', 'posting-rules', 'cost-centers', 'exchange-rates', 'periods', 'audit',
     ]);
   });

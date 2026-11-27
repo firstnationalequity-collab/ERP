@@ -73,9 +73,11 @@ export interface ApprovalHandler {
   onRejected(tx: Tx, approval: ApprovalRow, actor: AuthContext, reason: string): Promise<void>;
   /**
    * Optional: refuse this actor before any step is approved (e.g. PO creator ≠ approver, rule 9).
-   * Runs for every step, so a two-step approval never has the document creator on any step.
+   * Runs for every step, so a two-step approval never has the document creator on any step. `acknowledgements`: the
+   * warning codes the approver accepted (ApprovalDecisionRequest); a handler that raises a warning refuses without its
+   * code (ACKNOWLEDGEMENT_REQUIRED) and may record the acknowledgement on the document.
    */
-  assertMayApprove?(tx: Tx, approval: ApprovalRow, actor: AuthContext): Promise<void>;
+  assertMayApprove?(tx: Tx, approval: ApprovalRow, actor: AuthContext, acknowledgements: readonly string[]): Promise<void>;
 }
 
 const handlers = new Map<string, ApprovalHandler>();
@@ -267,7 +269,7 @@ export async function approve(auth: AuthContext, approvalId: string, input: Appr
   const proof = await verifySignature(auth, input.signature, meta);
   await withTransaction(txContext(auth, `approve: ${input.signature.reason}`), async (tx) => {
     const { approval, steps, step } = await stepForUser(tx, auth, approvalId);
-    await handlerFor(approval.docType).assertMayApprove?.(tx, approval, auth);
+    await handlerFor(approval.docType).assertMayApprove?.(tx, approval, auth, input.acknowledgements ?? []);
     const signature = await recordSignature(tx, proof, { table: 'core.approval_steps', id: step.id }, ['APPROVED']);
     await repo.markStepActed(tx, step.id, auth.userId, signature.id);
     await transition(tx, ApprovalStepMoves, { entityId: step.id, to: 'APPROVED', actor: auth, signature });

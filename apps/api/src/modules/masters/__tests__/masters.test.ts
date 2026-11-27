@@ -97,7 +97,12 @@ describe('catalog masters: tax codes, UoM, categories, items, conversions', () =
     expect(gst.status).toBe(201);
     expect(gst.body).toMatchObject({ code: 'GST18', rate: '18.0000', isPlaceholder: true, isActive: true });
     ids.gst = gst.body.id;
-    ids.wht = (await post('fm', '/master/tax-codes', { code: 'WHT153', name: 'WHT 153', kind: 'WITHHOLDING', rate: '4.5' })).body.id;
+    // Owner 2026-11-26 (0032): a confirmed WHT code has a filer and a non-filer rate; the base starts unconfirmed.
+    expectError(await post('fm', '/master/tax-codes', { code: 'WHT152', name: 'WHT 152', kind: 'WITHHOLDING', rate: '4.5' }), 400, 'VALIDATION_FAILED');
+    const wht = await post('fm', '/master/tax-codes', { code: 'WHT153', name: 'WHT 153', kind: 'WITHHOLDING', rate: '4.5', nonFilerRate: '9' });
+    expect(wht.body).toMatchObject({ rate: '4.5000', nonFilerRate: '9.0000', whtBase: 'INCL_SALES_TAX', whtBaseConfirmed: false });
+    ids.wht = wht.body.id;
+    expectError(await post('fm', '/master/tax-codes', { code: 'X0', name: 'X', kind: 'SALES_TAX', rate: '1', whtBase: 'EXCL_SALES_TAX' }), 400, 'VALIDATION_FAILED');
 
     expectError(await post('planner', '/master/tax-codes', { code: 'X', name: 'X', kind: 'SALES_TAX', rate: '1' }), 403, 'FORBIDDEN');
     expectError(await post('fm', '/master/tax-codes', { code: 'X1', name: 'X', kind: 'SALES_TAX', rate: '100.5' }), 400, 'VALIDATION_FAILED');
@@ -123,10 +128,18 @@ describe('catalog masters: tax codes, UoM, categories, items, conversions', () =
     await withTransaction(systemContext(), (tx) => assertTaxRateConfirmed(tx, '1', st.rows[0]!.id));
 
     expectError(await patch('planner', `/master/tax-codes/${wht.id}`, { isPlaceholder: false }), 403, 'FORBIDDEN');
-    const confirmed = await patch('fm', `/master/tax-codes/${wht.id}`, { rate: '10', isPlaceholder: false });
-    expect(confirmed.body).toMatchObject({ name: 'WHT s.153(1)(b) - services', rate: '10.0000', isPlaceholder: false });
+    // Owner 2026-11-26: the rates are confirmed with the non-filer rate given; the base is confirmed on its own.
+    expectError(await patch('fm', `/master/tax-codes/${wht.id}`, { rate: '10', isPlaceholder: false }), 400, 'VALIDATION_FAILED');
+    const confirmed = await patch('fm', `/master/tax-codes/${wht.id}`, { rate: '10', nonFilerRate: '20', isPlaceholder: false });
+    expect(confirmed.body).toMatchObject({ name: 'WHT s.153(1)(b) - services', rate: '10.0000', nonFilerRate: '20.0000', isPlaceholder: false, whtBaseConfirmed: false });
+    await expect(check()).rejects.toMatchObject({ code: 'TAX_RATE_NOT_CONFIRMED', details: { unconfirmed: 'BASE' } });
+    expect((await patch('fm', `/master/tax-codes/${wht.id}`, { whtBase: 'EXCL_SALES_TAX', whtBaseConfirmed: true })).body).toMatchObject({
+      whtBase: 'EXCL_SALES_TAX',
+      whtBaseConfirmed: true,
+    });
     await check();
     expectError(await patch('fm', `/master/tax-codes/${wht.id}`, { isPlaceholder: true }), 400, 'VALIDATION_FAILED');
+    expectError(await patch('fm', `/master/tax-codes/${wht.id}`, { whtBaseConfirmed: false }), 400, 'VALIDATION_FAILED');
   });
 
   it('lets the Warehouse Manager keep UoM and categories (Planner no longer can); codes are unique', async () => {

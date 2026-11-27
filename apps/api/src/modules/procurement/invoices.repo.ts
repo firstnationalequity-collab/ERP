@@ -1,8 +1,8 @@
 // Queries for purch.vendor_invoices, vendor_invoice_lines, vendor_payments, payment_allocations (0031).
 // No business rules here; invoices.service.ts and payments.service.ts hold them.
-import { and, asc, count, desc, eq, ilike, inArray, lte, ne, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, ilike, inArray, lte, ne, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import type { Queryable, Tx } from '../../db/client';
-import { paymentAllocations, vendorInvoiceLines, vendorInvoices, vendorPayments } from '../../db/schema/purch';
+import { debitNotes, paymentAllocations, vendorInvoiceLines, vendorInvoices, vendorPayments } from '../../db/schema/purch';
 import type { Paging } from './procurement.repo';
 
 export type InvoiceRow = typeof vendorInvoices.$inferSelect;
@@ -13,7 +13,19 @@ export type AllocationRow = typeof paymentAllocations.$inferSelect;
 type Stamp = 'id' | 'companyId' | 'createdAt' | 'createdBy' | 'updatedAt' | 'updatedBy';
 export type InvoiceHeaderValues = Omit<
   typeof vendorInvoices.$inferInsert,
-  Stamp | 'status' | 'exceptionAt' | 'releasedBy' | 'releasedAt' | 'releaseReason' | 'postingDate' | 'postedBy' | 'postedAt'
+  | Stamp
+  | 'status'
+  | 'exceptionAt'
+  | 'releasedBy'
+  | 'releasedAt'
+  | 'releaseReason'
+  | 'postingDate'
+  | 'postedBy'
+  | 'postedAt'
+  | 'reversedBy'
+  | 'reversedAt'
+  | 'reversalDate'
+  | 'reversalReason'
 >;
 export type InvoiceLineValues = Pick<
   typeof vendorInvoiceLines.$inferInsert,
@@ -34,8 +46,31 @@ export type InvoiceLineResult = Pick<
 >;
 export type PaymentValues = Omit<
   typeof vendorPayments.$inferInsert,
-  Stamp | 'status' | 'submittedBy' | 'submittedAt' | 'postingDate' | 'postedBy' | 'postedAt' | 'carryingPkr' | 'exchangeDiffPkr'
+  | Stamp
+  | 'status'
+  | 'submittedBy'
+  | 'submittedAt'
+  | 'postingDate'
+  | 'postedBy'
+  | 'postedAt'
+  | 'carryingPkr'
+  | 'exchangeDiffPkr'
+  | 'filerWarningAckBy'
+  | 'filerWarningAckAt'
+  | 'reversedBy'
+  | 'reversedAt'
+  | 'reversalDate'
+  | 'reversalReason'
 >;
+
+/**
+ * Was the document in force on `asOf`: POSTED (posted on or before), or REVERSED after that day (owner 2026-11-26:
+ * the ageing as of a past date still shows an invoice or payment reversed later).
+ */
+function inForce(t: typeof vendorInvoices | typeof vendorPayments, asOf?: string): SQL {
+  if (!asOf) return eq(t.status, 'POSTED');
+  return and(lte(t.postingDate, asOf), or(eq(t.status, 'POSTED'), and(eq(t.status, 'REVERSED'), gt(t.reversalDate, asOf))))!;
+}
 
 // ---------------------------------------------------------------- invoices
 
@@ -92,12 +127,12 @@ export async function listInvoices(
   return { rows, total: Number(c?.n ?? 0) };
 }
 
-/** Another non-cancelled invoice of this vendor carries the same vendor invoice number. */
+/** Another invoice of this vendor, neither cancelled nor reversed, carries the same vendor invoice number. */
 export async function invoiceNoTaken(q: Queryable, companyId: string, vendorId: string, no: string, exceptId?: string): Promise<string | null> {
   const where: SQL[] = [
     eq(vendorInvoices.companyId, companyId),
     eq(vendorInvoices.vendorId, vendorId),
-    ne(vendorInvoices.status, 'CANCELLED'),
+    notInArray(vendorInvoices.status, ['CANCELLED', 'REVERSED']),
     sql`upper(trim(${vendorInvoices.vendorInvoiceNo})) = upper(trim(${no}))`,
   ];
   if (exceptId) where.push(ne(vendorInvoices.id, exceptId));
@@ -171,11 +206,10 @@ export async function chargesBilled(
   return new Map(rows.map((r) => [r.landedCostId!, { amount: r.amount, cleared: r.cleared }]));
 }
 
-/** POSTED invoices of a vendor (optionally posted on or before a date). */
+/** POSTED invoices of a vendor; with `asOf`, those in force on that day (posted by then, not reversed by then). */
 export async function postedInvoices(q: Queryable, companyId: string, f: { vendorId?: string; asOf?: string }): Promise<InvoiceRow[]> {
-  const where: SQL[] = [eq(vendorInvoices.companyId, companyId), eq(vendorInvoices.status, 'POSTED')];
+  const where: SQL[] = [eq(vendorInvoices.companyId, companyId), inForce(vendorInvoices, f.asOf)];
   if (f.vendorId) where.push(eq(vendorInvoices.vendorId, f.vendorId));
-  if (f.asOf) where.push(lte(vendorInvoices.postingDate, f.asOf));
   return q.select().from(vendorInvoices).where(and(...where)).orderBy(asc(vendorInvoices.dueDate), asc(vendorInvoices.id));
 }
 
@@ -192,7 +226,7 @@ export async function invoicedQtyByPoLine(q: Queryable, poId: string): Promise<M
   return new Map(rows.rows.map((r) => [r.po_line_id, r.qty]));
 }
 
-/** Invoices (any status but CANCELLED) naming one of these GRN lines or landed costs: a GRN reversal is refused. */
+/** Invoices (neither CANCELLED nor REVERSED) naming one of these GRN lines or landed costs: a GRN reversal is refused. */
 export async function invoicesNaming(q: Queryable, f: { grnLineIds: string[]; landedCostIds: string[] }): Promise<string[]> {
   const conds: SQL[] = [];
   if (f.grnLineIds.length) conds.push(inArray(vendorInvoiceLines.grnLineId, f.grnLineIds));
@@ -202,8 +236,43 @@ export async function invoicesNaming(q: Queryable, f: { grnLineIds: string[]; la
     .selectDistinct({ docNo: vendorInvoices.docNo })
     .from(vendorInvoiceLines)
     .innerJoin(vendorInvoices, eq(vendorInvoices.id, vendorInvoiceLines.invoiceId))
-    .where(and(ne(vendorInvoices.status, 'CANCELLED'), or(...conds)));
+    .where(and(notInArray(vendorInvoices.status, ['CANCELLED', 'REVERSED']), or(...conds)));
   return rows.map((r) => r.docNo);
+}
+
+/** Payments (neither CANCELLED nor REVERSED) and debit notes (not CANCELLED) naming an invoice: it is not reversed. */
+export async function documentsOnInvoice(q: Queryable, invoiceId: string): Promise<{ payments: string[]; debitNotes: string[] }> {
+  const pays = await q
+    .selectDistinct({ docNo: vendorPayments.docNo })
+    .from(paymentAllocations)
+    .innerJoin(vendorPayments, eq(vendorPayments.id, paymentAllocations.paymentId))
+    .where(and(eq(paymentAllocations.invoiceId, invoiceId), notInArray(vendorPayments.status, ['CANCELLED', 'REVERSED'])));
+  const notes = await q
+    .select({ docNo: debitNotes.docNo })
+    .from(debitNotes)
+    .where(and(eq(debitNotes.invoiceId, invoiceId), ne(debitNotes.status, 'CANCELLED')));
+  return { payments: pays.map((p) => p.docNo), debitNotes: notes.map((n) => n.docNo) };
+}
+
+/** Taken off invoices by POSTED debit notes (posted on or before `asOf` when given): invoice currency and PKR. */
+export async function debitedOnInvoices(
+  q: Queryable,
+  invoiceIds: string[],
+  asOf?: string,
+): Promise<Map<string, { foreign: string; pkr: string }>> {
+  if (invoiceIds.length === 0) return new Map();
+  const where: SQL[] = [inArray(debitNotes.invoiceId, [...new Set(invoiceIds)]), eq(debitNotes.status, 'POSTED')];
+  if (asOf) where.push(lte(debitNotes.postingDate, asOf));
+  const rows = await q
+    .select({
+      invoiceId: debitNotes.invoiceId,
+      foreign: sql<string>`coalesce(sum(${debitNotes.totalAmount}), 0)::text`,
+      pkr: sql<string>`coalesce(sum(${debitNotes.totalPkr}), 0)::text`,
+    })
+    .from(debitNotes)
+    .where(and(...where))
+    .groupBy(debitNotes.invoiceId);
+  return new Map(rows.map((r) => [r.invoiceId, { foreign: r.foreign, pkr: r.pkr }]));
 }
 
 // ---------------------------------------------------------------- payments
@@ -257,15 +326,14 @@ export async function setAllocationCarrying(tx: Tx, allocationId: string, carryi
   await tx.update(paymentAllocations).set({ carryingPkr }).where(eq(paymentAllocations.id, allocationId));
 }
 
-/** Settled on POSTED payments per invoice (posted on or before `asOf` when given): foreign amount and PKR carried. */
+/** Settled per invoice by POSTED payments (with `asOf`: payments in force on that day): foreign amount and PKR carried. */
 export async function paidOnInvoices(
   q: Queryable,
   invoiceIds: string[],
   asOf?: string,
 ): Promise<Map<string, { foreign: string; carrying: string }>> {
   if (invoiceIds.length === 0) return new Map();
-  const where: SQL[] = [inArray(paymentAllocations.invoiceId, [...new Set(invoiceIds)]), eq(vendorPayments.status, 'POSTED')];
-  if (asOf) where.push(lte(vendorPayments.postingDate, asOf));
+  const where: SQL[] = [inArray(paymentAllocations.invoiceId, [...new Set(invoiceIds)]), inForce(vendorPayments, asOf)];
   const rows = await q
     .select({
       invoiceId: paymentAllocations.invoiceId,
@@ -279,9 +347,20 @@ export async function paidOnInvoices(
   return new Map(rows.map((r) => [r.invoiceId, { foreign: r.foreign, carrying: r.carrying }]));
 }
 
-/** Doc numbers of payments and invoices, for the ledger. */
-export async function docNos(q: Queryable, kind: 'invoice' | 'payment', ids: string[]): Promise<Map<string, { docNo: string; currency: string; foreign: string }>> {
+/** Doc numbers of payments, invoices and debit notes, for the ledger. */
+export async function docNos(
+  q: Queryable,
+  kind: 'invoice' | 'payment' | 'debit_note',
+  ids: string[],
+): Promise<Map<string, { docNo: string; currency: string; foreign: string }>> {
   if (ids.length === 0) return new Map();
+  if (kind === 'debit_note') {
+    const rows = await q
+      .select({ id: debitNotes.id, docNo: debitNotes.docNo, currency: debitNotes.currency, foreign: debitNotes.totalAmount })
+      .from(debitNotes)
+      .where(inArray(debitNotes.id, [...new Set(ids)]));
+    return new Map(rows.map((r) => [r.id, r]));
+  }
   if (kind === 'invoice') {
     const rows = await q
       .select({ id: vendorInvoices.id, docNo: vendorInvoices.docNo, currency: vendorInvoices.currency, foreign: vendorInvoices.totalAmount })
@@ -294,4 +373,9 @@ export async function docNos(q: Queryable, kind: 'invoice' | 'payment', ids: str
     .from(vendorPayments)
     .where(inArray(vendorPayments.id, [...new Set(ids)]));
   return new Map(rows.map((r) => [r.id, r]));
+}
+
+/** The approver's acknowledgement of a stale filer status (owner 2026-11-26), written while the payment waits for approval. */
+export async function setFilerAcknowledged(tx: Tx, paymentId: string, userId: string): Promise<void> {
+  await tx.update(vendorPayments).set({ filerWarningAckBy: userId, filerWarningAckAt: new Date() }).where(eq(vendorPayments.id, paymentId));
 }

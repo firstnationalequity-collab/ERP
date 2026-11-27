@@ -12,6 +12,7 @@ import {
   PartyStatus,
   StorageZone,
   TaxKind,
+  WhtBase,
 } from '../../enums';
 import { ESignRequest, WitnessSignRequest } from '../core/esign';
 import type { AttachmentDto } from '../core/attachments';
@@ -94,19 +95,37 @@ interface Stamped {
 
 // ---------------------------------------------------------------- tax codes (fin.master.manage)
 
+/**
+ * WITHHOLDING codes (owner 2026-11-26, 0032): `rate` is the filer (ATL) rate and `nonFilerRate` the rate for a payee not
+ * on the ATL; `whtBase` says whether the tax is deducted on the gross including or excluding sales tax. WHT is posted
+ * only once Finance has confirmed the rates (isPlaceholder false, which needs the non-filer rate) and the base
+ * (whtBaseConfirmed). Sales tax codes carry none of these.
+ */
+const whtFields = {
+  nonFilerRate: percentRate.nullable().optional(),
+  whtBase: z.enum(WhtBase).optional(),
+  whtBaseConfirmed: z.boolean().optional(),
+};
 export const CreateTaxCodeRequest = z
-  .object({ code: code30, name, kind: z.enum(TaxKind), rate: percentRate, isPlaceholder: z.boolean().default(false) })
+  .object({ code: code30, name, kind: z.enum(TaxKind), rate: percentRate, isPlaceholder: z.boolean().default(false), ...whtFields })
   .strict();
 export type CreateTaxCodeRequest = z.infer<typeof CreateTaxCodeRequest>;
-export const UpdateTaxCodeRequest = z.object({ name: name.optional(), rate: percentRate.optional(), isPlaceholder: z.boolean().optional() }).strict();
+export const UpdateTaxCodeRequest = z
+  .object({ name: name.optional(), rate: percentRate.optional(), isPlaceholder: z.boolean().optional(), ...whtFields })
+  .strict();
 export type UpdateTaxCodeRequest = z.infer<typeof UpdateTaxCodeRequest>;
 export interface TaxCodeDto extends Stamped {
   code: string;
   name: string;
   kind: TaxKind;
+  /** WITHHOLDING: the filer (ATL) rate. */
   rate: string;
   isPlaceholder: boolean;
   isActive: boolean;
+  /** WITHHOLDING only (owner 2026-11-26): rate for a payee not on the ATL, the base and whether Finance confirmed it. */
+  nonFilerRate: string | null;
+  whtBase: WhtBase | null;
+  whtBaseConfirmed: boolean;
 }
 
 // ---------------------------------------------------------------- UoM, categories, items, conversions (master.item.manage)

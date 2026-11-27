@@ -10,6 +10,7 @@ import { createApp } from '../../../app';
 import { databaseUrl } from '../../../config/env';
 import { runSeed } from '../../../db/seed/run';
 import { createTestUser, TEST_PASSWORD } from '../../../test/factories';
+import { companyToday } from '../../../core/dates';
 
 const app = createApp();
 const client = new pg.Client({ connectionString: databaseUrl });
@@ -398,7 +399,10 @@ describe('foreign currency (IAS 21, owner Q4)', () => {
     });
     await call('ap', 'post', `/purch/vendor-payments/${pay2.body.id}/submit`);
     await approvePayment(pay2.body.id);
-    const done2 = await act('ap', `/purch/vendor-payments/${pay2.body.id}/post`);
+    // Owner 2026-11-26: posting needs the bank reference; it may be given at posting.
+    const noRef = await act('ap', `/purch/vendor-payments/${pay2.body.id}/post`);
+    expect([noRef.status, noRef.body.error.details.field]).toEqual([400, 'reference']);
+    const done2 = await act('ap', `/purch/vendor-payments/${pay2.body.id}/post`, { reference: 'TT-2' });
     expect(done2.body).toMatchObject({ carryingPkr: '14382.00', exchangeDiffPkr: '-382.00' });
     const inv = await call('acct', 'get', `/purch/vendor-invoices/${draft.body.id}`);
     expect(inv.body).toMatchObject({ paidAmount: '101.00', openAmount: '0.00', openPkr: '0.00' });
@@ -464,7 +468,7 @@ describe('payment with WHT (0013: blocked while the rate is a placeholder)', () 
     expect((await call('buyer', 'patch', `/master/vendors/${ids.vendor}`, { whtTaxCodeId: tax['ST-18'] })).status).toBe(400);
     expect((await call('buyer', 'patch', `/master/vendors/${ids.vendor}`, { isFiler: true })).status).toBe(400);
     const set = await call('buyer', 'patch', `/master/vendors/${ids.vendor}`, {
-      whtTaxCodeId: tax['WHT-153-1A'], isFiler: true, filerCheckedOn: INV_DATE,
+      whtTaxCodeId: tax['WHT-153-1A'], isFiler: true, filerCheckedOn: companyToday(), // fresh: no stale-filer warning (0032)
       countersign: { username: 'vi_pm', password: TEST_PASSWORD, meaning: 'APPROVED', reason: 'ATL checked on FBR' },
     });
     expect([set.status, set.body.whtTaxCodeId, set.body.isFiler]).toEqual([200, tax['WHT-153-1A'], true]);
@@ -475,8 +479,12 @@ describe('payment with WHT (0013: blocked while the rate is a placeholder)', () 
     expect(draft.body).toMatchObject({ pkrPaid: '1191.80', whtRate: '4.0000', whtAmount: '47.67', netPaid: '1144.13', whtRateUnconfirmed: true, payeeIsFiler: true });
     const blocked = await call('ap', 'post', `/purch/vendor-payments/${draft.body.id}/submit`);
     expect([blocked.status, blocked.body.error.code]).toEqual([422, 'TAX_RATE_NOT_CONFIRMED']);
-    // Finance confirms the rate; submit, a rejection back to DRAFT, then approval and posting.
-    expect((await call('fm', 'patch', `/master/tax-codes/${tax['WHT-153-1A']}`, { isPlaceholder: false })).status).toBe(200);
+    // Finance confirms the rates (with the non-filer rate) and the base (owner 2026-11-26); submit, a rejection back
+    // to DRAFT, then approval and posting.
+    expect((await call('fm', 'patch', `/master/tax-codes/${tax['WHT-153-1A']}`, { nonFilerRate: '8', isPlaceholder: false })).status).toBe(200);
+    const baseOpen = await call('ap', 'post', `/purch/vendor-payments/${draft.body.id}/submit`);
+    expect([baseOpen.status, baseOpen.body.error.code, baseOpen.body.error.details.unconfirmed]).toEqual([422, 'TAX_RATE_NOT_CONFIRMED', 'BASE']);
+    expect((await call('fm', 'patch', `/master/tax-codes/${tax['WHT-153-1A']}`, { whtBaseConfirmed: true })).status).toBe(200);
     expect((await call('ap', 'post', `/purch/vendor-payments/${draft.body.id}/submit`)).body.status).toBe('PENDING_APPROVAL');
     expect((await act('ap', `/purch/vendor-payments/${draft.body.id}/post`)).status).toBe(409);
     const { rows } = await client.query<{ id: string }>(`SELECT id FROM core.approvals WHERE doc_table = 'purch.vendor_payments' AND doc_id = $1`, [draft.body.id]);
@@ -484,7 +492,7 @@ describe('payment with WHT (0013: blocked while the rate is a placeholder)', () 
     expect((await call('ap', 'get', `/purch/vendor-payments/${draft.body.id}`)).body.status).toBe('DRAFT');
     await call('ap', 'post', `/purch/vendor-payments/${draft.body.id}/submit`);
     expect((await approvePayment(draft.body.id)).status).toBe(200);
-    const posted = await act('ap', `/purch/vendor-payments/${draft.body.id}/post`);
+    const posted = await act('ap', `/purch/vendor-payments/${draft.body.id}/post`, { reference: 'CHQ-000123' });
     expect([posted.status, posted.body.status]).toEqual([200, 'POSTED']);
     expect(await journalOf('VENDOR_PAYMENT', draft.body.id)).toEqual([
       { code: '1120', dr: '0.00', cr: '1144.13', vendor: null },

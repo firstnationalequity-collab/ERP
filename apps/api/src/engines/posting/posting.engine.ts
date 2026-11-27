@@ -64,6 +64,9 @@ export const JournalPostingKeys: Readonly<Partial<Record<PostingEvent, Permissio
   // M3 task 5 (0031): the Accountant posts vendor invoices; the AP Officer posts approved payments.
   VENDOR_INVOICE: 'fin.invoice.manage',
   VENDOR_PAYMENT: 'fin.payment.manage',
+  // M3 task 5b (0032; owner 2026-11-26): the Accountant posts approved price-claim / short-supply debit notes. A return
+  // note posts LOT_RETURNED (the Warehouse Manager's witnessed disposal).
+  VENDOR_DEBIT_NOTE: 'fin.debit_note.manage',
 };
 
 /**
@@ -84,6 +87,9 @@ export const JournalAlternativeKeys: Readonly<Partial<Record<PostingEvent, reado
  */
 export const JournalReversalKeys: Readonly<Partial<Record<PostingEvent, PermissionKey>>> = {
   GRN_RECEIPT: 'purch.grn.reverse',
+  // Owner 2026-11-26 (task 5b): a Finance Manager reverses vendor invoices and payments.
+  VENDOR_INVOICE: 'fin.invoice.reverse',
+  VENDOR_PAYMENT: 'fin.payment.reverse',
 };
 
 /**
@@ -241,13 +247,30 @@ export interface StockPosting {
 // ---------------------------------------------------------------- journals
 
 /** Read-only, for document screens: the journals that name this source document (id, number, status). */
+/** A journal of a source document; a reversal names the entry it mirrors. */
+export interface SourceJournal {
+  id: string;
+  docNo: string;
+  status: PostingStatus;
+  event: PostingEvent | null;
+  entryDate: string;
+  reversalOf: string | null;
+}
+
 export async function journalsOfSource(
   q: Queryable,
   companyId: string,
   sourceType: string,
   sourceId: string,
-): Promise<{ id: string; docNo: string; status: PostingStatus; event: PostingEvent | null }[]> {
-  return (await repo.entriesOfSource(q, companyId, sourceType, sourceId)).map((e) => ({ id: e.id, docNo: e.docNo, status: e.status, event: e.event }));
+): Promise<SourceJournal[]> {
+  return (await repo.entriesOfSource(q, companyId, sourceType, sourceId)).map((e) => ({
+    id: e.id,
+    docNo: e.docNo,
+    status: e.status,
+    event: e.event,
+    entryDate: e.entryDate,
+    reversalOf: e.reversalOf,
+  }));
 }
 
 export interface SubledgerLine {

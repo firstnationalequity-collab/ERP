@@ -82,8 +82,34 @@ export async function listTaxCodes(auth: AuthContext, query: MasterListQuery): P
 export async function getTaxCode(auth: AuthContext, id: string): Promise<TaxCodeDto> {
   return stamped(found(await repo.findTaxCode(db, auth.companyId, id), 'Tax code'));
 }
+/**
+ * WITHHOLDING codes (owner 2026-11-26, 0032): filer rate (`rate`), non-filer rate and base (incl. / excl. sales tax).
+ * Confirming the rates (isPlaceholder false) needs the non-filer rate; a confirmed base stays confirmed. The DB
+ * (master.guard_wht_code) re-checks.
+ */
+function assertWhtFields(kind: TaxCodeDto['kind'], v: { nonFilerRate?: string | null; whtBase?: string; whtBaseConfirmed?: boolean }): void {
+  if (kind !== 'WITHHOLDING' && ((v.nonFilerRate ?? null) !== null || v.whtBase !== undefined || v.whtBaseConfirmed === true)) {
+    throw new AppError('VALIDATION_FAILED', 'Only a withholding code has a non-filer rate and a WHT base', { field: 'whtBase' });
+  }
+}
+
 export async function createTaxCode(auth: AuthContext, input: CreateTaxCodeRequest): Promise<TaxCodeDto> {
-  const row = await withTransaction(txContext(auth), (tx) => repo.insertTaxCode(tx, input));
+  assertWhtFields(input.kind, input);
+  if (input.kind === 'WITHHOLDING' && !input.isPlaceholder && (input.nonFilerRate ?? null) === null) {
+    throw new AppError('VALIDATION_FAILED', 'Give the non-filer rate before confirming the rates', { field: 'nonFilerRate' });
+  }
+  const row = await withTransaction(txContext(auth), (tx) =>
+    repo.insertTaxCode(tx, {
+      code: input.code,
+      name: input.name,
+      kind: input.kind,
+      rate: input.rate,
+      isPlaceholder: input.isPlaceholder,
+      ...(input.kind === 'WITHHOLDING'
+        ? { nonFilerRate: input.nonFilerRate ?? null, whtBase: input.whtBase ?? 'INCL_SALES_TAX', whtBaseConfirmed: input.whtBaseConfirmed ?? false }
+        : {}),
+    }),
+  );
   return stamped(row);
 }
 export async function updateTaxCode(auth: AuthContext, id: string, input: UpdateTaxCodeRequest): Promise<TaxCodeDto> {
@@ -91,6 +117,15 @@ export async function updateTaxCode(auth: AuthContext, id: string, input: Update
     const tc = found(await repo.findTaxCode(tx, auth.companyId, id), 'Tax code');
     if (input.isPlaceholder === true && !tc.isPlaceholder) {
       throw new AppError('VALIDATION_FAILED', 'A confirmed tax code cannot be marked placeholder again', { field: 'isPlaceholder' });
+    }
+    assertWhtFields(tc.kind, input);
+    if (input.whtBaseConfirmed === false && tc.whtBaseConfirmed) {
+      throw new AppError('VALIDATION_FAILED', 'A confirmed WHT base stays confirmed', { field: 'whtBaseConfirmed' });
+    }
+    const placeholder = input.isPlaceholder ?? tc.isPlaceholder;
+    const nonFiler = input.nonFilerRate === undefined ? tc.nonFilerRate : input.nonFilerRate;
+    if (tc.kind === 'WITHHOLDING' && !placeholder && nonFiler === null && (tc.isPlaceholder || tc.nonFilerRate !== null)) {
+      throw new AppError('VALIDATION_FAILED', 'Give the non-filer rate before confirming the rates', { field: 'nonFilerRate' });
     }
     const changes = sent(input);
     // Confirming a seeded rate drops the "RATE NOT CONFIRMED" label unless Finance gives a new name.
@@ -113,6 +148,13 @@ export async function assertTaxRateConfirmed(tx: Tx, companyId: string, taxCodeI
   if (tc.kind === 'WITHHOLDING' && tc.isPlaceholder) {
     throw new AppError('TAX_RATE_NOT_CONFIRMED', `Withholding tax ${tc.code} has a placeholder rate; Finance must confirm it before it is posted`, {
       taxCode: tc.code,
+    });
+  }
+  // Owner 2026-11-26: the base (incl. / excl. sales tax) is confirmed too.
+  if (tc.kind === 'WITHHOLDING' && !tc.whtBaseConfirmed) {
+    throw new AppError('TAX_RATE_NOT_CONFIRMED', `The base of withholding tax ${tc.code} (incl. or excl. sales tax) is not confirmed; Finance must confirm it before it is posted`, {
+      taxCode: tc.code,
+      unconfirmed: 'BASE',
     });
   }
 }

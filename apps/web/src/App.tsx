@@ -27,6 +27,7 @@ import { GrnPage } from './pages/purch/GrnPage';
 import { LandedCostPage } from './pages/purch/LandedCostPage';
 import { VendorInvoicesPage } from './pages/purch/VendorInvoicesPage';
 import { VendorPaymentsPage } from './pages/purch/VendorPaymentsPage';
+import { DebitNotesPage } from './pages/purch/DebitNotesPage';
 import { ApAgeingPage, VendorLedgerPage } from './pages/purch/PayablesPages';
 
 export function App() {
@@ -68,6 +69,7 @@ export function App() {
         <Route path="/purch/landed-costs" element={<RequirePermission anyOf={['purch.view']}><LandedCostPage /></RequirePermission>} />
         <Route path="/purch/vendor-invoices" element={<RequirePermission anyOf={['purch.view', 'fin.view']}><VendorInvoicesPage /></RequirePermission>} />
         <Route path="/purch/vendor-payments" element={<RequirePermission anyOf={['purch.view', 'fin.view']}><VendorPaymentsPage /></RequirePermission>} />
+        <Route path="/purch/debit-notes" element={<RequirePermission anyOf={['purch.view', 'fin.view']}><DebitNotesPage /></RequirePermission>} />
         <Route path="/purch/vendor-ledger" element={<RequirePermission anyOf={['purch.view', 'fin.view']}><VendorLedgerPage /></RequirePermission>} />
         <Route path="/purch/ap-ageing" element={<RequirePermission anyOf={['purch.view', 'fin.view']}><ApAgeingPage /></RequirePermission>} />
         <Route path="/fin/exchange-rates" element={<RequirePermission anyOf={['fin.view', 'purch.view']}><ExchangeRatesPage /></RequirePermission>} />

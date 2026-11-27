@@ -6,7 +6,7 @@ Current milestone: **M3 — Procurement** (M2 done, tag `m2`)
 | --- | --- | --- | --- | --- |
 | M1 Foundation | Done | 17-11-2026 | 18-11-2026 | All 12 tasks, rules-review fixes A–F, first-QA-Manager bootstrap; CI run #13 green on `04ef009`; tag `m1` |
 | M2 Masters & engines | Done | 18-11-2026 | 19-11-2026 | All 10 tasks; rules-review fixes (disposal witness 0020, deactivation guards 0021); owner answers 19-11 recorded; CI green; tag `m2` |
-| M3 Procurement | In progress | 25-11-2026 | | Tasks 1–5 + owner answers done (0022–0031); 6 open |
+| M3 Procurement | In progress | 25-11-2026 | | Tasks 1–5b + owner answers done (0022–0032); 6 open |
 | M4 QC | Not started | | | |
 | M5 Sales | Not started | | | |
 | M6 Production | Not started | | | |
@@ -16,9 +16,9 @@ Current milestone: **M3 — Procurement** (M2 done, tag `m2`)
 | M10 Hardening & staging | Not started | | | |
 | M11 UAT & go-live | Not started | | | |
 
-## Handoff (26-11-2026, M3 in progress, task 5 done)
+## Handoff (27-11-2026, M3 in progress, task 5b done)
 
-**State:** M3 started 25-11-2026. We work on `main`, one commit per task, pushed. API tests need the Docker DB (`docker compose up -d`). 656 tests green (614 API, 26 web, 16 shared). CLAUDE.md rules 1 and 10 reworded and workflow steps 7–10 added by the owner (25-11): commit + push per task, one or two tasks per chat, `docs/demo/M<n>.md` after screen tasks.
+**State:** M3 started 25-11-2026. We work on `main`, one commit per task, pushed. API tests need the Docker DB (`docker compose up -d`). 672 tests green (630 API, 26 web, 16 shared). CLAUDE.md rules 1 and 10 reworded and workflow steps 7–10 added by the owner (25-11): commit + push per task, one or two tasks per chat, `docs/demo/M<n>.md` after screen tasks.
 
 **M3 tasks** (details of done tasks: `docs/progress-log.md`, decisions.md rows dated 2026-11-25):
 - [x] 1, 2, 2b, 2c, 2d. Owner decisions from M2 (0022); PR → PO with approval matrix, AVL block, rate table (0023); unit rates 6 decimals (0024); owner answers (0025); rules 1/10 + two-person GMP void (0026).
@@ -28,16 +28,17 @@ Current milestone: **M3 — Procurement** (M2 done, tag `m2`)
 - [x] 4b. Owner answers (0030): GRN reversal signs meaning REVERSED; charge currency (foreign amount × charge-date rate, refreshed at posting); correction charges (negative, linked, split held / variance at its date; Purchase Officer enters `/correct`, Finance Manager posts `/approve` with e-signature, new key `purch.landed_cost.correct`, creator ≠ signer, CORRECTION_EXCEEDS_CHARGE); GRN reversal undoes posted charges (REVERSED) — GRN_HAS_LANDED_COST removed. Web: currency on the charge form, Correct / Approve and post in the charge drawer.
 - [x] 4c. Owner answers 26-11: task-4b defaults (a)–(d) confirmed; charge types CD, ACD, RD, IMPORT_ST, IMPORT_IT `pkr_only` (Finance may flag others), GD amounts PKR → CURRENCY_NOT_ALLOWED (service + DB, 0031).
 - [x] 5. Vendor invoice / payment / ledger / ageing (0031), `modules/procurement/{invoices,payments,ap}.service.ts`. GOODS: GRN lines of one PO, match price (`purch.invoice.price_tolerance_pct` 2) and cumulative qty (`purch.invoice.qty_tolerance_pct` 0) → POSTED or MATCH_EXCEPTION; Finance Manager `/release` (e-sign, new key `fin.invoice.match_release`, creator ≠ releaser) or `/return`. CHARGES: posted landed costs, clears 2130. IAS 21 split (GRNI / price variance / exchange 6300). Payment DRAFT → PENDING_APPROVAL (matrix VENDOR_PAYMENT) → APPROVED → POSTED; WHT from the vendor's section (blocked while placeholder); vendor WHT section + filer (ATL) + checked-on. PO → CLOSED when fully billed; invoiced GRN not reversed (IN_USE). Web: Procurement → Vendor invoices, Vendor payments, Vendor ledger, AP ageing; vendor form WHT/filer; charge types "Currency".
-- [x] 5b. Owner request 27-11: `pnpm db:seed:demo-data` (`db/seed/demo-data.ts`; dev guard, runs db:seed:dev first): 10 items, 3 vendors + approved sources, 2 customers, warehouse DM-WH (QUAR/APPR/REJ/RET), approved formula, today's USD rate, 2 POs (APPROVED, PENDING_APPROVAL), all through the services as the demo users; idempotent. Docs: `docs/demo/M3.md`.
+- [x] Demo data (owner request 27-11; content confirmed 27-11): `pnpm db:seed:demo-data` (`db/seed/demo-data.ts`; dev guard, runs db:seed:dev first): 10 items, 3 vendors + approved sources, 2 customers, warehouse DM-WH (QUAR/APPR/REJ/RET), approved formula, today's USD rate, 2 POs (APPROVED, PENDING_APPROVAL), all through the services as the demo users; idempotent. Docs: `docs/demo/M3.md`.
+- [x] 5b. Owner brief (0032): WHT filer / non-filer rate and base per WITHHOLDING code (confirmed by Finance before posting); stale filer check (`purch.vendor.filer_check_max_days` 30) acknowledged by the approver in My approvals; bank reference required to post a payment; invoice and payment reversal (Finance Manager, e-sign REVERSED, `fin.invoice.reverse` / `fin.payment.reverse`; invoice not reversed while paid or debited); debit notes DN- (PRICE_CLAIM, SHORT_SUPPLY, RETURN_TO_VENDOR posted by the Warehouse Manager with a QA witness; matrix DEBIT_NOTE; `fin.debit_note.manage` / `.approve`), in the ledger and ageing. Web: Debit notes page, Reverse buttons, tax-code WHT fields. Tests: `__tests__/ap-reversals-debit-notes.test.ts`.
 - [ ] 6. Segregation sweep, end-to-end Done-when test, /check-rules, docs.
 
-**Next (new chat): task 6, M3 close-out.** The Done-when test (PO → GRN → invoice → payment GL exactly as §6; non-AVL PO refused) can reuse the helpers in `__tests__/vendor-invoice.test.ts`. Not built (owner rule needed): reversing a posted invoice / payment, debit notes against invoices.
+**Next (new chat): task 6, M3 close-out.** The Done-when test (PO → GRN → invoice → payment GL exactly as §6; non-AVL PO refused) can reuse the helpers in `__tests__/vendor-invoice.test.ts`. Not built: reversing a posted debit note.
 
 **Open questions for the owner** (agent defaults in decisions.md):
-1. Task 5 defaults (decisions.md 2026-11-26, task-5 "choices the owner did not state" row, items a–n): release key and flow; tolerances 2% price / 0% qty; posting date = invoice date; the GRNI / price-variance / exchange split; CHARGES billing rules; WHT base = gross PKR incl. sales tax and filer status not changing the rate; payment flow; auto PO close; series VI-/VP-; no invoice reversal yet. OK?
+1. Task 5 defaults ((g) WHT base / filer and (n) reversals now superseded by task 5b) (decisions.md 2026-11-26, task-5 "choices the owner did not state" row, items a–n): release key and flow; tolerances 2% price / 0% qty; posting date = invoice date; the GRNI / price-variance / exchange split; CHARGES billing rules; WHT base = gross PKR incl. sales tax and filer status not changing the rate; payment flow; auto PO close; series VI-/VP-; no invoice reversal yet. OK?
 3. Lot number ML{YY}-{SEQ:5}: owner confirming with QA.
 4. Not testable yet: the "sample already taken" refusal (sample requests have only OPEN/CANCELLED until M4 adds sampling; the code and SQL refuse any other status).
-5. Demo-data content (decisions.md 2026-11-27): `DM-` codes and fictional "Demo" names, the demo USD rate 281.25 (not SBP), text-file AVL evidence, PO amounts. OK for demos?
+5. Task 5b defaults (decisions.md 2026-11-27, items a–g): base per WHT code (not one setting), never-checked vendor = non-filer rate, 30-day stale limit, Finance Manager reverses, invoice with a debit note not reversed, debit-note approval by Finance Manager (one band), price claim excl. tax, return posted by WM + QA witness, posted debit notes not reversible. OK?
 
 **Rules the code already relies on (M3+):**
 - A module posts stock in ONE `withTransaction`: `postMovement` (engines/inventory) then `postStockJournal` (engines/posting). Corrections: `reverseMovements` then `reverseStockJournal`. Transfers post no journal. Toll rows post nothing.
@@ -52,4 +53,4 @@ Current milestone: **M3 — Procurement** (M2 done, tag `m2`)
 - Landed cost: `modules/procurement/landed-costs.service.ts`. LANDED_COST value adjustments only on GRN lots for a LANDED_COST document; `postStockJournal({ otherLines })` adds balanced non-inventory lines (price variance).
 - Roles: `pnpm db:seed` adds keys from `docs/roles.md` that roles are missing. If it stops with `RoleBundleDriftError`, ask the owner per key and never remove keys yourself.
 
-**Local dev DB:** migrated to 0031 and seeded (series VENDOR_INVOICE / VENDOR_PAYMENT, account 6300, FINANCE_MANAGER got `fin.invoice.match_release`). It has the `demo.<role>` users (password = `DEV_DEMO_PASSWORD` in `.env`) and FY 2026-27 periods OPEN. `demo.qa_manager` holds the QA countersign. Demo data loaded 27-11 (`pnpm db:seed:demo-data`: PO-2627-00001 APPROVED, PO-2627-00002 waiting for demo.finance_manager).
+**Local dev DB:** migrated to 0032 and seeded (series VENDOR_INVOICE / VENDOR_PAYMENT, account 6300, FINANCE_MANAGER got `fin.invoice.match_release`). It has the `demo.<role>` users (password = `DEV_DEMO_PASSWORD` in `.env`) and FY 2026-27 periods OPEN. `demo.qa_manager` holds the QA countersign. 0032 added keys `fin.invoice.reverse`, `fin.payment.reverse`, `fin.debit_note.*`, series DN, matrix DEBIT_NOTE). Demo data loaded 27-11 (`pnpm db:seed:demo-data`: PO-2627-00001 APPROVED, PO-2627-00002 waiting for demo.finance_manager).

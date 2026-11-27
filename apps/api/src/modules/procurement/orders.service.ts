@@ -344,3 +344,20 @@ export async function closePoIfInvoiced(
   await transition(tx, poCloseMoves(key), { entityId: po.id, to: 'CLOSED', actor, reason: 'Fully received and invoiced' });
   return true;
 }
+
+/**
+ * Owner 2026-11-26 (task 5b): reversing an invoice re-opens what it billed, so a CLOSED PO goes back to RECEIVED in the
+ * reversal's transaction, under fin.invoice.reverse (the DB re-checks that something received is no longer invoiced).
+ */
+const reopenMoves = defineTransitions<PurchaseOrderStatus>({
+  entityTable: PO_TABLE,
+  statuses: PurchaseOrderStatus,
+  moves: [{ from: 'CLOSED', to: 'RECEIVED', permission: 'fin.invoice.reverse', reasonRequired: true }],
+});
+
+export async function reopenPoAfterInvoiceReversal(tx: Tx, actor: Actor, poId: string, invoiceDocNo: string): Promise<boolean> {
+  const po = await lockPo(tx, actor.companyId, poId);
+  if (po.status !== 'CLOSED') return false;
+  await transition(tx, reopenMoves, { entityId: po.id, to: 'RECEIVED', actor, reason: `Invoice ${invoiceDocNo} reversed` });
+  return true;
+}
