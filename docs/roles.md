@@ -64,7 +64,8 @@ Design context: `docs/architecture.md` §3 and §4.
 | `qc.result.enter` | action | Take samples, enter results | existing |
 | `qc.result.review` | action | Review results | existing |
 | `qc.lot.change_status` | action | Approve / reject material lots (RM, PM, API, EXCIPIENT) | existing (narrowed: HOLD moved to `qa.lot.hold`; FG and return lots decided by QA, owner 2026-11-18) |
-| `qc.coa.issue` | action | Issue certificates of analysis | existing |
+| `qc.coa.issue` | action | Issue and re-issue certificates of analysis | existing (re-issue as a new version, owner 2026-11-27) |
+| `qc.oos.close` | action | Close OOS investigations with an e-signature (INVALIDATED / CONFIRMED) | new (M4 task 4b, owner 2026-11-27; QC Manager only; never the analyst of the failed result) |
 | `prod.view` | view | View production orders, stages, outputs | new |
 | `prod.order.manage` | action | Create, release, cancel production orders | existing |
 | `prod.stage.sign` | action | Execute and sign batch stages, record yield and resource hours | existing |
@@ -127,7 +128,7 @@ Every role except SYSTEM also holds `core.approval.inbox` (not repeated below). 
 | 14 | Production Supervisor | `prod.view`, `inv.stock.view` | `prod.stage.sign`, `prod.output.verify`, `prod.batch.close` |
 | 15 | Production Manager | `prod.view`, `qa.view`, `inv.stock.view`, `master.view` | `prod.batch.approve_close`, `qa.deviation.manage`, `master.formula.manage` |
 | 16 | QC Analyst | `qc.view`, `inv.stock.view`, `master.view` | `qc.result.enter`, `qc.spec.manage` |
-| 17 | QC Manager | `qc.view`, `inv.stock.view`, `master.view` | `qc.result.review`, `qc.lot.change_status`, `qc.coa.issue`, `qc.spec.approve` |
+| 17 | QC Manager | `qc.view`, `inv.stock.view`, `master.view` | `qc.result.review`, `qc.lot.change_status`, `qc.coa.issue`, `qc.spec.approve`, `qc.oos.close` |
 | 18 | QA Officer | `qa.view`, `qc.view`, `prod.view`, `master.view` | `qa.deviation.manage` |
 | 19 | QA Manager | `qa.view`, `qc.view`, `prod.view`, `inv.stock.view`, `master.view`, `core.audit.view` | `qa.deviation.manage`, `qa.deviation.close`, `qa.batch.release`, `qa.lot.hold`, `qa.lot.witness`, `qa.lot.reject_fg`, `qa.access.countersign`, `master.avl.approve`, `master.formula.approve`, `inv.adjustment.approve` (second approver for adjustments), `qa.product.countersign`, `master.item.approve`, `qa.attachment.countersign` |
 | 20 | System Admin | `core.audit.view` | `core.user.manage`, `core.role.manage`, `core.settings.manage` (admin keys only) |

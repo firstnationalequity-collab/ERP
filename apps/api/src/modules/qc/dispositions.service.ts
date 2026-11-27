@@ -9,6 +9,9 @@
 //                  before sampling (cancels the OPEN request); HOLD → REJECTED for a material lot QA put on hold.
 //                  Reason = the signature's reason. A rejection no failed latest result supports (QUARANTINE, HOLD, or
 //                  UNDER_TEST with no failure) needs a reason category and a description (owner 2026-11-27; 0038).
+// OOS (owner 2026-11-27; 0040): approval is refused while an OOS investigation of the lot is open (OOS_OPEN) or a
+// test's latest result was invalidated and not re-tested (QC_RETEST_REQUIRED); an invalidated failure is not a
+// failed test (it supports no rejection). Rejection stays allowed while an investigation is open.
 // Never an FG lot (FG_LOT_QA_DECIDES): QC does not approve or reject finished goods; QA decides (build-plan M4). The
 // decider entered none of the sample's results (SEGREGATION_OF_DUTIES). The database (0037) re-checks every rule.
 import { Decimal } from 'decimal.js';
@@ -41,6 +44,8 @@ import {
 } from '../../engines/inventory';
 import { qcItemIdsMatching, qcItems, type QcItemRef } from '../masters/qc-refs.service';
 import { latestPerTest, QcLotMoves, SamplingMoves } from './samples.service';
+import { limitText } from './spec-text';
+import { isInvalidated, oosByResult, openOosOfLots } from './oos.service';
 import * as specsRepo from './specs.repo';
 import * as samplesRepo from './sample-requests.repo';
 import * as repo from './dispositions.repo';
@@ -59,6 +64,9 @@ interface Assessment {
   /** Names of tests without a result / whose latest result failed; analysts of the sample's results. */
   missing: string[];
   failed: string[];
+  /** 0040: tests whose latest result an OOS investigation invalidated (re-test first); the lot's OPEN investigations. */
+  invalidated: string[];
+  openOos: string[];
   unreviewed: number;
   analysts: Set<string>;
   /** Latest assay / water results, rounded to the lot's 4 decimals (half away from zero, as the database rounds). */
@@ -68,15 +76,7 @@ interface Assessment {
 
 const pct4 = (v: string) => new Decimal(v).toDecimalPlaces(4, Decimal.ROUND_HALF_UP).toFixed(4);
 
-export function limitText(t: specsRepo.SpecTestRow): string {
-  if (t.resultType === 'TEXT') return t.textLimit ?? '';
-  const unit = t.unit ? ` ${t.unit}` : '';
-  const n = (v: string) => new Decimal(v).toString();
-  if (t.minValue !== null && t.maxValue !== null) return `${n(t.minValue)} – ${n(t.maxValue)}${unit}`;
-  if (t.minValue !== null) return `≥ ${n(t.minValue)}${unit}`;
-  if (t.maxValue !== null) return `≤ ${n(t.maxValue)}${unit}`;
-  return 'Report';
-}
+export { limitText };
 
 /** The lots' decision state, read in batches (list) or under lock (`lock` locks the requests; the caller locks the lot). */
 async function assessLots(q: Queryable, companyId: string, lots: Lot[], lock = false): Promise<Map<string, Assessment>> {
@@ -94,6 +94,9 @@ async function assessLots(q: Queryable, companyId: string, lots: Lot[], lock = f
   const specIds = [...new Set(chosen.flatMap((r) => (r.specId ? [r.specId] : [])))];
   const specs = new Map((await specsRepo.specsByIds(q, companyId, specIds)).map((s) => [s.id, s]));
   const testsOf = new Map(await Promise.all(specIds.map(async (id) => [id, await specsRepo.specTestsOf(q, id)] as const)));
+  // 0040: OOS investigations of the results, and the lots' open ones.
+  const oos = await oosByResult(q, results.map((r) => r.id));
+  const openOos = await openOosOfLots(q, companyId, lots.map((l) => l.id));
 
   const out = new Map<string, Assessment>();
   for (const lot of lots) {
@@ -101,6 +104,7 @@ async function assessLots(q: Queryable, companyId: string, lots: Lot[], lock = f
     const request = requestOf.get(lot.id) ?? null;
     const mine = request ? results.filter((r) => r.sampleRequestId === request.id) : [];
     const latest = latestPerTest(mine);
+    const invalid = (resultId: string | null) => resultId !== null && isInvalidated(oos.get(resultId));
     const specTests = request?.specId ? (testsOf.get(request.specId) ?? []) : [];
     const tests: DispositionTestDto[] = specTests.map((t) => {
       const r = latest.get(t.id);
@@ -130,7 +134,10 @@ async function assessLots(q: Queryable, companyId: string, lots: Lot[], lock = f
       specVersion: request?.specId ? (specs.get(request.specId)?.version ?? null) : null,
       tests,
       missing: tests.filter((t) => t.resultId === null).map((t) => t.name),
-      failed: tests.filter((t) => t.passed === false).map((t) => t.name),
+      // A failure its OOS investigation invalidated is not a failed test; it needs a re-test before approval.
+      failed: tests.filter((t) => t.passed === false && !invalid(t.resultId)).map((t) => t.name),
+      invalidated: tests.filter((t) => invalid(t.resultId)).map((t) => t.name),
+      openOos: openOos.filter((o) => o.lotId === lot.id).map((o) => o.docNo),
       unreviewed: mine.filter((r) => r.reviewedBy === null).length,
       analysts: new Set(mine.map((r) => r.enteredBy)),
       assay: valueOf('isAssay'),
@@ -186,6 +193,13 @@ function assertDecision(a: Assessment, decision: Decision, actorId: string, inpu
     return;
   }
   if (a.missing.length > 0) throw new AppError('QC_RESULTS_INCOMPLETE', `No result yet for: ${a.missing.join(', ')}`, { ...details, tests: a.missing });
+  // Owner 2026-11-27 (0040): no approval while an OOS investigation is open or an invalidated result is not re-tested.
+  if (a.openOos.length > 0) {
+    throw new AppError('OOS_OPEN', `OOS investigation ${a.openOos.join(', ')} is open; the lot is not approved until it is closed`, { ...details, oos: a.openOos });
+  }
+  if (a.invalidated.length > 0) {
+    throw new AppError('QC_RETEST_REQUIRED', `Invalidated by its OOS investigation, not re-tested yet: ${a.invalidated.join(', ')}`, { ...details, tests: a.invalidated });
+  }
   if (a.failed.length > 0) throw new AppError('QC_TEST_FAILED', `Failed: ${a.failed.join(', ')}; the lot is not approved`, { ...details, tests: a.failed });
   if (reached(lot.expiryDate, today)) throw new AppError('LOT_EXPIRED', `Lot ${lot.lotNo} expired on ${lot.expiryDate}; it is not approved`, details);
   if (retestDate !== 'PREVIEW') {

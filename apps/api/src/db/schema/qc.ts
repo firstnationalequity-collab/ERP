@@ -1,8 +1,9 @@
 // Drizzle description of the `qc` schema. Source of truth: src/db/migrations/0027_grn.sql (sample requests), 0034 (specs),
-// 0036 (sampling, results, reviews), 0037 (dispositions), 0038 (rejection without a failed test), 0039 (re-tests, CoAs).
+// 0036 (sampling, results, reviews), 0037 (dispositions), 0038 (rejection without a failed test), 0039 (re-tests, CoAs),
+// 0040 (OOS investigations, CoA versions).
 import { sql } from 'drizzle-orm';
 import { boolean, date, integer, numeric, pgSchema, text } from 'drizzle-orm/pg-core';
-import type { QcRejectCategory, QcResultType, QcSpecStatus, SampleRequestStatus } from '@albert/shared';
+import type { OosCauseCategory, OosOutcome, OosStatus, QcRejectCategory, QcResultType, QcSpecStatus, SampleRequestStatus } from '@albert/shared';
 import { auditColumns, bigintString, companyId, identityId, tstz } from './columns';
 
 export const qc = pgSchema('qc');
@@ -121,5 +122,31 @@ export const coas = qc.table('coas', {
   esignId: bigintString('esign_id').notNull(),
   issuedBy: bigintString('issued_by').notNull().default(sql`core.current_user_id()`),
   issuedAt: tstz('issued_at').notNull().defaultNow(),
+  /** 0040: a correction is the next version of the same number; it supersedes the current version, with a reason. */
+  version: integer('version').notNull().default(1),
+  supersedesId: bigintString('supersedes_id'),
+  reissueReason: text('reissue_reason'),
+  ...auditColumns(),
+});
+
+/** 0040: one per failed reviewed result; OPEN → CLOSED (qc.oos.close, e-signature) through core/transition. */
+export const oosInvestigations = qc.table('oos_investigations', {
+  id: identityId(),
+  companyId: companyId(),
+  docNo: text('doc_no').notNull(),
+  resultId: bigintString('result_id').notNull(),
+  sampleRequestId: bigintString('sample_request_id').notNull(),
+  lotId: bigintString('lot_id').notNull(),
+  specTestId: bigintString('spec_test_id').notNull(),
+  status: text('status').$type<OosStatus>().notNull(),
+  openedBy: bigintString('opened_by').notNull().default(sql`core.current_user_id()`),
+  openedAt: tstz('opened_at').notNull().defaultNow(),
+  outcome: text('outcome').$type<OosOutcome>(),
+  causeCategory: text('cause_category').$type<OosCauseCategory>(),
+  causeDescription: text('cause_description'),
+  conclusion: text('conclusion'),
+  closeEsignId: bigintString('close_esign_id'),
+  closedBy: bigintString('closed_by'),
+  closedAt: tstz('closed_at'),
   ...auditColumns(),
 });

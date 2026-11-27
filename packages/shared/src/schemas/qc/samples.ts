@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { LotStatus, QcResultType, SampleRequestStatus } from '../../enums';
 import { ESignRequest } from '../core/esign';
 import type { SpecTestDto } from './specs';
+import type { OosRefDto } from './oos';
 
 const id = z.string().regex(/^\d+$/, 'Invalid id');
 const optText = (max: number) => z.string().trim().max(max).nullable().optional();
@@ -104,6 +105,13 @@ export interface ResultDto {
   retestReason: string | null;
   /** A newer re-test of this test exists: this row is no longer the test's latest result. */
   superseded: boolean;
+  /** 0040: the OOS investigation of this (failed, reviewed) result; invalidated = closed as INVALIDATED. */
+  oos: OosRefDto | null;
+  invalidated: boolean;
+  /** A re-test of a failed result: the OOS investigation that invalidated the original. */
+  retestOos: OosRefDto | null;
+  /** This row may be re-tested now: it is the test's latest and either passed or was invalidated by its OOS. */
+  canRetest: boolean;
 }
 
 export interface SampleRequestDto {

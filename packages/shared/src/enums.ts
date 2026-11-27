@@ -230,6 +230,22 @@ export const QcRejectCategory = ['DAMAGED_CONTAINER', 'LABELLING', 'SEAL_BROKEN'
 export type QcRejectCategory = (typeof QcRejectCategory)[number];
 export type QcResultType = (typeof QcResultType)[number];
 
+/**
+ * OOS investigation (owner 2026-11-27; 0040): opened OPEN automatically when a failed result is reviewed; the QC
+ * Manager (qc.oos.close) closes it with an e-signature and one outcome. SQL: qc.oos_investigations CHECKs.
+ */
+export const OosStatus = ['OPEN', 'CLOSED'] as const;
+export type OosStatus = (typeof OosStatus)[number];
+/** INVALIDATED: assignable cause, the result is invalidated and may be re-tested; CONFIRMED: the failure stands. */
+export const OosOutcome = ['INVALIDATED', 'CONFIRMED'] as const;
+export type OosOutcome = (typeof OosOutcome)[number];
+/** Assignable cause of an invalidated result (owner 2026-11-27 examples, plus OTHER). */
+export const OosCauseCategory = ['LAB_ERROR', 'INSTRUMENT', 'SAMPLE_PREP', 'CALCULATION', 'OTHER'] as const;
+export type OosCauseCategory = (typeof OosCauseCategory)[number];
+/** A certificate of analysis version (0040): SUPERSEDED once a newer version of the same certificate exists (read, not stored). */
+export const CoaVersionStatus = ['CURRENT', 'SUPERSEDED'] as const;
+export type CoaVersionStatus = (typeof CoaVersionStatus)[number];
+
 /** Item types a QC specification can be written for (0034 qc.guard_spec). */
 export const QcSpecItemTypes = ['RM', 'PM', 'API', 'EXCIPIENT', 'BULK', 'FG'] as const;
 

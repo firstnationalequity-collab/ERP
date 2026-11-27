@@ -10,6 +10,9 @@ import {
   RejectLotRequest,
   CreateSpecRequest,
   CoaListQuery,
+  CloseOosRequest,
+  OosListQuery,
+  ReissueCoaRequest,
   EnterResultsRequest,
   IssueCoaRequest,
   RetestResultRequest,
@@ -28,6 +31,7 @@ import * as specs from './specs.service';
 import * as samples from './samples.service';
 import * as dispositions from './dispositions.service';
 import * as coas from './coas.service';
+import * as oos from './oos.service';
 
 const IdParam = z.object({ id: z.string().regex(/^\d+$/, 'Invalid id') });
 const idOf = (req: Request) => IdParam.parse(req.params).id;
@@ -104,4 +108,17 @@ r.get('/coas/:id/pdf', VIEW, asyncHandler(async (req, res) => {
 }));
 r.post('/coas', requirePermission('qc.coa.issue'), once, asyncHandler(async (req, res) => {
   res.status(201).json(await coas.issueCoa(authOf(req), IssueCoaRequest.parse(req.body), requestMeta(req)));
+}));
+// Correction (0040): a new version of the same certificate; the old version stays downloadable (SUPERSEDED).
+r.post('/coas/:id/reissue', requirePermission('qc.coa.issue'), once, asyncHandler(async (req, res) => {
+  res.status(201).json(await coas.reissueCoa(authOf(req), idOf(req), ReissueCoaRequest.parse(req.body), requestMeta(req)));
+}));
+
+// ---------------------------------------------------------------- OOS investigations (M4 task 4b; 0040)
+// Opened automatically by the review of a failed result; the QC Manager (qc.oos.close), never the analyst of the
+// failed result, closes it with an e-signature: INVALIDATED (assignable cause; re-test allowed) or CONFIRMED.
+r.get('/oos', VIEW, asyncHandler(async (req, res) => { res.json(await oos.listOos(authOf(req), OosListQuery.parse(req.query))); }));
+r.get('/oos/:id', VIEW, asyncHandler(async (req, res) => { res.json(await oos.getOos(authOf(req), idOf(req))); }));
+r.post('/oos/:id/close', requirePermission('qc.oos.close'), once, asyncHandler(async (req, res) => {
+  res.json(await oos.closeOos(authOf(req), idOf(req), CloseOosRequest.parse(req.body), requestMeta(req)));
 }));

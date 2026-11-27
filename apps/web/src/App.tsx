@@ -33,6 +33,7 @@ import { SpecsPage } from './pages/qc/SpecsPage';
 import { SamplesPage } from './pages/qc/SamplesPage';
 import { DispositionPage } from './pages/qc/DispositionPage';
 import { CoaPage } from './pages/qc/CoaPage';
+import { OosPage } from './pages/qc/OosPage';
 
 export function App() {
   const { user, restoring } = useAuth();
@@ -81,6 +82,7 @@ export function App() {
         <Route path="/qc/review" element={<RequirePermission anyOf={['qc.view']}><SamplesPage reviewQueue /></RequirePermission>} />
         <Route path="/qc/lots" element={<RequirePermission anyOf={['qc.view']}><DispositionPage /></RequirePermission>} />
         <Route path="/qc/coas" element={<RequirePermission anyOf={['qc.view']}><CoaPage /></RequirePermission>} />
+        <Route path="/qc/oos" element={<RequirePermission anyOf={['qc.view']}><OosPage /></RequirePermission>} />
         <Route path="/fin/exchange-rates" element={<RequirePermission anyOf={['fin.view', 'purch.view']}><ExchangeRatesPage /></RequirePermission>} />
         <Route path="/fin/journals" element={<RequirePermission anyOf={['fin.view']}><JournalsPage /></RequirePermission>} />
         <Route path="/fin/accounts" element={<RequirePermission anyOf={['fin.view', 'master.view']}><AccountsPage /></RequirePermission>} />

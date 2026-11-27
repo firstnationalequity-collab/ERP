@@ -1,27 +1,32 @@
-// Certificates of analysis (architecture §2 Documents, §7.6 "CoA print"; build-plan M4 task 4; 0039).
+// Certificates of analysis (architecture §2 Documents, §7.6 "CoA print"; build-plan M4 task 4; 0039, 0040).
 //
 // A holder of qc.coa.issue (QC Manager) issues one certificate per QC approval of a material lot: the lot is APPROVED
 // now and the approval is its latest disposition. The issuer signs (e-signature APPROVED on the disposition), the
 // number comes from series COA ({PREFIX}-{FY}-{SEQ:5}), and the PDF (pdfmake) is stored in the same transaction as an
 // attachment of the certificate with its SHA-256 (re-checked on every download: FILE_INTEGRITY_FAILED). The PDF
-// reports the pinned spec, the latest result of each test (re-tests marked), analysts, reviewers and the approval.
+// reports the company header (settings company.*), the pinned spec, the latest result of each test (re-tests marked
+// with the OOS investigation that invalidated the original, number and outcome), analysts, reviewers and the approval.
+// Correction (owner 2026-11-27; 0040): re-issue = a new version of the same number, e-signed (APPROVED) on the version
+// it supersedes with the reason; the previous version is SUPERSEDED (read from the newer one) and still downloadable.
 // Finished-goods certificates follow QA release (M7; owner 2026-11-27: QC never approves an FG lot).
 import { createHash } from 'node:crypto';
 import pdfmake from 'pdfmake';
 import type { Content, TDocumentDefinitions } from 'pdfmake/interfaces';
 import { Decimal } from 'decimal.js';
-import type { CoaCandidateDto, CoaDto, CoaListQuery, IssueCoaRequest, Page } from '@albert/shared';
+import type { CoaCandidateDto, CoaDto, CoaListQuery, IssueCoaRequest, Page, ReissueCoaRequest } from '@albert/shared';
 import { db, withTransaction, type Queryable, type Tx } from '../../db/client';
 import { AppError } from '../../core/errors';
 import { txContext, type AuthContext, type RequestMeta } from '../../core/auth/auth.service';
-import { recordSignature, verifySignature } from '../../core/esign/esign.service';
+import { recordSignature, verifySignature, type SignatureRecord } from '../../core/esign/esign.service';
 import { userNames } from '../../core/access/access.service';
 import { nextDocNo } from '../../core/settings/numbering.service';
+import { companyHeader } from '../../core/settings/company.settings';
 import { attachmentIdsOf, download, registerAttachmentTarget, storeGeneratedFile } from '../../core/attachments/attachments.service';
 import { getLot, lockLotForDecision, lotIdsByStatus, lotIdsMatching, lotIdsOfItems, lotsByIds, type Lot } from '../../engines/inventory';
 import { qcItemIdsMatching, qcItems } from '../masters/qc-refs.service';
 import { latestPerTest } from './samples.service';
-import { limitText } from './dispositions.service';
+import { limitText } from './spec-text';
+import { oosByResult } from './oos.service';
 import * as specsRepo from './specs.repo';
 import * as samplesRepo from './sample-requests.repo';
 import * as dispositionsRepo from './dispositions.repo';
@@ -59,19 +64,39 @@ interface Certifiable {
   disposition: dispositionsRepo.DispositionRow;
 }
 
+const lotDetails = (lot: Lot) => ({ lotId: lot.id, lotNo: lot.lotNo, status: lot.status });
+
+/** The lot's latest disposition (with every disposition of the lot, in order). */
+async function latestDisposition(q: Queryable, companyId: string, lot: Lot): Promise<dispositionsRepo.DispositionRow | undefined> {
+  const all = await dispositionsRepo.dispositionsOfLots(q, companyId, [lot.id]);
+  return all[all.length - 1];
+}
+
 /** The lot's latest disposition, if it is an approval of an APPROVED material lot; else why not. */
 async function certifiable(q: Queryable, companyId: string, lot: Lot): Promise<Certifiable> {
-  const details = { lotId: lot.id, lotNo: lot.lotNo, status: lot.status };
+  const details = lotDetails(lot);
   const item = (await qcItems(q, companyId, [lot.itemId])).get(lot.itemId);
   if (item?.type === 'FG') throw new AppError('FG_LOT_QA_DECIDES', `Lot ${lot.lotNo} is a finished-goods lot: its certificate follows QA release`, details);
   if (lot.status !== 'APPROVED') throw new AppError('LOT_NOT_APPROVED', `Lot ${lot.lotNo} is ${lot.status}; a certificate is issued for an APPROVED lot`, details);
-  const all = await dispositionsRepo.dispositionsOfLots(q, companyId, [lot.id]);
-  const latest = all[all.length - 1];
+  const latest = await latestDisposition(q, companyId, lot);
   if (!latest || latest.decision !== 'APPROVED' || latest.sampleRequestId === null) {
     throw new AppError('LOT_NOT_APPROVED', `Lot ${lot.lotNo} has no QC approval to certify`, details);
   }
   const [issued] = await repo.coasOfDispositions(q, companyId, [latest.id]);
-  if (issued) throw new AppError('ALREADY_EXISTS', `Certificate ${issued.docNo} was already issued for this approval; download it again`, { ...details, coaId: issued.id });
+  if (issued) throw new AppError('ALREADY_EXISTS', `Certificate ${issued.docNo} was already issued for this approval; download it again or re-issue it`, { ...details, coaId: issued.id });
+  return { lot, disposition: latest };
+}
+
+/** A re-issue: the certificate is its number's current version and still reports the lot's latest disposition. */
+async function reissuable(q: Queryable, companyId: string, coa: repo.CoaRow, lot: Lot): Promise<Certifiable> {
+  const [next] = await repo.successorsOf(q, [coa.id]);
+  if (next) {
+    throw new AppError('INVALID_TRANSITION', `Version ${coa.version} of ${coa.docNo} is superseded; re-issue the current version`, { coaId: coa.id, currentId: next.id });
+  }
+  const latest = await latestDisposition(q, companyId, lot);
+  if (!latest || latest.id !== coa.dispositionId) {
+    throw new AppError('INVALID_TRANSITION', `Lot ${lot.lotNo} was decided again after ${coa.docNo}; that certificate is not re-issued`, lotDetails(lot));
+  }
   return { lot, disposition: latest };
 }
 
@@ -82,12 +107,19 @@ async function toDtos(q: Queryable, companyId: string, rows: repo.CoaRow[]): Pro
   const items = await qcItems(q, companyId, [...lots.values()].map((l) => l.itemId));
   const names = await userNames(q, [...new Set(rows.map((r) => r.issuedBy))]);
   const files = await attachmentIdsOf(q, companyId, COA_TABLE, rows.map((r) => r.id));
+  const successors = new Map((await repo.successorsOf(q, rows.map((r) => r.id))).map((s) => [s.supersedesId, s.id]));
   return rows.map((r) => {
     const lot = lots.get(r.lotId);
     const item = lot ? items.get(lot.itemId) : undefined;
+    const supersededById = successors.get(r.id) ?? null;
     return {
       id: r.id,
       docNo: r.docNo,
+      version: r.version,
+      status: supersededById ? 'SUPERSEDED' : 'CURRENT',
+      supersedesId: r.supersedesId,
+      supersededById,
+      reissueReason: r.reissueReason,
       lotId: r.lotId,
       lotNo: lot?.lotNo ?? '',
       itemCode: item?.code ?? '',
@@ -154,7 +186,7 @@ export async function listCoaCandidates(auth: AuthContext): Promise<CoaCandidate
   });
 }
 
-/** The stored PDF, refused if it no longer matches its SHA-256 (FILE_INTEGRITY_FAILED). */
+/** The stored PDF of any version, refused if it no longer matches its SHA-256 (FILE_INTEGRITY_FAILED). */
 export async function coaPdf(auth: AuthContext, id: string): Promise<{ fileName: string; pdf: Buffer }> {
   const coa = await getCoa(auth, id);
   if (!coa.attachmentId) throw new AppError('FILE_INTEGRITY_FAILED', `The PDF of certificate ${coa.docNo} is missing`);
@@ -164,39 +196,86 @@ export async function coaPdf(auth: AuthContext, id: string): Promise<{ fileName:
 
 // ---------------------------------------------------------------- the PDF
 
-async function buildPdf(tx: Tx, auth: AuthContext, c: Certifiable, docNo: string, issuedAt: Date, issuerName: string): Promise<Buffer> {
+interface VersionInfo {
+  version: number;
+  /** For a re-issue: the version it supersedes and why. */
+  supersedes: repo.CoaRow | null;
+  reason: string | null;
+}
+
+async function buildPdf(tx: Tx, auth: AuthContext, c: Certifiable, docNo: string, v: VersionInfo, issuedAt: Date, issuerName: string): Promise<Buffer> {
   const { lot, disposition } = c;
+  const company = await companyHeader(tx, auth.companyId);
   const item = (await qcItems(tx, auth.companyId, [lot.itemId])).get(lot.itemId);
   const request = (await samplesRepo.findRequest(tx, auth.companyId, disposition.sampleRequestId!))!;
   const spec = (await specsRepo.specsByIds(tx, auth.companyId, [request.specId!]))[0]!;
   const tests = await specsRepo.specTestsOf(tx, spec.id);
   const results = await samplesRepo.resultsOf(tx, [request.id]);
   const latest = latestPerTest(results);
+  const oos = await oosByResult(tx, results.map((r) => r.id));
   const people = [...new Set([request.sampledBy, disposition.decidedBy, ...results.flatMap((r) => [r.enteredBy, r.reviewedBy])].filter((x): x is string => x !== null))];
   const names = await userNames(tx, people);
   const who = (ids: (string | null)[]) => [...new Set(ids.filter((x): x is string => x !== null))].map((u) => names.get(u) ?? u).join(', ') || '—';
+
+  /** OOS investigations of a test's results (owner 2026-11-27: printed next to a re-tested test). */
+  const oosOfTest = (testId: string) =>
+    results.filter((r) => r.specTestId === testId && oos.has(r.id)).map((r) => {
+      const o = oos.get(r.id)!;
+      return `${o.docNo} ${o.outcome ?? 'OPEN'}${o.causeCategory ? ` (${o.causeCategory})` : ''}`;
+    });
 
   const field = (label: string, value: string): Content[] => [{ text: label, color: '#444444' }, { text: value, bold: true }];
   const rows = tests.map((t) => {
     const r = latest.get(t.id);
     const value = !r ? '—' : r.resultType === 'NUMERIC' ? `${num(r.numericValue!)}${t.unit ? ` ${t.unit}` : ''}` : (r.textValue ?? '');
+    const investigations = r?.retestOf ? oosOfTest(t.id) : [];
+    const note = r?.retestOf ? `\n(re-test${investigations.length > 0 ? `; ${investigations.join('; ')}` : ''})` : '';
     return [
       { text: t.name + (t.method ? `\n${t.method}` : ''), fontSize: 8 },
       { text: limitText(t), fontSize: 8 },
-      { text: value + (r?.retestOf ? ' (re-test)' : ''), fontSize: 8 },
+      { text: value + note, fontSize: 8 },
       { text: !r ? '—' : r.passed ? 'Complies' : 'Does not comply', fontSize: 8, bold: true },
     ];
   });
   const retests = results.filter((r) => r.retestOf !== null);
+  const retestNote = (r: samplesRepo.ResultWithReview) => {
+    const o = r.retestOf ? oos.get(r.retestOf) : undefined;
+    const name = tests.find((t) => t.id === r.specTestId)?.name ?? r.specTestId;
+    return `${name} — ${r.retestReason}${o ? ` [${o.docNo} ${o.outcome ?? 'OPEN'}${o.causeCategory ? `, ${o.causeCategory}` : ''}]` : ''}`;
+  };
+  const header: Content = {
+    columns: [
+      ...(company.logo ? [{ image: company.logo, fit: [70, 45] as [number, number], width: 80 }] : []),
+      {
+        stack: [
+          { text: company.name, bold: true, fontSize: 12 },
+          { text: company.address, fontSize: 8 },
+          { text: `DRAP licence: ${company.drapLicenceNo}`, fontSize: 8 },
+        ],
+      },
+      { stack: [{ text: docNo, bold: true, fontSize: 12 }, { text: `Version ${v.version}`, fontSize: 8 }], alignment: 'right', width: 130 },
+    ],
+  };
   const doc: TDocumentDefinitions = {
     pageSize: 'A4',
     pageMargins: [40, 40, 40, 50],
     defaultStyle: { font: 'Helvetica', fontSize: 9 },
-    info: { title: `Certificate of analysis ${docNo}`, creator: 'Albert ERP' },
-    footer: (page, pages) => ({ text: `${docNo} · page ${page} of ${pages} · electronically signed records; issued by Albert ERP`, alignment: 'center', fontSize: 7, color: '#666666' }),
+    info: { title: `Certificate of analysis ${docNo} v${v.version}`, creator: 'Albert ERP' },
+    footer: (page, pages) => ({
+      text: `${docNo} version ${v.version} · page ${page} of ${pages} · electronically signed records; issued by Albert ERP`,
+      alignment: 'center',
+      fontSize: 7,
+      color: '#666666',
+    }),
     content: [
-      { columns: [{ text: 'Albert Pharmaceuticals', bold: true, fontSize: 12 }, { text: docNo, alignment: 'right', bold: true, fontSize: 12 }] },
-      { text: 'CERTIFICATE OF ANALYSIS', alignment: 'center', bold: true, fontSize: 15, margin: [0, 10, 0, 10] },
+      header,
+      { text: 'CERTIFICATE OF ANALYSIS', alignment: 'center', bold: true, fontSize: 15, margin: [0, 10, 0, 4] },
+      ...(v.supersedes
+        ? [{
+            text: `Version ${v.version} supersedes version ${v.supersedes.version} issued ${karachi(v.supersedes.issuedAt)}. Reason: ${v.reason}`,
+            alignment: 'center', fontSize: 8, bold: true, margin: [0, 0, 0, 6],
+          } as Content]
+        : []),
       {
         table: {
           widths: [90, '*', 90, '*'],
@@ -214,7 +293,7 @@ async function buildPdf(tx: Tx, auth: AuthContext, c: Certifiable, docNo: string
       {
         table: {
           headerRows: 1,
-          widths: ['*', 110, 110, 70],
+          widths: ['*', 110, 130, 70],
           body: [
             [{ text: 'Test', bold: true }, { text: 'Limit', bold: true }, { text: 'Result', bold: true }, { text: 'Conclusion', bold: true }],
             ...rows,
@@ -222,9 +301,7 @@ async function buildPdf(tx: Tx, auth: AuthContext, c: Certifiable, docNo: string
         },
         layout: 'lightHorizontalLines',
       },
-      ...(retests.length > 0
-        ? [{ text: `Re-tests: ${retests.map((r) => `${tests.find((t) => t.id === r.specTestId)?.name ?? r.specTestId} — ${r.retestReason}`).join('; ')}`, fontSize: 8, margin: [0, 6, 0, 0] } as Content]
-        : []),
+      ...(retests.length > 0 ? [{ text: `Re-tests: ${retests.map(retestNote).join('; ')}`, fontSize: 8, margin: [0, 6, 0, 0] } as Content] : []),
       {
         text: `Conclusion: the lot complies with specification version ${spec.version}. QC disposition: APPROVED.`,
         bold: true,
@@ -238,7 +315,7 @@ async function buildPdf(tx: Tx, auth: AuthContext, c: Certifiable, docNo: string
             field('Analysed by', who(results.map((r) => r.enteredBy))),
             field('Reviewed by', who(results.map((r) => r.reviewedBy))),
             field('Approved by', `${who([disposition.decidedBy])} · ${karachi(disposition.decidedAt)} · e-signature APPROVED: ${disposition.reason}`),
-            field('Certificate issued by', `${issuerName} · ${karachi(issuedAt)} · e-signature APPROVED`),
+            field(v.supersedes ? 'Re-issued by' : 'Certificate issued by', `${issuerName} · ${karachi(issuedAt)} · e-signature APPROVED`),
           ],
         },
         layout: 'noBorders',
@@ -248,11 +325,37 @@ async function buildPdf(tx: Tx, auth: AuthContext, c: Certifiable, docNo: string
   return pdfmake.createPdf(doc).getBuffer();
 }
 
+/** In the issuing transaction: render, store the certificate row and its PDF. */
+async function store(tx: Tx, auth: AuthContext, c: Certifiable, docNo: string, v: VersionInfo, sig: SignatureRecord): Promise<string> {
+  const issuer = (await userNames(tx, [auth.userId])).get(auth.userId) ?? auth.userId;
+  const pdf = await buildPdf(tx, auth, c, docNo, v, new Date(), issuer);
+  const fileName = v.version === 1 ? `${docNo}.pdf` : `${docNo}-v${v.version}.pdf`;
+  const coa = await repo.insertCoa(tx, {
+    docNo,
+    lotId: c.lot.id,
+    dispositionId: c.disposition.id,
+    sampleRequestId: c.disposition.sampleRequestId!,
+    fileName,
+    sha256: createHash('sha256').update(pdf).digest('hex'),
+    esignId: sig.id,
+    version: v.version,
+    supersedesId: v.supersedes?.id ?? null,
+    reissueReason: v.reason,
+  });
+  const what = v.version === 1 ? '' : ` version ${v.version}`;
+  await storeGeneratedFile(tx, { recordTable: COA_TABLE, recordId: coa.id, fileName, contentType: 'application/pdf', bytes: pdf, description: `Certificate of analysis ${docNo}${what}, lot ${c.lot.lotNo}` });
+  return coa.id;
+}
+
 // ---------------------------------------------------------------- issuing
 
-export async function issueCoa(auth: AuthContext, input: IssueCoaRequest, meta: RequestMeta): Promise<CoaDto> {
-  if (input.signature.meaning !== 'APPROVED') throw new AppError('VALIDATION_FAILED', 'A certificate of analysis is signed with the meaning APPROVED');
+function assertIssuer(auth: AuthContext, meaning: string): void {
+  if (meaning !== 'APPROVED') throw new AppError('VALIDATION_FAILED', 'A certificate of analysis is signed with the meaning APPROVED');
   if (!auth.permissions.has(ISSUE_KEY)) throw new AppError('FORBIDDEN', 'You do not have permission to issue certificates of analysis', { permission: ISSUE_KEY });
+}
+
+export async function issueCoa(auth: AuthContext, input: IssueCoaRequest, meta: RequestMeta): Promise<CoaDto> {
+  assertIssuer(auth, input.signature.meaning);
   // Refuse before asking for the password, then again under lock.
   await certifiable(db, auth.companyId, await getLot(db, auth.companyId, input.lotId));
   const proof = await verifySignature(auth, input.signature, meta);
@@ -260,21 +363,28 @@ export async function issueCoa(auth: AuthContext, input: IssueCoaRequest, meta: 
     const c = await certifiable(tx, auth.companyId, await lockLotForDecision(tx, auth.companyId, input.lotId));
     const docNo = await nextDocNo(tx, 'COA');
     const sig = await recordSignature(tx, proof, { table: DISPOSITION_TABLE, id: c.disposition.id }, ['APPROVED']);
-    const issuer = (await userNames(tx, [auth.userId])).get(auth.userId) ?? auth.userId;
-    const issuedAt = new Date();
-    const pdf = await buildPdf(tx, auth, c, docNo, issuedAt, issuer);
-    const fileName = `${docNo}.pdf`;
-    const coa = await repo.insertCoa(tx, {
-      docNo,
-      lotId: c.lot.id,
-      dispositionId: c.disposition.id,
-      sampleRequestId: c.disposition.sampleRequestId!,
-      fileName,
-      sha256: createHash('sha256').update(pdf).digest('hex'),
-      esignId: sig.id,
-    });
-    await storeGeneratedFile(tx, { recordTable: COA_TABLE, recordId: coa.id, fileName, contentType: 'application/pdf', bytes: pdf, description: `Certificate of analysis ${docNo}, lot ${c.lot.lotNo}` });
-    return coa.id;
+    return store(tx, auth, c, docNo, { version: 1, supersedes: null, reason: null }, sig);
   });
   return getCoa(auth, id);
+}
+
+/**
+ * Correct a certificate (owner 2026-11-27): a new version of the same number, rendered from the current records,
+ * signed on the version it supersedes; the signature's reason is the re-issue reason. The old version is kept.
+ */
+export async function reissueCoa(auth: AuthContext, id: string, input: ReissueCoaRequest, meta: RequestMeta): Promise<CoaDto> {
+  assertIssuer(auth, input.signature.meaning);
+  const check = async (q: Queryable, lot: (lotId: string) => Promise<Lot>, lock: boolean) => {
+    const coa = await repo.findCoa(q, auth.companyId, id, lock);
+    if (!coa) throw new AppError('NOT_FOUND', 'Certificate of analysis not found');
+    return { coa, c: await reissuable(q, auth.companyId, coa, await lot(coa.lotId)) };
+  };
+  await check(db, (lotId) => getLot(db, auth.companyId, lotId), false);
+  const proof = await verifySignature(auth, input.signature, meta);
+  const newId = await withTransaction(txContext(auth, `re-issue certificate of analysis ${id}: ${input.signature.reason}`), async (tx) => {
+    const { coa, c } = await check(tx, (lotId) => lockLotForDecision(tx, auth.companyId, lotId), true);
+    const sig = await recordSignature(tx, proof, { table: COA_TABLE, id: coa.id }, ['APPROVED']);
+    return store(tx, auth, c, coa.docNo, { version: coa.version + 1, supersedes: coa, reason: sig.reason }, sig);
+  });
+  return getCoa(auth, newId);
 }

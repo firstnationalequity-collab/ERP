@@ -37,6 +37,8 @@ export const DEFAULT_SERIES = [
   { docType: 'DEBIT_NOTE', name: 'Vendor debit note', prefix: 'DN', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
   // Certificates of analysis (M4 task 4, 0039), e.g. COA-2627-00001 (format from the build plan).
   { docType: 'COA', name: 'Certificate of analysis', prefix: 'COA', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
+  // OOS investigations (M4 task 4b, 0040), e.g. OOS-2627-00001 (owner 2026-11-27).
+  { docType: 'OOS', name: 'OOS investigation', prefix: 'OOS', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
   { docType: 'BATCH', name: 'Batch number', prefix: 'AP', pattern: '{PREFIX}{YY}-{SEQ:4}', reset: 'CALENDAR_YEAR' },
   { docType: 'JV', name: 'Manual journal voucher', prefix: 'JV', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },
   { docType: 'SJ', name: 'System journal', prefix: 'SJ', pattern: '{PREFIX}-{FY}-{SEQ:5}', reset: 'FISCAL_YEAR' },

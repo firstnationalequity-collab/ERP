@@ -83,7 +83,8 @@ export const Permissions = {
   'qc.result.enter': qaAction('Take samples, enter results'),
   'qc.result.review': qaAction('Review results'),
   'qc.lot.change_status': qaAction('Approve / reject material lots (RM, PM, API, EXCIPIENT)'),
-  'qc.coa.issue': qaAction('Issue certificates of analysis'),
+  'qc.coa.issue': qaAction('Issue and re-issue certificates of analysis'),
+  'qc.oos.close': qaAction('Close OOS investigations (invalidated / confirmed)'),
 
   // production
   'prod.view': view('View production orders, stages, outputs'),

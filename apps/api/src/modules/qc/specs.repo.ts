@@ -46,6 +46,11 @@ export async function specTestsOf(q: Queryable, specId: string): Promise<SpecTes
   return q.select().from(specTests).where(eq(specTests.specId, specId)).orderBy(asc(specTests.seq));
 }
 
+export async function specTestsByIds(q: Queryable, ids: string[]): Promise<SpecTestRow[]> {
+  if (ids.length === 0) return [];
+  return q.select().from(specTests).where(inArray(specTests.id, [...new Set(ids)]));
+}
+
 export async function replaceSpecTests(tx: Tx, specId: string, tests: NewSpecTest[]): Promise<void> {
   await tx.delete(specTests).where(eq(specTests.specId, specId));
   if (tests.length > 0) await tx.insert(specTests).values(tests);

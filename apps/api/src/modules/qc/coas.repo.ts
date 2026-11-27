@@ -4,7 +4,8 @@ import type { Queryable, Tx } from '../../db/client';
 import { coas, dispositions } from '../../db/schema/qc';
 
 export type CoaRow = typeof coas.$inferSelect;
-export type NewCoa = Pick<typeof coas.$inferInsert, 'docNo' | 'lotId' | 'dispositionId' | 'sampleRequestId' | 'fileName' | 'sha256' | 'esignId'>;
+export type NewCoa = Pick<typeof coas.$inferInsert, 'docNo' | 'lotId' | 'dispositionId' | 'sampleRequestId' | 'fileName' | 'sha256' | 'esignId'> &
+  Partial<Pick<typeof coas.$inferInsert, 'version' | 'supersedesId' | 'reissueReason'>>;
 
 export async function insertCoa(tx: Tx, values: NewCoa): Promise<CoaRow> {
   const [row] = await tx.insert(coas).values(values).returning();
@@ -17,9 +18,17 @@ export async function coaExists(q: Queryable, id: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-export async function findCoa(q: Queryable, companyId: string, id: string): Promise<CoaRow | undefined> {
-  const [row] = await q.select().from(coas).where(and(eq(coas.companyId, companyId), eq(coas.id, id)));
+export async function findCoa(q: Queryable, companyId: string, id: string, lock = false): Promise<CoaRow | undefined> {
+  const query = q.select().from(coas).where(and(eq(coas.companyId, companyId), eq(coas.id, id)));
+  const [row] = await (lock ? query.for('update') : query);
   return row;
+}
+
+/** The versions that supersede these certificates (0040; at most one each). */
+export async function successorsOf(q: Queryable, ids: string[]): Promise<{ id: string; supersedesId: string }[]> {
+  if (ids.length === 0) return [];
+  const rows = await q.select({ id: coas.id, supersedesId: coas.supersedesId }).from(coas).where(inArray(coas.supersedesId, ids));
+  return rows.flatMap((r) => (r.supersedesId ? [{ id: r.id, supersedesId: r.supersedesId }] : []));
 }
 
 export function coaWhere(companyId: string, f: { docNo?: string; lotIds?: string[] }): SQL | undefined {

@@ -7,7 +7,7 @@ Current milestone: **M4 — QC** (in progress; M3 done, tag `m3`)
 | M1 Foundation | Done | 17-11-2026 | 18-11-2026 | All 12 tasks, rules-review fixes A–F, first-QA-Manager bootstrap; CI run #13 green on `04ef009`; tag `m1` |
 | M2 Masters & engines | Done | 18-11-2026 | 19-11-2026 | All 10 tasks; rules-review fixes (disposal witness 0020, deactivation guards 0021); owner answers 19-11 recorded; CI green; tag `m2` |
 | M3 Procurement | Done | 25-11-2026 | 27-11-2026 | Tasks 1–6 + owner answers (0022–0033); check-rules fixes; CI run 45948188562 green on `900b052`; tag `m3` |
-| M4 QC | In progress | 27-11-2026 | | Tasks 1–3 done (0034–0037), owner corrections in, month-only expiry at GRN |
+| M4 QC | In progress | 27-11-2026 | | Tasks 1–4b done (0034–0040), owner corrections in, month-only expiry at GRN |
 | M5 Sales | Not started | | | |
 | M6 Production | Not started | | | |
 | M7 QA & Dispatch | Not started | | | |
@@ -16,9 +16,9 @@ Current milestone: **M4 — QC** (in progress; M3 done, tag `m3`)
 | M10 Hardening & staging | Not started | | | |
 | M11 UAT & go-live | Not started | | | |
 
-## Handoff (27-11-2026, M4 in progress: tasks 1–3 done)
+## Handoff (27-11-2026, M4 in progress: tasks 1–4b done)
 
-**State:** We work on `main`, one commit per task, pushed. API tests need the Docker DB (`docker compose up -d`). `pnpm typecheck` clean; 753 tests green after task 4 (695 API, 28 web, 30 shared). M3 is tagged `m3` (details in `docs/progress-log.md`).
+**State:** We work on `main`, one commit per task, pushed. API tests need the Docker DB (`docker compose up -d`). `pnpm typecheck` clean; 765 tests green after task 4b (707 API, 28 web, 30 shared). M3 is tagged `m3` (details in `docs/progress-log.md`).
 **Working rule (owner 27-11, CLAUDE.md 11–12):** don't wait for answers; build the recommended answer, add a line to `docs/verification-list.md` and a PENDING OWNER row in decisions.md; stop only for a rule change, a hard-to-migrate structure change, or a failure you cannot fix.
 
 **M4 plan** (build-plan M4; decisions.md 2026-11-27 rows):
@@ -27,10 +27,11 @@ Current milestone: **M4 — QC** (in progress; M3 done, tag `m3`)
 - [x] 3. Disposition (0037): `qc.dispositions` insert-only; `POST /qc/lots/:id/approve | /reject` (`qc.lot.change_status`, e-sign on the lot); approve = every test with a reviewed passing latest result, not expired, next retest date when reached; writes assay / water (4 dp); reject = reviewed failure or material HOLD; FG refused (`FG_LOT_QA_DECIDES`); decider ≠ analyst; request SAMPLED → CLOSED; DB refuses these moves and assay / water / retest changes without a disposition. Web Lot disposition; `dispositions.test.ts`. Also: GRN expiry / retest accept MM-YYYY (last day of month), QA to verify.
 - [x] Owner decisions 27-11 (0038): rejection without a failed test (reason category + description + e-sign; also QUARANTINE → REJECTED, cancels the OPEN request; `QC_REJECT_CATEGORY_REQUIRED`); FG lots: QA releases UNDER_TEST → RELEASED (architecture §4 / §7.8 fixed; M6 / M7 tasks added; not built).
 - [x] 4. Re-test + CoA (0039): `qc.results.retest_of` + reason (one original per test, each row re-tested once; `POST /qc/samples/:id/results/:resultId/retest`; superseded rows shown); `qc.coas` insert-only, one per QC approval of a material lot, e-sign APPROVED on the disposition, COA-{FY}-{SEQ:5}, PDF stored as the only (GMP) attachment with SHA-256 (`/qc/coas`, `/candidates`, `/:id/pdf`); web re-test on the sample, Certificates of analysis page; `retests-coas.test.ts`.
+- [x] 4b. OOS + CoA versions (0040; owner 27-11, supersedes re-test without investigation): `qc.oos_investigations` OOS-{FY}-{SEQ:5}, opened by the review of a failed result (DB checks at commit), OPEN → CLOSED by `qc.oos.close` (new key, QC Manager) with e-sign, INVALIDATED (cause + description) or CONFIRMED; analyst ≠ closer; no re-test of a failure unless INVALIDATED (`OOS_REQUIRED` / `OOS_OPEN` / `OOS_NOT_INVALIDATED`); approval refused while an OOS is open or an invalidated result is not re-tested (`QC_RETEST_REQUIRED`), service + DB. CoA: header from settings `company.*` (placeholders, logo = attachment of core.companies), OOS number + outcome next to re-tests, re-issue = next version (`POST /qc/coas/:id/reissue`, e-sign on the superseded version), old version SUPERSEDED and downloadable. Web QC → OOS investigations, OOS tags + gated Re-test on samples, CoA version / Re-issue; `oos-coa-versions.test.ts`.
 - [ ] 5. Nightly pg-boss job (statuses only; use-time expiry checks already in 0035; new `jobs/` runner started in server.ts, 00:30 Asia/Karachi, SYSTEM): APPROVED → EXPIRED (expiry reached) / RETEST_DUE (retest reached, opens a RETEST sample request); RETEST_DUE → EXPIRED when expiry reached.
 - [ ] 6. Close-out: Done-when test (quarantined lot issuable only after QC approval; rejected lot moves only by destroy / return), carried-over test "GRN reversal refused once a sample is taken", /check-rules, demo/M4.md, docs.
 
-**Next (new chat):** M4 task 5 (nightly pg-boss job). For task 6 /check-rules: in the DB, lot moves other than QC disposition and disposal (e.g. → HOLD, HOLD → APPROVED) are checked only by core/transition history, not by key (keep on the task 6 list, owner 27-11).
+**Next (new chat):** M4 task 5 (nightly pg-boss job). Local dev DB: run `pnpm db:migrate` + `pnpm db:seed` (0040, key `qc.oos.close`, OOS series) if not done. For task 6 /check-rules: in the DB, lot moves other than QC disposition and disposal (e.g. → HOLD, HOLD → APPROVED) are checked only by core/transition history, not by key (keep on the task 6 list, owner 27-11).
 
 **Open questions for the owner:** see `docs/verification-list.md` (QC section has the M4 defaults; standing go-live items under Finance / QA / Management).
 

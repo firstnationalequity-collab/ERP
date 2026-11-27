@@ -90,6 +90,13 @@ export const ErrorCodes = [
   'QC_REJECT_CATEGORY_REQUIRED',
   /** QC does not approve or reject a finished-goods lot; QA decides (build-plan M4). */
   'FG_LOT_QA_DECIDES',
+  /** OOS (owner 2026-11-27; 0040): an OOS investigation of the lot is open: no QC approval (rejection allowed). */
+  'OOS_OPEN',
+  /** A failed result is re-tested only after review opened its OOS investigation and it was closed INVALIDATED. */
+  'OOS_REQUIRED',
+  'OOS_NOT_INVALIDATED',
+  /** Approval refused: the latest result of a test was invalidated by its OOS investigation and not re-tested yet. */
+  'QC_RETEST_REQUIRED',
   'OPEN_DEVIATION',
   'DUPLICATE_REQUEST',
   'INTERNAL_ERROR',

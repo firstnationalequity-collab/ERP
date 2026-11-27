@@ -266,8 +266,9 @@ describe('approval (UNDER_TEST → APPROVED)', () => {
     expect(queue.blockers.join(' ')).toContain('Identification (IR)');
 
     const f = await testedLot({ assay: '97.5', water: '0.1', complies: true });
+    // Owner 2026-11-27 (0040): the reviewed failure opened an OOS investigation, which blocks the approval first.
     const failed = await approve('qcm', f.lotId);
-    expect([failed.status, failed.body.error.code, failed.body.error.details.tests]).toEqual([422, 'QC_TEST_FAILED', ['Assay (HPLC)']]);
+    expect([failed.status, failed.body.error.code, failed.body.error.details.oos]).toEqual([422, 'OOS_OPEN', [expect.stringMatching(/^OOS-\d{4}-\d{5}$/)]]);
     expect((await lotRow(f.lotId)).status).toBe('UNDER_TEST');
   });
 

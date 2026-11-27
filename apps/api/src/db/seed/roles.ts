@@ -112,7 +112,7 @@ const roles: RoleSeed[] = [
   {
     code: 'QC_MANAGER',
     name: 'QC Manager',
-    keys: ['qc.view', 'inv.stock.view', 'master.view', 'qc.result.review', 'qc.lot.change_status', 'qc.coa.issue', 'qc.spec.approve'],
+    keys: ['qc.view', 'inv.stock.view', 'master.view', 'qc.result.review', 'qc.lot.change_status', 'qc.coa.issue', 'qc.spec.approve', 'qc.oos.close'],
   },
   {
     code: 'QA_OFFICER',

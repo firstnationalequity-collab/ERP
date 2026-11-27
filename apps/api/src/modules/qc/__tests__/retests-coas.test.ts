@@ -184,13 +184,21 @@ afterAll(async () => {
 });
 
 describe('re-test as a new row (0039)', () => {
-  it('a failed assay is re-tested: the original stays as it was, the re-test is the latest result, reviewed, and the lot is approved on it', async () => {
+  it('a failed assay is re-tested once its OOS investigation invalidated it: the original stays as it was, the re-test is the latest result, reviewed, and the lot is approved on it', async () => {
     const m = await sampledLot({ itemId: ids.api! });
     const firsts = await enter(m, '96.5');
     await review(m);
     const failedId = assayResult(firsts, m);
     const before = (await client.query(`SELECT numeric_value::text, passed, updated_at FROM qc.results WHERE id = $1`, [failedId])).rows[0];
-    expect((await approve('qcm', m.lotId)).body.error.code).toBe('QC_TEST_FAILED');
+    expect((await approve('qcm', m.lotId)).body.error.code).toBe('OOS_OPEN');
+    // Owner 2026-11-27 (0040): the review opened an OOS investigation; it is closed INVALIDATED before the re-test.
+    const oosId = await one(`SELECT id FROM qc.oos_investigations WHERE result_id = $1`, [failedId]);
+    const closed = await call('qcm', 'post', `/qc/oos/${oosId}/close`, {
+      outcome: 'INVALIDATED', causeCategory: 'SAMPLE_PREP', causeDescription: 'Dilution error in the first preparation, confirmed from the raw data',
+      ...sig('APPROVED', 'Assignable cause found'),
+    });
+    expect([closed.status, closed.body.error]).toEqual([200, undefined]);
+    expect((await approve('qcm', m.lotId)).body.error.code).toBe('QC_RETEST_REQUIRED');
 
     const res = await retest('analyst2', m.requestId, failedId, { numericValue: '99.5', reason: 'Lab investigation: dilution error in the first preparation' });
     expect([res.status, res.body.error]).toEqual([200, undefined]);
@@ -212,9 +220,10 @@ describe('re-test as a new row (0039)', () => {
 
   it('refuses a re-test of a result already re-tested, without a reason, of a result on another sample, by the QC Manager, and after the decision', async () => {
     const m = await sampledLot({ itemId: ids.api! });
-    const firsts = await enter(m, '97');
+    // Passing results: re-tested without an OOS investigation (0040 gates only failures).
+    const firsts = await enter(m, '98.5');
     const first = assayResult(firsts, m);
-    const r1 = await retest('analyst', m.requestId, first, { numericValue: '97.2', reason: 'Repeat injection after system suitability' });
+    const r1 = await retest('analyst', m.requestId, first, { numericValue: '98.6', reason: 'Repeat injection after system suitability' });
     expect(r1.status).toBe(200);
     const r1Id = (r1.body.results as { id: string; retestOf: string | null }[]).find((r) => r.retestOf === first)!.id;
     const again = await retest('analyst', m.requestId, first, { numericValue: '99', reason: 'Trying the old row again' });

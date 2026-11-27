@@ -193,6 +193,29 @@ export async function storeGeneratedFile(
   return { id: row.id, sha256 };
 }
 
+/**
+ * A stored file read by a service for a document it generates (e.g. the company logo on a CoA), without the
+ * reader's attachment permission. Refused if missing or no longer matching its SHA-256 (FILE_INTEGRITY_FAILED).
+ */
+export async function readStoredFile(
+  q: Queryable,
+  companyId: string,
+  id: string,
+): Promise<{ recordTable: string; recordId: string; contentType: string; voided: boolean; bytes: Buffer }> {
+  const [row] = await q.select().from(attachments).where(and(eq(attachments.companyId, companyId), eq(attachments.id, id)));
+  if (!row) throw new AppError('NOT_FOUND', `Attachment ${id} not found`);
+  let bytes: Buffer;
+  try {
+    bytes = await storage().get(row.storageKey);
+  } catch {
+    throw new AppError('FILE_INTEGRITY_FAILED', `Stored file ${row.fileName} is missing`);
+  }
+  if (createHash('sha256').update(bytes).digest('hex') !== row.sha256) {
+    throw new AppError('FILE_INTEGRITY_FAILED', `Stored file ${row.fileName} does not match its recorded checksum`);
+  }
+  return { recordTable: row.recordTable, recordId: row.recordId, contentType: row.contentType, voided: row.voidedAt !== null, bytes };
+}
+
 /** The files of several records of one table (ids per record), voided ones included. */
 export async function attachmentIdsOf(q: Queryable, companyId: string, recordTable: string, recordIds: string[]): Promise<Map<string, string>> {
   if (recordIds.length === 0) return new Map();

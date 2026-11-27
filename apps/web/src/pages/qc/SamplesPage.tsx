@@ -3,7 +3,9 @@
 // then enters one result per test: numeric pass / fail is computed from the limits, text results are judged by the
 // analyst. A failed result on a finished-goods lot puts the lot on HOLD for QA. A QC Manager who did not enter the
 // results reviews them with an e-signature (REVIEWED). Results are never edited: a re-test is a new row with a reason
-// (task 4, 0039); the newest row of a test is its latest result, earlier rows stay listed as superseded.
+// (task 4, 0039); the newest row of a test is its latest result, earlier rows stay listed as superseded. A failed
+// result opens an OOS investigation when it is reviewed and is re-tested only once that investigation invalidated it
+// (owner 2026-11-27, 0040); the OOS number is shown next to the result.
 import { useState } from 'react';
 import { Alert, App, Button, Descriptions, Drawer, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -257,8 +259,14 @@ function ResultsTable({ s, canEnter, name, onDone }: { s: SampleRequestDto; canE
                 return (
                   <Space size={4} wrap>
                     {resultText(r)}
-                    {r.retestOf && <Tag title={r.retestReason ?? ''}>re-test</Tag>}
-                    {canEnter && (
+                    {r.retestOf && <Tag title={r.retestReason ?? ''}>re-test{r.retestOos ? ` · ${r.retestOos.docNo}` : ''}</Tag>}
+                    {r.oos && (
+                      <Tag color={r.oos.status === 'OPEN' ? 'red' : r.oos.outcome === 'INVALIDATED' ? 'blue' : 'volcano'}>
+                        {r.oos.docNo} {r.oos.status === 'OPEN' ? 'open' : r.oos.outcome?.toLowerCase()}
+                      </Tag>
+                    )}
+                    {!r.passed && !r.oos && r.reviewedBy === null && <Tag color="gold">OOS opens at review</Tag>}
+                    {canEnter && r.canRetest && (
                       <Button size="small" type="link" onClick={() => setRetesting({ test: t, result: r })}>
                         Re-test
                       </Button>

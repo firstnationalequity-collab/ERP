@@ -9,8 +9,11 @@
 //                    HOLD in the same transaction under qc.result.enter (owner 2026-11-18; QA decides from there).
 //  - retestResult(): a re-test is a NEW row for the same test (task 4, 0039): it repeats the test's latest result,
 //                    which is never edited, and carries the reason; its newest row is the test's latest result.
+//                    A failed result is re-tested only once its OOS investigation closed it INVALIDATED (owner
+//                    2026-11-27, 0040); a passing result may be re-tested as before.
 //  - reviewResults(): qc.result.review, e-signature REVIEWED on the sample; the reviewer is never the analyst who
-//                    entered a result (SEGREGATION_OF_DUTIES, service + DB).
+//                    entered a result (SEGREGATION_OF_DUTIES, service + DB). Each failed result reviewed opens its
+//                    OOS investigation in the same transaction (oos.service.ts, 0040).
 // The database (0035, 0036, 0039) re-checks every rule.
 import { Decimal } from 'decimal.js';
 import {
@@ -40,6 +43,8 @@ import { SAMPLE_REQUEST_TABLE } from './sample-requests.service';
 import { approvedSpec, specTestDto } from './specs.service';
 import * as specsRepo from './specs.repo';
 import * as repo from './sample-requests.repo';
+import { isInvalidated, oosByResult, oosRef, openOosForReviewed } from './oos.service';
+import type { OosRow } from './oos.repo';
 
 const ENTER_KEY = 'qc.result.enter';
 const REVIEW_KEY = 'qc.result.review';
@@ -93,7 +98,7 @@ export function latestPerTest<T extends { id: string; specTestId: string }>(rows
   return latest;
 }
 
-const resultDto = (r: repo.ResultWithReview, latestIds: Set<string>): ResultDto => ({
+const resultDto = (r: repo.ResultWithReview, latestIds: Set<string>, oos: Map<string, OosRow>): ResultDto => ({
   id: r.id,
   specTestId: r.specTestId,
   resultType: r.resultType,
@@ -108,12 +113,17 @@ const resultDto = (r: repo.ResultWithReview, latestIds: Set<string>): ResultDto 
   retestOf: r.retestOf,
   retestReason: r.retestReason,
   superseded: !latestIds.has(r.id),
+  oos: oos.has(r.id) ? oosRef(oos.get(r.id)!) : null,
+  invalidated: isInvalidated(oos.get(r.id)),
+  retestOos: r.retestOf && oos.has(r.retestOf) ? oosRef(oos.get(r.retestOf)!) : null,
+  canRetest: latestIds.has(r.id) && (r.passed || isInvalidated(oos.get(r.id))),
 });
 
-const resultDtos = (rows: repo.ResultWithReview[]): ResultDto[] => {
+async function resultDtos(q: Queryable, rows: repo.ResultWithReview[]): Promise<ResultDto[]> {
   const latestIds = new Set([...latestPerTest(rows).values()].map((r) => r.id));
-  return rows.map((r) => resultDto(r, latestIds));
-};
+  const oos = await oosByResult(q, rows.map((r) => r.id));
+  return rows.map((r) => resultDto(r, latestIds, oos));
+}
 
 async function toDtos(q: Queryable, companyId: string, rows: repo.SampleRequestRow[]): Promise<SampleRequestDto[]> {
   const lots = await lotsByIds(q, companyId, rows.map((r) => r.lotId));
@@ -191,7 +201,7 @@ export async function getSample(auth: AuthContext, id: string): Promise<SampleRe
   return {
     ...dto!,
     tests,
-    results: resultDtos(await repo.resultsOf(db, [id])),
+    results: await resultDtos(db, await repo.resultsOf(db, [id])),
     locations: stock.map((s) => ({ locationId: s.locationId, locationCode: where.get(s.locationId)?.code ?? s.locationId, qty: s.qty })),
   };
 }
@@ -334,12 +344,30 @@ export async function retestResult(auth: AuthContext, id: string, resultId: stri
     if (latest.id !== orig.id) {
       throw new AppError('INVALID_TRANSITION', `Result ${orig.id} was already re-tested; re-test its latest result (${latest.id})`, { latestResultId: latest.id });
     }
+    if (!orig.passed) assertRetestAllowed(orig, (await oosByResult(tx, [orig.id])).get(orig.id));
     const t = (await specsRepo.specTestsOf(tx, req.specId!)).find((x) => x.id === orig.specTestId)!;
     const row = { ...resultRow(id, t, input, 'Re-test of ', { resultId }), retestOf: orig.id, retestReason: input.reason };
     await repo.insertResults(tx, [row]);
     await holdFgOnFailure(tx, auth, lot, isFg, row.passed ? [] : [t.name], id);
   });
   return getSample(auth, id);
+}
+
+/**
+ * Owner 2026-11-27 (0040): a failed result is re-tested only after its OOS investigation (opened by the review)
+ * was closed INVALIDATED; while it is open, or once the failure is CONFIRMED, no re-test.
+ */
+function assertRetestAllowed(orig: repo.ResultWithReview, oos: OosRow | undefined): void {
+  const at = { resultId: orig.id };
+  if (!oos) {
+    throw new AppError('OOS_REQUIRED', 'A failed result is not re-tested without an OOS investigation: review it first (the review opens the investigation)', at);
+  }
+  if (oos.status === 'OPEN') {
+    throw new AppError('OOS_OPEN', `OOS investigation ${oos.docNo} is open: no re-test until the QC Manager closes it as invalidated`, { ...at, oosId: oos.id });
+  }
+  if (oos.outcome !== 'INVALIDATED') {
+    throw new AppError('OOS_NOT_INVALIDATED', `OOS investigation ${oos.docNo} confirmed the failure; the result stands and is not re-tested`, { ...at, oosId: oos.id });
+  }
 }
 
 // ---------------------------------------------------------------- review
@@ -371,12 +399,13 @@ export async function reviewResults(auth: AuthContext, id: string, input: Review
   assertNotOwn(auth, pre);
   const proof = await verifySignature(auth, input.signature, meta);
   await withTransaction(txContext(auth, `review QC results of sample ${id}: ${input.signature.reason}`), async (tx) => {
-    await lockRequest(tx, auth, id, 'SAMPLED');
+    const req = await lockRequest(tx, auth, id, 'SAMPLED');
     const targets = pick(await repo.unreviewedResults(tx, id), input.resultIds);
     if (targets.length === 0) throw new AppError('VALIDATION_FAILED', 'Nothing on this sample is waiting for review');
     assertNotOwn(auth, targets);
     const signature = await recordSignature(tx, proof, { table: SAMPLE_REQUEST_TABLE, id }, ['REVIEWED']);
     await repo.insertReviews(tx, targets.map((r) => ({ resultId: r.id, esignId: signature.id })));
+    await openOosForReviewed(tx, auth, req.lotId, targets);
   });
   return getSample(auth, id);
 }
