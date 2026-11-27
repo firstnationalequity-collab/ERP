@@ -67,3 +67,8 @@ export async function countSpecs(q: Queryable, where: SQL | undefined): Promise<
   const [row] = await q.select({ n: count() }).from(specs).where(where);
   return row?.n ?? 0;
 }
+
+export async function specsByIds(q: Queryable, companyId: string, ids: string[]): Promise<SpecRow[]> {
+  if (ids.length === 0) return [];
+  return q.select().from(specs).where(and(eq(specs.companyId, companyId), inArray(specs.id, ids)));
+}

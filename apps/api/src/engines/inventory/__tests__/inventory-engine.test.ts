@@ -12,6 +12,7 @@ import type { Actor } from '../../../core/transition/transition';
 import type { AuthContext } from '../../../core/auth/auth.service';
 import { PROOF_TTL_MS, verifyWitness, type SignatureProof } from '../../../core/esign/esign.service';
 import { createTestUser, TEST_PASSWORD } from '../../../test/factories';
+import { companyToday } from '../../../core/dates';
 import {
   allocateFefo,
   closeBatchCost,
@@ -656,5 +657,131 @@ describe('FEFO', () => {
       fefoCandidates(tx, a.companyId, { itemId: ids.rm2!, purpose: 'ISSUE', asOf: '2026-11-18', locationIds: [ids.loc2!] }),
     );
     expect(first).toMatchObject({ lotId: l.id, onHand: '8.0000', available: '3.0000', locations: [{ locationId: ids.loc2, qty: '3.0000' }] });
+  });
+});
+
+// Owner corrections 2026-11-27 (0035): sampling reduces stock; expiry is checked at use, not only by the job.
+describe('SAMPLE_ISSUE (owner 2026-11-27)', () => {
+  /** reasonCode null = no sample type given. */
+  const sample = (lotId: string, qty: string, reasonCode: string | null = 'TEST', who = 'analyst') =>
+    as(who, (tx, a) =>
+      postMovement(tx, a, base({ type: 'SAMPLE_ISSUE', lotId, qty, refDocType: 'QC_SAMPLE', refDocId: '1', ...(reasonCode !== null ? { reasonCode } : {}) })),
+    );
+  const rawSample = (userId: string, lotId: string, reasonCode = 'TEST') =>
+    raw(
+      `INSERT INTO inv.stock_movements (movement_type, movement_date, lot_id, from_location_id, qty, unit_cost, value, ref_doc_type, ref_doc_id, reason_code)
+       VALUES ('SAMPLE_ISSUE', '2026-11-18', $1, $2, -1, '10.000000', -10, 'QC_SAMPLE', 1, $3)`,
+      [lotId, ids.loc1, reasonCode],
+      userId,
+    );
+
+  it('takes a test sample from a QUARANTINE lot and a retention sample from an UNDER_TEST lot, valued at the lot cost', async () => {
+    const l = await lot();
+    await post({ lotId: l.id, qty: '20' });
+    const t = await sample(l.id, '1.5');
+    expect([t.movementType, t.qty, t.value, t.reasonCode]).toEqual(['SAMPLE_ISSUE', '-1.5000', '-15.00', 'TEST']);
+    await setLot(l.id, 'UNDER_TEST');
+    const r = await sample(l.id, '0.5', 'RETENTION');
+    expect([r.value, r.reasonCode]).toEqual(['-5.00', 'RETENTION']);
+    expect(await balance(l.id)).toBe('18.0000');
+  });
+
+  it('a toll lot is sampled at zero value (rule 12)', async () => {
+    const toll = await lot({ ownerCustomerId: ids.TOLL1, unitCost: '0' });
+    await post({ lotId: toll.id, qty: '5' });
+    const m = await sample(toll.id, '1');
+    expect([m.value, m.customerOwned]).toEqual(['0.00', true]);
+  });
+
+  it('refuses: another status, an actor without qc.result.enter, no sample type, a reversal — service and database', async () => {
+    const l = await approvedLot('10');
+    await expect(sample(l, '1')).rejects.toMatchObject({ code: 'INVALID_TRANSITION', details: { status: 'APPROVED' } });
+    await expect(rawSample(actors.analyst!.userId, l)).rejects.toThrow(/INVALID_TRANSITION/);
+
+    const q = await lot();
+    await post({ lotId: q.id, qty: '10' });
+    await expect(sample(q.id, '1', 'TEST', 'store')).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(rawSample(actors.store!.userId, q.id)).rejects.toThrow(/FORBIDDEN/);
+    await expect(sample(q.id, '1', null)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    await expect(rawSample(actors.analyst!.userId, q.id, 'OTHER')).rejects.toThrow(/movement_sample_type/);
+
+    const taken = await sample(q.id, '1');
+    await expect(
+      as('analyst', (tx, a) => reverseMovements(tx, a, { movementIds: [taken.id], date: '2026-11-18', refDocType: 'QC_SAMPLE', refDocId: '2' })),
+    ).rejects.toMatchObject({ code: 'INVALID_TRANSITION' });
+    await expect(
+      raw(
+        `INSERT INTO inv.stock_movements (movement_type, movement_date, lot_id, to_location_id, qty, unit_cost, value, ref_doc_type, ref_doc_id, reason_code, reversal_of)
+         VALUES ('SAMPLE_ISSUE', '2026-11-18', $1, $2, 1, '10.000000', 10, 'QC_SAMPLE', 2, 'TEST', $3)`,
+        [q.id, ids.loc1, taken.id],
+        actors.analyst!.userId,
+      ),
+    ).rejects.toThrow(/consumed/);
+  });
+});
+
+describe('expiry at use, before the nightly job runs (owner 2026-11-27)', () => {
+  const today = companyToday();
+  const daysFrom = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+  const yesterday = daysFrom(today, -1);
+  const doc = (n: string) => ({ refDocType: 'PROD_ORDER', refDocId: n });
+  const res = (lotId: string, n: string) => as('store', (tx, a) => reserve(tx, a, { lotId, qty: '1', ...doc(n) }));
+  const rawIssue = (lotId: string) =>
+    raw(
+      `INSERT INTO inv.stock_movements (movement_type, movement_date, lot_id, from_location_id, qty, unit_cost, value, ref_doc_type, ref_doc_id)
+       VALUES ('ISSUE', '2026-11-18', $1, $2, -1, '10.000000', -10, 'TEST', 1)`,
+      [lotId, ids.loc1],
+      actors.store!.userId,
+    );
+  const rawReserve = (lotId: string) =>
+    raw(`INSERT INTO inv.stock_reservations (lot_id, qty, ref_doc_type, ref_doc_id) VALUES ($1, 1, 'PROD_ORDER', 901)`, [lotId], actors.store!.userId);
+  const status = async (lotId: string) => (await client.query<{ status: string }>(`SELECT status FROM inv.lots WHERE id = $1`, [lotId])).rows[0]!.status;
+
+  it('an APPROVED lot past its expiry date is not issued or reserved (service + DB), though the job has not moved it yet', async () => {
+    const l = await approvedLot('10', { expiryDate: yesterday });
+    expect(await status(l)).toBe('APPROVED');
+    await expect(post({ type: 'ISSUE', lotId: l, qty: '1' })).rejects.toMatchObject({ code: 'LOT_EXPIRED', details: { status: 'APPROVED' } });
+    await expect(res(l, '801')).rejects.toMatchObject({ code: 'LOT_EXPIRED' });
+    await expect(rawIssue(l)).rejects.toThrow(/LOT_EXPIRED/);
+    await expect(rawReserve(l)).rejects.toThrow(/LOT_EXPIRED/);
+  });
+
+  it('expiring today counts as reached; a back-dated issue (movement date before the expiry) is still refused', async () => {
+    const expToday = await approvedLot('10', { expiryDate: today });
+    await expect(post({ type: 'ISSUE', lotId: expToday, qty: '1' })).rejects.toMatchObject({ code: 'LOT_EXPIRED' });
+    // Expired yesterday; the issue is dated 18-11-2026, before that (today is later than both).
+    const backdated = await approvedLot('10', { expiryDate: yesterday });
+    expect('2026-11-18' < yesterday).toBe(true);
+    await expect(post({ type: 'ISSUE', lotId: backdated, qty: '1', date: '2026-11-18' })).rejects.toMatchObject({ code: 'LOT_EXPIRED' });
+  });
+
+  it('an APPROVED lot past its retest date is not issued or reserved (service + DB)', async () => {
+    const l = await approvedLot('10', { expiryDate: '2099-12-31', retestDate: yesterday });
+    await expect(post({ type: 'ISSUE', lotId: l, qty: '1' })).rejects.toMatchObject({ code: 'LOT_RETEST_DUE' });
+    await expect(res(l, '802')).rejects.toMatchObject({ code: 'LOT_RETEST_DUE' });
+    await expect(rawIssue(l)).rejects.toThrow(/LOT_RETEST_DUE/);
+    await expect(rawReserve(l)).rejects.toThrow(/LOT_RETEST_DUE/);
+  });
+
+  it('a lot inside its dates is reserved and issued as before', async () => {
+    const l = await approvedLot('10', { expiryDate: '2099-12-31', retestDate: '2099-06-30' });
+    await res(l, '803');
+    expect((await post({ type: 'ISSUE', lotId: l, qty: '2', consumeReservation: doc('803') })).qty).toBe('-2.0000');
+  });
+
+  it('a RELEASED FG lot past its expiry is not dispatched, whatever its status (service + DB)', async () => {
+    const fg = await lot({ source: 'PRODUCTION_OUTPUT', itemId: ids.fg, unitCost: fgUnitCost('100.00', '10'), expiryDate: yesterday }, 'sup');
+    await post({ type: 'OUTPUT', lotId: fg.id, qty: '10', value: '100.00' });
+    await as('pm', (tx, a) => closeBatchCost(tx, a, { lotId: fg.id, batchCost: '100.00', date: '2026-11-18', refDocType: 'PROD_ORDER', refDocId: '7' }));
+    await setLot(fg.id, 'UNDER_TEST', 'APPROVED', 'RELEASED');
+    await expect(post({ type: 'DISPATCH', lotId: fg.id, qty: '1' })).rejects.toMatchObject({ code: 'LOT_EXPIRED', details: { status: 'RELEASED' } });
+    await expect(
+      raw(
+        `INSERT INTO inv.stock_movements (movement_type, movement_date, lot_id, from_location_id, qty, unit_cost, value, ref_doc_type, ref_doc_id, customer_id)
+         VALUES ('DISPATCH', '2026-11-18', $1, $2, -1, '10.000000', -10, 'DELIVERY', 1, $3)`,
+        [fg.id, ids.loc1, ids.PLAIN],
+        actors.store!.userId,
+      ),
+    ).rejects.toThrow(/LOT_EXPIRED/);
   });
 });

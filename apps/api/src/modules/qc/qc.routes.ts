@@ -3,11 +3,23 @@
 // /approve | /reject), never PATCH; PATCH edits a DRAFT only (CLAUDE.md conventions).
 import { Router, type Request } from 'express';
 import { z } from 'zod';
-import { ApproveSpecRequest, CreateSpecRequest, RejectSpecRequest, SetSpecTestsRequest, SpecListQuery, UpdateSpecRequest } from '@albert/shared';
+import {
+  ApproveSpecRequest,
+  CreateSpecRequest,
+  EnterResultsRequest,
+  RejectSpecRequest,
+  ReviewResultsRequest,
+  SampleListQuery,
+  SetSpecTestsRequest,
+  SpecListQuery,
+  TakeSampleRequest,
+  UpdateSpecRequest,
+} from '@albert/shared';
 import { requirePermission } from '../../core/rbac/require-permission';
 import { asyncHandler, authOf, requestMeta } from '../../core/auth/middleware';
 import { idempotent } from '../../core/idempotency/idempotency';
 import * as specs from './specs.service';
+import * as samples from './samples.service';
 
 const IdParam = z.object({ id: z.string().regex(/^\d+$/, 'Invalid id') });
 const idOf = (req: Request) => IdParam.parse(req.params).id;
@@ -38,4 +50,19 @@ r.post('/specs/:id/approve', requirePermission('qc.spec.approve'), once, asyncHa
 }));
 r.post('/specs/:id/reject', requirePermission('qc.spec.approve'), once, asyncHandler(async (req, res) => {
   res.json(await specs.rejectSpec(authOf(req), idOf(req), RejectSpecRequest.parse(req.body).reason));
+}));
+
+// ---------------------------------------------------------------- sample queue, results, review (M4 task 2; 0035, 0036)
+// QC Analyst takes the sample (posts SAMPLE_ISSUE: Idempotency-Key required) and enters results (qc.result.enter);
+// QC Manager reviews them with an e-signature (qc.result.review).
+r.get('/samples', VIEW, asyncHandler(async (req, res) => { res.json(await samples.listSamples(authOf(req), SampleListQuery.parse(req.query))); }));
+r.get('/samples/:id', VIEW, asyncHandler(async (req, res) => { res.json(await samples.getSample(authOf(req), idOf(req))); }));
+r.post('/samples/:id/take', requirePermission('qc.result.enter'), idempotent(), asyncHandler(async (req, res) => {
+  res.json(await samples.takeSample(authOf(req), idOf(req), TakeSampleRequest.parse(req.body)));
+}));
+r.post('/samples/:id/results', requirePermission('qc.result.enter'), once, asyncHandler(async (req, res) => {
+  res.json(await samples.enterResults(authOf(req), idOf(req), EnterResultsRequest.parse(req.body)));
+}));
+r.post('/samples/:id/review', requirePermission('qc.result.review'), once, asyncHandler(async (req, res) => {
+  res.json(await samples.reviewResults(authOf(req), idOf(req), ReviewResultsRequest.parse(req.body), requestMeta(req)));
 }));

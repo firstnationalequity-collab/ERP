@@ -107,6 +107,7 @@ const cases: [string, string, readonly string[]][] = [
   ['qc.sample_requests', 'status', SampleRequestStatus],
   ['qc.specs', 'status', QcSpecStatus],
   ['qc.spec_tests', 'result_type', QcResultType],
+  ['qc.results', 'result_type', QcResultType],
   ['purch.vendor_invoices', 'status', VendorInvoiceStatus],
   ['purch.vendor_invoices', 'invoice_type', VendorInvoiceType],
   ['purch.vendor_payments', 'status', VendorPaymentStatus],

@@ -257,3 +257,17 @@ export async function lotTouches(
     reservations: Number(r.reservations),
   }));
 }
+
+/** Ids of lots whose number contains `search` (case-insensitive), at most 500. */
+export async function lotIdsMatching(q: Queryable, companyId: string, search: string): Promise<string[]> {
+  const like = `%${search.replace(/[\%_]/g, (c) => `\${c}`)}%`;
+  const rows = await q.select({ id: lots.id }).from(lots).where(and(eq(lots.companyId, companyId), sql`${lots.lotNo} ILIKE ${like}`)).limit(500);
+  return rows.map((r) => r.id);
+}
+
+/** Ids of the lots of these items. */
+export async function lotIdsOfItems(q: Queryable, companyId: string, itemIds: string[]): Promise<string[]> {
+  if (itemIds.length === 0) return [];
+  const rows = await q.select({ id: lots.id }).from(lots).where(and(eq(lots.companyId, companyId), inArray(lots.itemId, itemIds)));
+  return rows.map((r) => r.id);
+}

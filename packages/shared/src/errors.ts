@@ -39,6 +39,10 @@ export const ErrorCodes = [
   'FILE_INTEGRITY_FAILED',
   'LOT_NOT_APPROVED',
   'LOT_NOT_RELEASED',
+  /** Expiry checked at use (owner 2026-11-27; 0035): the lot's expiry date is reached (issue, reserve, dispatch). */
+  'LOT_EXPIRED',
+  /** The lot's retest date is reached: not issued or reserved until QC re-tests it (owner 2026-11-27; 0035). */
+  'LOT_RETEST_DUE',
   'INSUFFICIENT_STOCK',
   'BATCH_NOT_CLOSED',
   'LOT_EMPTY',

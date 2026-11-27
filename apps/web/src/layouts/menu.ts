@@ -24,6 +24,8 @@ export const MENU: MenuEntry[] = [
   { key: 'vendor-ledger', label: 'Vendor ledger', path: '/purch/vendor-ledger', group: 'Procurement', anyOf: ['purch.view', 'fin.view'] },
   { key: 'ap-ageing', label: 'AP ageing', path: '/purch/ap-ageing', group: 'Procurement', anyOf: ['purch.view', 'fin.view'] },
   { key: 'qc-specs', label: 'Specifications', path: '/qc/specs', group: 'Quality control', anyOf: ['qc.view'] },
+  { key: 'qc-samples', label: 'Sample queue', path: '/qc/samples', group: 'Quality control', anyOf: ['qc.view'] },
+  { key: 'qc-review', label: 'Results review', path: '/qc/review', group: 'Quality control', anyOf: ['qc.view'] },
   { key: 'items', label: 'Items', path: '/master/items', group: 'Masters', anyOf: ['master.view'] },
   { key: 'formulas', label: 'Master formulas', path: '/master/formulas', group: 'Masters', anyOf: ['master.view'] },
   { key: 'products', label: 'Products', path: '/master/products', group: 'Masters', anyOf: ['master.view'] },

@@ -41,7 +41,7 @@ export const SpecMoves = defineTransitions<QcSpecStatus>({
 
 // ---------------------------------------------------------------- reading
 
-const testDto = (t: repo.SpecTestRow): SpecTestDto => ({
+export const specTestDto = (t: repo.SpecTestRow): SpecTestDto => ({
   id: t.id,
   seq: t.seq,
   name: t.name,
@@ -100,7 +100,7 @@ export async function getSpec(auth: AuthContext, id: string): Promise<SpecDto> {
   const row = await repo.findSpec(db, auth.companyId, id);
   if (!row) throw new AppError('NOT_FOUND', 'Specification not found');
   const [dto] = await toDtos(db, auth.companyId, [row]);
-  return { ...dto!, tests: (await repo.specTestsOf(db, id)).map(testDto) };
+  return { ...dto!, tests: (await repo.specTestsOf(db, id)).map(specTestDto) };
 }
 
 // ---------------------------------------------------------------- for other QC services
@@ -115,7 +115,7 @@ export interface ApprovedSpec {
 export async function approvedSpec(q: Queryable, companyId: string, itemId: string): Promise<ApprovedSpec> {
   const row = await repo.approvedSpecOf(q, companyId, itemId);
   if (!row) throw new AppError('SPEC_NOT_APPROVED', 'This item has no APPROVED QC specification; QC approves one first', { itemId });
-  return { id: row.id, version: row.version, tests: (await repo.specTestsOf(q, row.id)).map(testDto) };
+  return { id: row.id, version: row.version, tests: (await repo.specTestsOf(q, row.id)).map(specTestDto) };
 }
 
 // ---------------------------------------------------------------- drafting

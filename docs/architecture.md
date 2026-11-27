@@ -165,6 +165,10 @@ A lot held at several locations is moved to one location first; each disposal mo
 
 Only **APPROVED** material lots can be issued or reserved; only **RELEASED** FG lots can be picked for dispatch, and an FG lot made by production is dispatched only after its batch is closed (`BATCH_NOT_CLOSED`, enforced in the service and the database; owner 2026-11-18, Q8).
 
+**Expiry at use** (owner 2026-11-27; 0035): issue and reservation refuse a lot whose expiry or retest date is reached (`LOT_EXPIRED` / `LOT_RETEST_DUE`) even while it is still APPROVED; dispatch refuses an FG lot whose expiry is reached whatever its status. "Reached" = on or before the later of the movement date and today (Asia/Karachi). Service and database. The nightly job (M4 task 5) only updates statuses.
+
+**QC sampling** (owner 2026-11-27; 0035, 0036): taking a sample (`qc.result.enter`) moves the lot QUARANTINE / RETEST_DUE → UNDER_TEST and posts SAMPLE_ISSUE rows (sample type TEST or RETENTION) out of the lot, only from a QUARANTINE / UNDER_TEST lot; a sample row is never reversed. The request pins the APPROVED spec version; results are insert-only with pass computed from the limits; reviewer ≠ analyst, e-signature REVIEWED.
+
 **Master statuses** (M2; through core/transition like every status, rule 7; decisions 2026-11-18):
 
 | Record | Moves | Permission key | Condition |
@@ -265,6 +269,7 @@ Accounts are not hard-coded: `posting_rules` maps (event, account role, item cat
 | Stock adjustment / write-off | ± lot | Inventory loss expense (or Inventory) | Inventory (or Inventory gain) |
 | Rejected lot destroyed (QA witness, §4) | − lot; when empty, the lot becomes DESTROYED in the same transaction | Rejection write-off expense | Inventory |
 | Rejected lot returned to vendor (QA witness, §4) | − lot; when empty, the lot becomes RETURNED in the same transaction | Accounts payable (debit note, RETURN_TO_VENDOR: billed value + input tax) | Inventory (the lot's value); Price variance (billed − lot value, either side); Input sales tax (0032) |
+| QC sample taken — event `QC_SAMPLE` (owner 2026-11-27; 0035) | − lot (SAMPLE_ISSUE, TEST or RETENTION) from a QUARANTINE / UNDER_TEST lot, at the lot cost; toll stock zero, no journal | QC sample expense (placeholder 6400) | Inventory |
 | Rounding sweep (empty lot left with paisa) | Value-only row, lot value to zero | Inventory (paisa below zero) or Rounding difference (paisa above zero) | Rounding difference or Inventory |
 | Any reversal | Mirror of the original | Original credits | Original debits |
 

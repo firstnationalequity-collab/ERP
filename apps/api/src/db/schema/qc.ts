@@ -1,4 +1,6 @@
-// Drizzle description of the `qc` schema. Source of truth: src/db/migrations/0027_grn.sql (sample requests), 0034 (specs).
+// Drizzle description of the `qc` schema. Source of truth: src/db/migrations/0027_grn.sql (sample requests), 0034 (specs),
+// 0036 (sampling, results, reviews).
+import { sql } from 'drizzle-orm';
 import { boolean, integer, numeric, pgSchema, text } from 'drizzle-orm/pg-core';
 import type { QcResultType, QcSpecStatus, SampleRequestStatus } from '@albert/shared';
 import { auditColumns, bigintString, companyId, identityId, tstz } from './columns';
@@ -13,6 +15,41 @@ export const sampleRequests = qc.table('sample_requests', {
   refDocId: bigintString('ref_doc_id').notNull(),
   requestedAt: tstz('requested_at').notNull().defaultNow(),
   status: text('status').$type<SampleRequestStatus>().notNull(),
+  // 0036: the sampling record (set once, OPEN → SAMPLED).
+  specId: bigintString('spec_id'),
+  sampledBy: bigintString('sampled_by'),
+  sampledAt: tstz('sampled_at'),
+  sampleLocationId: bigintString('sample_location_id'),
+  testQty: numeric('test_qty', { precision: 18, scale: 4 }),
+  retentionQty: numeric('retention_qty', { precision: 18, scale: 4 }),
+  sampleNotes: text('sample_notes'),
+  ...auditColumns(),
+});
+
+/** 0036: insert-only; pass is computed from the pinned limits (NUMERIC) or the analyst's judgement (TEXT). */
+export const results = qc.table('results', {
+  id: identityId(),
+  companyId: companyId(),
+  sampleRequestId: bigintString('sample_request_id').notNull(),
+  specTestId: bigintString('spec_test_id').notNull(),
+  resultType: text('result_type').$type<QcResultType>().notNull(),
+  numericValue: numeric('numeric_value', { precision: 18, scale: 6 }),
+  textValue: text('text_value'),
+  passed: boolean('passed').notNull(),
+  remarks: text('remarks'),
+  enteredBy: bigintString('entered_by').notNull().default(sql`core.current_user_id()`),
+  enteredAt: tstz('entered_at').notNull().defaultNow(),
+  ...auditColumns(),
+});
+
+/** 0036: insert-only; reviewer ≠ analyst, REVIEWED e-signature on the sample request. */
+export const resultReviews = qc.table('result_reviews', {
+  id: identityId(),
+  companyId: companyId(),
+  resultId: bigintString('result_id').notNull(),
+  reviewedBy: bigintString('reviewed_by').notNull().default(sql`core.current_user_id()`),
+  reviewedAt: tstz('reviewed_at').notNull().defaultNow(),
+  esignId: bigintString('esign_id').notNull(),
   ...auditColumns(),
 });
 

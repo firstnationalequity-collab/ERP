@@ -172,6 +172,7 @@ beforeAll(async () => {
   actors.pm = await actorFor('d_pm', ['PRODUCTION_MANAGER']);
   actors.fm = await actorFor('d_fm', ['FINANCE_MANAGER']);
   actors.wm = await actorFor('d_wm', ['WAREHOUSE_MANAGER']);
+  actors.qca = await actorFor('d_qca', ['QC_ANALYST']);
   const qa = await createTestUser({ username: 'd_qa', roleCodes: ['QA_MANAGER'] });
   const wm = actors.wm.userId;
   const fm = actors.fm.userId;
@@ -342,6 +343,18 @@ describe('M2 Done when', () => {
     const recApi = await postDoc('store', [{ lotId: api.id, qty: '10' }], 'GRN'); // 12345.60
     expect(lineView(recApi.entry!)).toEqual([['1315', '12345.60', '0.00'], ['2120', '0.00', '12345.60']]);
     await expectGlEqualsLedger('RECEIPT');
+
+    // SAMPLE_ISSUE (owner 2026-11-27; 0035): a test sample and a retention sample out of a QUARANTINE lot, one
+    // document, Dr QC sample expense (6400) / Cr inventory, under the QC sampling key.
+    const smp = await newLot('store', { lotNo: 'DW-S', unitCost: '2.50' });
+    await postDoc('store', [{ lotId: smp.id, qty: '10' }], 'GRN');
+    const sampled = await postDoc('qca', [
+      { type: 'SAMPLE_ISSUE', lotId: smp.id, qty: '1', reasonCode: 'TEST' },
+      { type: 'SAMPLE_ISSUE', lotId: smp.id, qty: '0.5', reasonCode: 'RETENTION' },
+    ], 'QC_SAMPLE');
+    expect(sampled.movements.map((m) => m.value)).toEqual(['-2.50', '-1.25']);
+    expect(lineView(sampled.entry!)).toEqual([['1310', '0.00', '3.75'], ['6400', '3.75', '0.00']]);
+    await expectGlEqualsLedger('SAMPLE_ISSUE');
 
     // TRANSFER_OUT / TRANSFER_IN — value moves with the stock, no journal.
     const pair = await as('store', (tx, a) => transfer(tx, a, { lotId: rmA.id, fromLocationId: ids.loc1!, toLocationId: ids.loc2!, qty: '30', date: DATE, refDocType: 'TRANSFER', refDocId: doc() }));

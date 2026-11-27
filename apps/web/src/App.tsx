@@ -30,6 +30,7 @@ import { VendorPaymentsPage } from './pages/purch/VendorPaymentsPage';
 import { DebitNotesPage } from './pages/purch/DebitNotesPage';
 import { ApAgeingPage, VendorLedgerPage } from './pages/purch/PayablesPages';
 import { SpecsPage } from './pages/qc/SpecsPage';
+import { SamplesPage } from './pages/qc/SamplesPage';
 
 export function App() {
   const { user, restoring } = useAuth();
@@ -74,6 +75,8 @@ export function App() {
         <Route path="/purch/vendor-ledger" element={<RequirePermission anyOf={['purch.view', 'fin.view']}><VendorLedgerPage /></RequirePermission>} />
         <Route path="/purch/ap-ageing" element={<RequirePermission anyOf={['purch.view', 'fin.view']}><ApAgeingPage /></RequirePermission>} />
         <Route path="/qc/specs" element={<RequirePermission anyOf={['qc.view']}><SpecsPage /></RequirePermission>} />
+        <Route path="/qc/samples" element={<RequirePermission anyOf={['qc.view']}><SamplesPage /></RequirePermission>} />
+        <Route path="/qc/review" element={<RequirePermission anyOf={['qc.view']}><SamplesPage reviewQueue /></RequirePermission>} />
         <Route path="/fin/exchange-rates" element={<RequirePermission anyOf={['fin.view', 'purch.view']}><ExchangeRatesPage /></RequirePermission>} />
         <Route path="/fin/journals" element={<RequirePermission anyOf={['fin.view']}><JournalsPage /></RequirePermission>} />
         <Route path="/fin/accounts" element={<RequirePermission anyOf={['fin.view', 'master.view']}><AccountsPage /></RequirePermission>} />

@@ -1,6 +1,7 @@
-// QC sample requests — M3 stub (owner 2026-11-25, Q1; decisions.md "QC sample request on GRN"). A request is
-// created OPEN with every lot a GRN receives, in the GRN's transaction; M4 builds the sample queue and the
-// sampling moves on it. Exported for other modules: they never write qc tables themselves.
+// QC sample requests (owner 2026-11-25, Q1; decisions.md "QC sample request on GRN"). A request is created OPEN
+// with every lot a GRN receives, in the GRN's transaction (M6: with every FG lot at output verification). The sample
+// queue and the sampling moves are in samples.service.ts (M4 task 2). Exported for other modules: they never write
+// qc tables themselves.
 import { SampleRequestStatus, type PermissionKey } from '@albert/shared';
 import type { Queryable, Tx } from '../../db/client';
 import { AppError } from '../../core/errors';
@@ -12,6 +13,8 @@ export const SAMPLE_REQUEST_TABLE = 'qc.sample_requests';
 /** Which document creates the request, and under which key (the key that created the lot). */
 export const SampleRequestSources = {
   GRN: 'purch.grn.post',
+  // M6 calls this when the checker verifies an FG output (the key that creates the FG lot); 0036 allows the type.
+  PRODUCTION_OUTPUT: 'prod.output.verify',
 } as const satisfies Record<string, PermissionKey>;
 export type SampleRequestSource = keyof typeof SampleRequestSources;
 

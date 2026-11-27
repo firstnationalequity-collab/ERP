@@ -13,7 +13,12 @@
 //  - transfer():           TRANSFER_OUT + TRANSFER_IN pair, value moves with the stock.
 //  - reverseMovements():   correction rows that mirror the originals (rule 4).
 //  - closeDisposedLot():   REJECTED → DESTROYED / RETURNED with the witness of the disposal movement (rule 1; 0020).
-//  - reserve() / releaseReservation(): quantity held for a document line; only APPROVED lots (rule 2).
+//  - reserve() / releaseReservation(): quantity held for a document line; only APPROVED lots (rule 2) whose expiry
+//                          and retest dates are not reached (owner 2026-11-27; 0035).
+//  - SAMPLE_ISSUE:         a QC sample out of a QUARANTINE / UNDER_TEST lot, by a holder of qc.result.enter; the
+//                          reason code is the sample type; never reversed (owner 2026-11-27; 0035).
+//  - Expiry at use:        ISSUE refuses a lot past its expiry or retest date, DISPATCH past its expiry, whatever
+//                          its status (owner 2026-11-27; 0035).
 //  - fefoCandidates() / allocateFefo(): usable lots, earliest expiry first.
 //  - sweepEmptyLot():      value-only ROUNDING_SWEEP row for an empty lot still holding paisa; called only by
 //                          engines/posting, which posts its journal (owner 18-11-2026; 0016).
@@ -27,6 +32,7 @@ import { Decimal } from 'decimal.js';
 import {
   InboundMovementTypes,
   LotStatus,
+  QcSampleType,
   ValueAdjustmentReason,
   type LotSource,
   type PermissionKey,
@@ -35,6 +41,7 @@ import {
 import type { Queryable, Tx } from '../../db/client';
 import type { stockMovements } from '../../db/schema/inv';
 import { AppError, fromDbError } from '../../core/errors';
+import { companyToday } from '../../core/dates';
 import { defineTransitions, recordInitialStatus, transition, type Actor, type TransitionMap, type TransitionResult } from '../../core/transition/transition';
 import { permissionKeysForUser } from '../../core/auth/auth.repo';
 import { recordSignature, type SignatureProof, type SignatureRecord } from '../../core/esign/esign.service';
@@ -88,6 +95,11 @@ const lotCreationMaps = Object.fromEntries(
     }),
   ]),
 ) as Record<LotSource, TransitionMap<LotStatus>>;
+
+/** The QC sampling key (architecture §4: QC Analyst takes the sample): the only key that posts SAMPLE_ISSUE (owner 2026-11-27). */
+export const SAMPLE_KEY: PermissionKey = 'qc.result.enter';
+/** Lot statuses a QC sample is taken from (owner 2026-11-27; 0035). */
+export const SampleableLotStatuses: readonly LotStatus[] = ['QUARANTINE', 'UNDER_TEST'];
 
 /** Batch close (architecture §4, Production Manager e-signature): the key that closes an FG lot's cost. */
 export const BATCH_CLOSE_KEY: PermissionKey = 'prod.batch.approve_close';
@@ -267,6 +279,24 @@ export async function lotsByIds(q: Queryable, companyId: string, lotIds: string[
   return new Map((await repo.findLots(q, companyId, [...new Set(lotIds)])).map((l) => [l.id, l]));
 }
 
+/** Read-only, for list filters: ids of lots whose number contains `search` (at most 500). */
+export async function lotIdsMatching(q: Queryable, companyId: string, search: string): Promise<string[]> {
+  return repo.lotIdsMatching(q, companyId, search);
+}
+
+/** Read-only, for list filters: ids of the lots of these items. */
+export async function lotIdsOfItems(q: Queryable, companyId: string, itemIds: string[]): Promise<string[]> {
+  return repo.lotIdsOfItems(q, companyId, [...new Set(itemIds)]);
+}
+
+/** Read-only: where a lot holds stock (locations with qty > 0), for screens that pick a location (e.g. QC sampling). */
+export async function lotStock(q: Queryable, companyId: string, lotId: string): Promise<{ locationId: string; qty: string }[]> {
+  await getLot(q, companyId, lotId);
+  return (await repo.balancesOfLots(q, [lotId]))
+    .map((b) => ({ locationId: b.locationId, qty: quantity(b.qty) }))
+    .sort((a, b) => byNumber(a.locationId, b.locationId));
+}
+
 export async function getLot(q: Queryable, companyId: string, lotId: string): Promise<Lot> {
   const lot = await repo.findLot(q, companyId, lotId);
   if (!lot) throw new AppError('NOT_FOUND', `Lot ${lotId} not found`);
@@ -358,12 +388,20 @@ export async function postMovement(tx: Tx, actor: Actor, input: MovementInput): 
       needsCustomer ? `A ${input.type} names the customer` : `Only a dispatch or a customer return names a customer`,
     );
   }
+  if (input.type === 'SAMPLE_ISSUE') {
+    if (!actor.permissions.has(SAMPLE_KEY)) {
+      throw new AppError('FORBIDDEN', `A QC sample is taken under ${SAMPLE_KEY}`, { permission: SAMPLE_KEY });
+    }
+    if (!(QcSampleType as readonly (string | undefined)[]).includes(input.reasonCode)) {
+      throw new AppError('VALIDATION_FAILED', `A QC sample names its type (${QcSampleType.join(' / ')}) as its reason code`);
+    }
+  }
   const lot = await lockLotOrFail(tx, actor.companyId, input.lotId);
   const startStatus =
     input.type === 'RECEIPT' || input.type === 'OUTPUT'
       ? initialLotStatus(lot.source, (await stockItem(tx, actor.companyId, lot.itemId)).qcRequired)
       : undefined;
-  assertLotAllows(input.type, lot, startStatus);
+  assertLotAllows(input.type, lot, startStatus, input.date);
   const disposal = isDisposal(input.type);
   if (disposal && !input.witness) {
     throw new AppError('WITNESS_REQUIRED', `A ${input.type} needs a QA witness e-signature (${DISPOSAL_WITNESS_KEY})`, { permission: DISPOSAL_WITNESS_KEY });
@@ -494,6 +532,9 @@ export async function reverseMovements(tx: Tx, actor: Actor, input: ReversalInpu
     if (m.movementType === 'ROUNDING_SWEEP') throw new AppError('VALIDATION_FAILED', `Movement ${m.id} is a rounding sweep; it is never reversed`);
     if (m.movementType === 'VALUE_ADJUSTMENT') {
       throw new AppError('VALIDATION_FAILED', `Movement ${m.id} is a value adjustment; it is not reversed (batch close is final; M3 defines landed-cost corrections)`);
+    }
+    if (m.movementType === 'SAMPLE_ISSUE') {
+      throw new AppError('INVALID_TRANSITION', `Movement ${m.id} is a QC sample; a sample is consumed and is not reversed (correct it with a stock adjustment)`);
     }
   }
   const disposals = originals.filter((m) => isDisposal(m.movementType));
@@ -748,6 +789,7 @@ export async function reserve(tx: Tx, actor: Actor, input: ReserveInput): Promis
   assertQty(input.qty);
   assertDocument(input);
   const lot = await lockLotOrFail(tx, actor.companyId, input.lotId);
+  assertNotExpired(lot, companyToday(), true, 'reserved');
   if (lot.status !== 'APPROVED') {
     throw new AppError('LOT_NOT_APPROVED', `Lot ${lot.lotNo} is ${lot.status}; only APPROVED lots are reserved`, { lotId: lot.id, status: lot.status });
   }
@@ -955,11 +997,36 @@ async function lockLotOrFail(tx: Tx, companyId: string, lotId: string): Promise<
 
 const InboundSource: Partial<Record<StockMovementType, LotSource>> = { RECEIPT: 'GRN', OUTPUT: 'PRODUCTION_OUTPUT', SALES_RETURN: 'SALES_RETURN' };
 
+/** DD-MM-YYYY for messages. */
+const dmy = (d: string) => `${d.slice(8, 10)}-${d.slice(5, 7)}-${d.slice(0, 4)}`;
+
+/**
+ * Expiry checked at use (owner 2026-11-27; 0035), whatever status the nightly job has set so far: the expiry date
+ * (and, with withRetest, the retest date) must be after useDay. 0035 checks the same in the database.
+ */
+function assertNotExpired(lot: repo.LotRow, useDay: string, withRetest: boolean, verb: string): void {
+  const details = { lotId: lot.id, lotNo: lot.lotNo, status: lot.status, expiryDate: lot.expiryDate, retestDate: lot.retestDate };
+  if (lot.expiryDate !== null && lot.expiryDate <= useDay) {
+    throw new AppError('LOT_EXPIRED', `Lot ${lot.lotNo} expired on ${dmy(lot.expiryDate)}; it is not ${verb}`, details);
+  }
+  if (withRetest && lot.retestDate !== null && lot.retestDate <= useDay) {
+    throw new AppError('LOT_RETEST_DUE', `Lot ${lot.lotNo}'s retest date ${dmy(lot.retestDate)} is reached; QC re-tests it before it is ${verb}`, details);
+  }
+}
+
 /** The lot status table (architecture §4) and rule 2, checked before the database checks them again. */
-function assertLotAllows(type: StockMovementType, lot: repo.LotRow, startStatus?: LotStatus): void {
+function assertLotAllows(type: StockMovementType, lot: repo.LotRow, startStatus?: LotStatus, date?: string): void {
   const details = { lotId: lot.id, lotNo: lot.lotNo, status: lot.status, movementType: type };
   if (lot.status === 'DESTROYED' || lot.status === 'RETURNED') {
     throw new AppError('INVALID_TRANSITION', `Lot ${lot.lotNo} is ${lot.status}; it never moves again`, details);
+  }
+  // Owner 2026-11-27: the later of the movement date and today, so a back-dated movement cannot use an expired lot.
+  if (date !== undefined && (type === 'ISSUE' || type === 'DISPATCH')) {
+    const today = companyToday();
+    assertNotExpired(lot, date > today ? date : today, type === 'ISSUE', type === 'ISSUE' ? 'issued' : 'dispatched');
+  }
+  if (type === 'SAMPLE_ISSUE' && !SampleableLotStatuses.includes(lot.status)) {
+    throw new AppError('INVALID_TRANSITION', `A QC sample is taken from a QUARANTINE or UNDER_TEST lot (lot ${lot.lotNo} is ${lot.status})`, details);
   }
   const source = InboundSource[type];
   if (source && lot.source !== source) {

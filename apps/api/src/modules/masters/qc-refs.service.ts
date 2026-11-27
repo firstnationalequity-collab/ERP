@@ -5,9 +5,15 @@ import { and, eq, ilike, or } from 'drizzle-orm';
 import type { Queryable } from '../../db/client';
 import { items } from '../../db/schema/masters';
 import * as purchRepo from './purch-refs.repo';
-import type { PurchItemRef } from './purch-refs.service';
+import { purchLocations, type PurchItemRef, type PurchLocationRef } from './purch-refs.service';
 
 export type QcItemRef = PurchItemRef;
+export type QcLocationRef = PurchLocationRef;
+
+/** Locations by id (code, warehouse) for QC screens, e.g. where a sample was taken. */
+export async function qcLocations(q: Queryable, companyId: string, ids: string[]): Promise<Map<string, QcLocationRef>> {
+  return purchLocations(q, companyId, ids);
+}
 
 export async function qcItems(q: Queryable, companyId: string, ids: string[]): Promise<Map<string, QcItemRef>> {
   const rows = await purchRepo.itemsByIds(q, companyId, [...new Set(ids)]);

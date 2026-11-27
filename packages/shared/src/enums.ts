@@ -52,6 +52,13 @@ export type LotSource = (typeof LotSource)[number];
 export const ValueAdjustmentReason = ['BATCH_CLOSE', 'LANDED_COST'] as const;
 export type ValueAdjustmentReason = (typeof ValueAdjustmentReason)[number];
 
+/**
+ * QC sample type, the reason_code of a SAMPLE_ISSUE movement (owner 2026-11-27; 0035): TEST = taken for analysis;
+ * RETENTION = retention / reserve sample kept by QC. Both leave stock the same way.
+ */
+export const QcSampleType = ['TEST', 'RETENTION'] as const;
+export type QcSampleType = (typeof QcSampleType)[number];
+
 export const StockOwner = ['OWN', 'CUSTOMER'] as const;
 export type StockOwner = (typeof StockOwner)[number];
 
@@ -75,6 +82,7 @@ export const StockMovementType = [
   'RETURN_TO_VENDOR', // REJECTED lot returned
   'ROUNDING_SWEEP', // value only (qty 0, no location): clears the paisa left on an empty lot; posting engine only (0016)
   'VALUE_ADJUSTMENT', // value only (qty 0, no location): raises or lowers a lot's value and unit cost (owner Q8, 0017)
+  'SAMPLE_ISSUE', // QC sample out of a QUARANTINE / UNDER_TEST lot, qc.result.enter only; reason_code = QcSampleType (owner 2026-11-27, 0035)
 ] as const;
 export type StockMovementType = (typeof StockMovementType)[number];
 
@@ -197,10 +205,11 @@ export const LandedCostTaxRole = ['INPUT_TAX', 'ADVANCE_TAX'] as const;
 export type LandedCostTaxRole = (typeof LandedCostTaxRole)[number];
 
 /**
- * QC sample request (M3 stub, owner 2026-11-25 Q1: created OPEN with each GRN lot; M4 adds the sampling moves).
+ * QC sample request (owner 2026-11-25 Q1: created OPEN with each GRN lot; FG output in M6).
+ * OPEN → SAMPLED (M4 task 2, 0036): the analyst took the sample (lot → UNDER_TEST, SAMPLE_ISSUE movements, spec pinned).
  * CANCELLED: its GRN was reversed before any sample was taken (owner 2026-11-25, answer 5; 0028).
  */
-export const SampleRequestStatus = ['OPEN', 'CANCELLED'] as const;
+export const SampleRequestStatus = ['OPEN', 'SAMPLED', 'CANCELLED'] as const;
 export type SampleRequestStatus = (typeof SampleRequestStatus)[number];
 
 /**
@@ -330,6 +339,7 @@ export const PostingEvent = [
   'LOT_DESTROYED',
   'LOT_RETURNED',
   'ROUNDING_DIFFERENCE', // paisa left on an empty lot, swept by the posting engine (owner 18-11-2026; 0016)
+  'QC_SAMPLE', // QC sample taken from a lot: Dr QC sample expense / Cr inventory (owner 2026-11-27; 0035)
 ] as const;
 export type PostingEvent = (typeof PostingEvent)[number];
 
@@ -358,6 +368,7 @@ export const AccountRole = [
   'INVENTORY_GAIN',
   'REJECTION_WRITE_OFF',
   'ROUNDING_DIFFERENCE',
+  'QC_SAMPLE_EXPENSE', // QC samples taken out of stock (owner 2026-11-27; 0035). Placeholder account 6400, Finance to confirm
 ] as const;
 export type AccountRole = (typeof AccountRole)[number];
 
@@ -389,4 +400,5 @@ export const PostingEventRoles: Readonly<Record<PostingEvent, readonly AccountRo
   // 0032: a return on a debit note also books the difference to the billed price and reverses the input tax.
   LOT_RETURNED: ['ACCOUNTS_PAYABLE', 'INVENTORY', 'PRICE_VARIANCE', 'INPUT_TAX'],
   ROUNDING_DIFFERENCE: ['INVENTORY', 'ROUNDING_DIFFERENCE'],
+  QC_SAMPLE: ['QC_SAMPLE_EXPENSE', 'INVENTORY'],
 };

@@ -67,6 +67,8 @@ export const JournalPostingKeys: Readonly<Partial<Record<PostingEvent, Permissio
   // M3 task 5b (0032; owner 2026-11-26): the Accountant posts approved price-claim / short-supply debit notes. A return
   // note posts LOT_RETURNED (the Warehouse Manager's witnessed disposal).
   VENDOR_DEBIT_NOTE: 'fin.debit_note.manage',
+  // Owner 2026-11-27 (0035): the QC sample is taken out of stock under the QC sampling key.
+  QC_SAMPLE: 'qc.result.enter',
 };
 
 /**
@@ -123,6 +125,7 @@ export const StockMovementPosting: Readonly<Partial<Record<StockMovementType, Po
   DESTROY: { event: 'LOT_DESTROYED', counter: 'REJECTION_WRITE_OFF' },
   RETURN_TO_VENDOR: { event: 'LOT_RETURNED', counter: 'ACCOUNTS_PAYABLE' },
   ROUNDING_SWEEP: { event: 'ROUNDING_DIFFERENCE', counter: 'ROUNDING_DIFFERENCE' },
+  SAMPLE_ISSUE: { event: 'QC_SAMPLE', counter: 'QC_SAMPLE_EXPENSE' },
 };
 
 /** VALUE_ADJUSTMENT reason → posting event and counter role (owner Q8, 2026-11-18; LANDED_COST owner Q21, 0029). */

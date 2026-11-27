@@ -60,6 +60,8 @@ export const PLACEHOLDER_ACCOUNTS: readonly AccountSeed[] = [
   { code: '6200', name: 'Rejected material write-off', type: 'EXPENSE', parent: '6000' },
   // Owner Q4 (2026-11-25): rate differences on vendor invoices and payments (IAS 21). Placeholder: Finance to confirm.
   { code: '6300', name: 'Exchange gain / loss (Finance to confirm)', type: 'EXPENSE', parent: '6000' },
+  // Owner 2026-11-27: QC samples taken out of stock (SAMPLE_ISSUE, event QC_SAMPLE; 0035). Placeholder: Finance to confirm.
+  { code: '6400', name: 'QC sample expense (Finance to confirm)', type: 'EXPENSE', parent: '6000' },
 ];
 
 /** Default account per role (rules with no item category). Finance adds per-category rules, e.g. INVENTORY by category. */
@@ -87,6 +89,7 @@ export const PLACEHOLDER_ROLE_ACCOUNTS: Readonly<Record<AccountRole, string>> = 
   INVENTORY_GAIN: '4300',
   REJECTION_WRITE_OFF: '6200',
   ROUNDING_DIFFERENCE: '5400',
+  QC_SAMPLE_EXPENSE: '6400',
 };
 
 /**
