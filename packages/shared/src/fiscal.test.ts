@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fiscalYearOf, formatDocNo, monthlyPeriods, numberPatternErrors, numberPeriodKey } from './fiscal';
+import { fiscalYearOf, formatDocNo, lastDayOfMonth, parseLabelDate, monthlyPeriods, numberPatternErrors, numberPeriodKey } from './fiscal';
 
 describe('fiscal year (July–June)', () => {
   it('puts 30-06-2027 in FY 2026-27 and 01-07-2027 in FY 2027-28', () => {
@@ -48,5 +48,27 @@ describe('document numbers (Q16)', () => {
     expect(numberPatternErrors('{PREFIX}-{FY}-{SEQ}', 'FISCAL_YEAR')).toContain('{SEQ:n} needs a width n from 1 to 10');
     expect(numberPatternErrors('{PREFIX}-{MONTH}-{FY}-{SEQ:5}', 'FISCAL_YEAR')).toContain('Unknown token {MONTH}');
     expect(numberPatternErrors('PO {FY} {SEQ:5}', 'FISCAL_YEAR')[0]).toMatch(/Only letters/);
+  });
+});
+
+describe('label dates (expiry / retest as printed on a CoA)', () => {
+  it('stores a month-and-year date as the last day of that month', () => {
+    expect(parseLabelDate('06-2028')).toBe('2028-06-30');
+    expect(parseLabelDate('2-2028')).toBe('2028-02-29');
+    expect(parseLabelDate('02-2027')).toBe('2027-02-28');
+    expect(parseLabelDate('12/2027')).toBe('2027-12-31');
+    expect(lastDayOfMonth(2026, 11)).toBe('2026-11-30');
+  });
+
+  it('keeps a full date as given', () => {
+    expect(parseLabelDate('15-06-2028')).toBe('2028-06-15');
+    expect(parseLabelDate('2028-06-15')).toBe('2028-06-15');
+  });
+
+  it('refuses impossible months and dates', () => {
+    expect(parseLabelDate('13-2028')).toBeNull();
+    expect(parseLabelDate('00-2028')).toBeNull();
+    expect(parseLabelDate('31-02-2028')).toBeNull();
+    expect(parseLabelDate('June 2028')).toBeNull();
   });
 });

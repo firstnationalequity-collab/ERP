@@ -331,6 +331,20 @@ describe('GRN refusals', () => {
     expect(future.body.error.details.field).toBe('grnDate');
   });
 
+  it('expiry / retest given as month and year only (MM-YYYY) are stored as the last day of that month, on the line and the lot', async () => {
+    const po = await approvedPo([{ itemId: ids.api!, qty: '5', unitPrice: '100' }]);
+    const line = { poLineId: po.lineIds[0], qty: '5', approvedSourceId: ids.apiSource, ...apiDates, expiryDate: '02-2028', retestDate: '11-2027' };
+    const bad = await call('store', 'post', '/purch/grns', grnBody(po.id, [{ ...line, expiryDate: '13-2028' }]));
+    expect([bad.status, bad.body.error.code]).toEqual([400, 'VALIDATION_FAILED']);
+    const grn = await postedGrn(po, [line]);
+    expect([grn.lines[0].expiryDate, grn.lines[0].retestDate]).toEqual(['2028-02-29', '2027-11-30']);
+    const { rows } = await client.query<{ e: string; r: string }>(
+      `SELECT to_char(expiry_date, 'YYYY-MM-DD') AS e, to_char(retest_date, 'YYYY-MM-DD') AS r FROM inv.lots WHERE id = $1`,
+      [grn.lines[0].lotId],
+    );
+    expect(rows[0]).toEqual({ e: '2028-02-29', r: '2027-11-30' });
+  });
+
   it('AVL at receipt: a GMP line needs an APPROVED source of this vendor; a source blocked after the draft stops the posting', async () => {
     const po = await approvedPo([{ itemId: ids.rm!, qty: '20', unitPrice: '10' }]);
     const none = await call('store', 'post', '/purch/grns', grnBody(po.id, [{ poLineId: po.lineIds[0], qty: '20' }]));

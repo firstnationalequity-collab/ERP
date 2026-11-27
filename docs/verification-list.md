@@ -26,6 +26,7 @@ When an item is verified, strike it through and add "verified DD-MM-YYYY by <nam
 ## QA
 - 18-11-2026 · M2 · Return limit per customer: `customer_id` required on DISPATCH and SALES_RETURN, returns counted from the original lot and its return lots; a deactivated customer may still return goods · not stated · QA + Sales · return more than dispatched to one customer and check it is refused
 - 25-11-2026 · M3 · Material lot number ML{YY}-{SEQ:5}, reset each calendar year · no format given · QA · confirm the format against the SOP
+- 27-11-2026 · M4 · Expiry / retest given on the CoA or label as month and year only: the GRN accepts MM-YYYY and stores the last day of that month (02-2028 → 29-02-2028); full dates as DD-MM-YYYY · owner instruction 27-11, built as the default · QA · confirm against the SOP for month-only dates; on a GRN line type 06-2028 as expiry and check the lot shows 30-06-2028
 - Standing · M3 · Lot number format (material ML{YY}-{SEQ:5}; FG batch AP{YY}-{SEQ:4}; return original-R{n}) · labels and records · QA · format matches the SOP
 - Standing · M3 · Minimum remaining shelf life at GRN (`purch.grn.min_shelf_life_pct`, default 0 = off) · not given · QA + Warehouse · set the percent in Settings
 - Standing · M6 · Checker steps (which production steps need doer + checker beyond output/yield) · M6 list · QA + Production · list signed off before M6

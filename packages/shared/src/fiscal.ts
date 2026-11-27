@@ -125,3 +125,37 @@ export function formatDocNo(pattern: string, values: { prefix: string; date: str
     }
   });
 }
+
+/** Last calendar day of a month: (2028, 2) → "2028-02-29". */
+export function lastDayOfMonth(year: number, month: number): string {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12 || year < 1900 || year > 9999) {
+    throw new Error(`Invalid month ${month}-${year}`);
+  }
+  const day = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/**
+ * An expiry or retest date as printed on a CoA or label (verification list, QA, 27-11-2026). A month and year only
+ * ("MM-YYYY") means the last day of that month; a full date may be given as "DD-MM-YYYY" or "YYYY-MM-DD".
+ * Returns the business date "YYYY-MM-DD", or null when the text is not a valid date.
+ */
+export function parseLabelDate(text: string): string | null {
+  const t = text.trim().replace(/\//g, '-');
+  let iso: string | undefined;
+  const monthOnly = /^(\d{1,2})-(\d{4})$/.exec(t);
+  if (monthOnly) {
+    const month = Number(monthOnly[1]);
+    return month >= 1 && month <= 12 ? lastDayOfMonth(Number(monthOnly[2]), month) : null;
+  }
+  const dmy = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(t);
+  if (dmy) iso = `${dmy[3]}-${dmy[2]!.padStart(2, '0')}-${dmy[1]!.padStart(2, '0')}`;
+  else if (DATE_RE.test(t)) iso = t;
+  if (!iso) return null;
+  try {
+    parseBusinessDate(iso);
+    return iso;
+  } catch {
+    return null;
+  }
+}

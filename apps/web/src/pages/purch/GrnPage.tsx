@@ -4,7 +4,7 @@
 // Owner 2026-11-25 (0028): an item that needs no QC is received APPROVED without a sample request; a DRAFT is
 // cancelled with a reason; a POSTED GRN whose lots are untouched is reversed by the Warehouse Manager (e-signature).
 // M3 task 4: the drawer lists the GRN's landed costs; the Purchase Officer adds charges (posted with a DRAFT GRN).
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import dayjs from 'dayjs';
 import { Alert, App, Button, DatePicker, Descriptions, Drawer, Input, InputNumber, Modal, Select, Space, Table, Typography } from 'antd';
 import { BarcodeOutlined, DeleteOutlined, PrinterOutlined } from '@ant-design/icons';
@@ -12,6 +12,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CreateGrnRequest,
   GrnStatus,
+  parseLabelDate,
   UpdateGrnRequest,
   type GrnDto,
   type GrnLineDto,
@@ -38,6 +39,41 @@ function DateInput({ value, onChange, label }: { value?: string | null; onChange
       value={value ? dayjs(value) : null}
       onChange={(d) => onChange(d ? toBusinessDate(d) : null)}
       style={{ width: '100%' }}
+    />
+  );
+}
+
+/**
+ * Expiry / retest as printed on the CoA or label: DD-MM-YYYY, or MM-YYYY when only month and year are given, which
+ * is stored as the last day of that month (verification list, QA, 27-11-2026). Converted when the field loses focus.
+ */
+function LabelDateInput({ value, onChange, label }: { value?: string | null; onChange(v: string | null): void; label: string }) {
+  const [text, setText] = useState(formatDate(value));
+  const [bad, setBad] = useState(false);
+  useEffect(() => setText(formatDate(value)), [value]);
+  const commit = () => {
+    if (text.trim() === '') {
+      setBad(false);
+      onChange(null);
+      return;
+    }
+    const date = parseLabelDate(text);
+    setBad(date === null);
+    if (date !== null) {
+      setText(formatDate(date));
+      onChange(date);
+    }
+  };
+  return (
+    <Input
+      aria-label={label}
+      placeholder="DD-MM-YYYY or MM-YYYY"
+      title="Month and year only (MM-YYYY) means the last day of that month"
+      status={bad ? 'error' : undefined}
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onPressEnter={commit}
     />
   );
 }
@@ -248,8 +284,8 @@ function GrnEditor({ grn, onClose, onSaved }: { grn: GrnDto | null; onClose(): v
               },
               { title: 'Mfr batch', width: 120, render: (_, l) => <Input aria-label="Manufacturer batch" value={l.mfrBatchNo ?? ''} onChange={(e) => update(l.key, { mfrBatchNo: e.target.value })} /> },
               { title: 'Mfg', width: 130, render: (_, l) => <DateInput label="Mfg date" value={l.mfgDate} onChange={(v) => update(l.key, { mfgDate: v })} /> },
-              { title: 'Expiry', width: 130, render: (_, l) => <DateInput label="Expiry date" value={l.expiryDate} onChange={(v) => update(l.key, { expiryDate: v })} /> },
-              { title: 'Retest', width: 130, render: (_, l) => <DateInput label="Retest date" value={l.retestDate} onChange={(v) => update(l.key, { retestDate: v })} /> },
+              { title: 'Expiry', width: 130, render: (_, l) => <LabelDateInput label="Expiry date" value={l.expiryDate} onChange={(v) => update(l.key, { expiryDate: v })} /> },
+              { title: 'Retest', width: 130, render: (_, l) => <LabelDateInput label="Retest date" value={l.retestDate} onChange={(v) => update(l.key, { retestDate: v })} /> },
               {
                 title: '',
                 width: 110,

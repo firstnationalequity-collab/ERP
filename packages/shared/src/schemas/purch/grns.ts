@@ -6,11 +6,28 @@ import { z } from 'zod';
 import type { GrnStatus, LandedCostStatus, SampleRequestStatus } from '../../enums';
 import { ESignRequest } from '../core/esign';
 import { decimalString } from '../master/masters';
+import { parseLabelDate } from '../../fiscal';
 
 const id = z.string().regex(/^\d+$/, 'Invalid id');
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date: YYYY-MM-DD');
 const optText = (max: number) => z.string().trim().max(max).nullable().optional();
 const optDate = isoDate.nullable().optional();
+/**
+ * Expiry / retest as printed on the CoA or label: "YYYY-MM-DD", "DD-MM-YYYY", or month and year only ("MM-YYYY"),
+ * which is stored as the last day of that month (verification list, QA, 27-11-2026).
+ */
+const labelDate = z
+  .string()
+  .transform((v, ctx) => {
+    const d = parseLabelDate(v);
+    if (d === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Date: DD-MM-YYYY, or MM-YYYY for month and year only' });
+      return z.NEVER;
+    }
+    return d;
+  })
+  .nullable()
+  .optional();
 /** Quantity NUMERIC(18,4), above zero. */
 const qty = decimalString(14, 4, 'Quantity').refine((v) => /[1-9]/.test(v), 'Quantity must be above zero');
 
@@ -27,8 +44,8 @@ const grnLine = z
     manufacturingSite: optText(200),
     mfrBatchNo: optText(60),
     mfgDate: optDate,
-    expiryDate: optDate,
-    retestDate: optDate,
+    expiryDate: labelDate,
+    retestDate: labelDate,
     notes: optText(500),
   })
   .strict();
