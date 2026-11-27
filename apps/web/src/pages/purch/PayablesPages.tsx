@@ -8,7 +8,7 @@ import type { ApAgeingDto, ApAgeingVendorDto, VendorLedgerDto, VendorLedgerLineD
 import { api } from '../../api/client';
 import { PageHeader } from '../../components/PageHeader';
 import { RefSelect } from '../../components/RefSelect';
-import { companyToday, formatDate, formatDecimal, toBusinessDate } from '../../lib/format';
+import { companyToday, decimalSign, formatDate, formatDecimal, toBusinessDate } from '../../lib/format';
 import { buildQuery } from '../../lib/query';
 
 const SOURCE_LABEL: Record<string, string> = { VENDOR_INVOICE: 'Invoice', VENDOR_PAYMENT: 'Payment', LOT_RETURNED: 'Debit note' };
@@ -52,8 +52,8 @@ export function VendorLedgerPage() {
               { title: 'Journal', dataIndex: 'journalDocNo' },
               { title: 'Narration', dataIndex: 'narration' },
               { title: 'Currency', render: (_, r) => (r.currency && r.currency !== 'PKR' ? `${r.currency} ${formatDecimal(r.foreignAmount)}` : '') },
-              { title: 'Debit', align: 'right', render: (_, r) => (Number(r.debit) ? formatDecimal(r.debit) : '') },
-              { title: 'Credit', align: 'right', render: (_, r) => (Number(r.credit) ? formatDecimal(r.credit) : '') },
+              { title: 'Debit', align: 'right', render: (_, r) => (decimalSign(r.debit) !== 0 ? formatDecimal(r.debit) : '') },
+              { title: 'Credit', align: 'right', render: (_, r) => (decimalSign(r.credit) !== 0 ? formatDecimal(r.credit) : '') },
               { title: 'Balance', align: 'right', render: (_, r) => formatDecimal(r.balance) },
             ]}
           />
@@ -66,7 +66,7 @@ export function VendorLedgerPage() {
 export function ApAgeingPage() {
   const [asOf, setAsOf] = useState(companyToday());
   const ageing = useQuery({ queryKey: ['purch', 'ap-ageing', asOf], queryFn: () => api<ApAgeingDto>(`/purch/ap-ageing?asOf=${asOf}`) });
-  const money = (v: string) => (Number(v) ? formatDecimal(v) : '');
+  const money = (v: string) => (decimalSign(v) !== 0 ? formatDecimal(v) : '');
   const t = ageing.data?.totals;
   return (
     <>

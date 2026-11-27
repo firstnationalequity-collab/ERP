@@ -1,7 +1,6 @@
 // Queries for the purch schema (0023). No business rules here; services hold them.
 import { and, asc, count, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
 import type { Queryable } from '../../db/client';
-import { users } from '../../db/schema/core';
 import { poLines, prLines, purchaseOrders, purchaseRequisitions } from '../../db/schema/purch';
 
 export type PrRow = typeof purchaseRequisitions.$inferSelect;
@@ -12,13 +11,6 @@ export type PoLineRow = typeof poLines.$inferSelect;
 export interface Paging {
   limit: number;
   offset: number;
-}
-
-export async function userNames(q: Queryable, ids: string[]): Promise<Map<string, string>> {
-  const unique = [...new Set(ids)];
-  if (unique.length === 0) return new Map();
-  const rows = await q.select({ id: users.id, name: users.fullName }).from(users).where(inArray(users.id, unique));
-  return new Map(rows.map((r) => [r.id, r.name]));
 }
 
 // ---------------------------------------------------------------- requisitions

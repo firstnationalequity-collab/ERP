@@ -21,6 +21,7 @@ import { nextDocNo } from '../../core/settings/numbering.service';
 import { assertPurchItems, purchItems } from '../masters/purch-refs.service';
 import { createPoInTx, getPo } from './orders.service';
 import * as repo from './procurement.repo';
+import { userNames } from '../../core/access/access.service';
 import { allowBulkFgPurchase } from './procurement.settings';
 
 export const PR_TABLE = 'purch.purchase_requisitions';
@@ -65,7 +66,7 @@ async function toDtos(q: Queryable, companyId: string, rows: repo.PrRow[]): Prom
   const lines = await repo.prLinesOf(q, rows.map((r) => r.id));
   const [items, names, orders] = await Promise.all([
     purchItems(q, companyId, lines.map((l) => l.itemId)),
-    repo.userNames(q, rows.map((r) => r.createdBy)),
+    userNames(q, rows.map((r) => r.createdBy)),
     repo.ordersOfPrLines(q, lines.map((l) => l.id)),
   ]);
   return rows.map((r) => ({

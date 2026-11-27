@@ -25,11 +25,10 @@ import { ReasonModal } from '../../components/ReasonModal';
 import { ESignModal } from '../../components/ESignModal';
 import { RefSelect } from '../../components/RefSelect';
 import { StatusTag } from '../../components/StatusTag';
-import { companyToday, formatDate, formatDecimal, toBusinessDate } from '../../lib/format';
+import { companyToday, decimalSign, formatDate, formatDecimal, toBusinessDate } from '../../lib/format';
 
 /** Something paid or debited against the invoice (amount strings compared as text: no floats for money). */
-const isZeroAmount = (s: string) => /^-?0*(\.0*)?$/.test(s.trim());
-const settledAgainst = (inv: { paidAmount: string; debitedAmount: string }) => !isZeroAmount(inv.paidAmount) || !isZeroAmount(inv.debitedAmount);
+const settledAgainst = (inv: { paidAmount: string; debitedAmount: string }) => decimalSign(inv.paidAmount) !== 0 || decimalSign(inv.debitedAmount) !== 0;
 
 export const invoicesKey = ['purch', 'vendor-invoices'];
 
@@ -288,7 +287,7 @@ function InvoiceDrawer({ id, onClose, onChanged }: { id: string; onClose(): void
             render: (_: unknown, l: VendorInvoiceLineDto) =>
               l.inTolerance === null ? '—' : (
                 <Tag color={l.inTolerance ? 'green' : 'red'}>
-                  {l.inTolerance ? 'OK' : 'Outside'} · price {formatDecimal(l.priceDiffPct, 2)}%{l.qtyOver && Number(l.qtyOver) > 0 ? ` · qty +${formatDecimal(l.qtyOver, 4)}` : ''}
+                  {l.inTolerance ? 'OK' : 'Outside'} · price {formatDecimal(l.priceDiffPct, 2)}%{l.qtyOver && decimalSign(l.qtyOver) > 0 ? ` · qty +${formatDecimal(l.qtyOver, 4)}` : ''}
                 </Tag>
               ),
           },

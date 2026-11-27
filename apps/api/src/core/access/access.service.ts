@@ -26,7 +26,7 @@ import {
   type WitnessSignRequest,
 } from '@albert/shared';
 import { sql } from 'drizzle-orm';
-import { db, withTransaction, type Tx } from '../../db/client';
+import { db, withTransaction, type Queryable, type Tx } from '../../db/client';
 import { AppError } from '../errors';
 import { isPasswordExpired, txContext, type AuthContext, type RequestMeta } from '../auth/auth.service';
 import * as authRepo from '../auth/auth.repo';
@@ -153,6 +153,14 @@ async function setAuditReason(tx: Tx, reason: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------- users
+
+/**
+ * Display names of users by id. Modules show "created by" / "posted by" through this function and never read
+ * core.users themselves (CLAUDE.md: modules talk to each other only through exported service functions).
+ */
+export async function userNames(q: Queryable, ids: string[]): Promise<Map<string, string>> {
+  return repo.userNames(q, ids);
+}
 
 export async function listUsers(auth: AuthContext, query: ListQuery): Promise<Page<UserDto>> {
   const { rows, total } = await repo.listUsers(db, auth.companyId, {

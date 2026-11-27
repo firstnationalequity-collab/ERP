@@ -49,7 +49,8 @@ import { assertPurchVendor, purchItems, purchTaxCodes, purchVendors, type PurchV
 import * as grnRepo from './grns.repo';
 import * as landedRepo from './landed-costs.repo';
 import * as repo from './invoices.repo';
-import { findPo, poLinesOf, userNames, type PoRow } from './procurement.repo';
+import { findPo, poLinesOf, type PoRow } from './procurement.repo';
+import { userNames } from '../../core/access/access.service';
 import { closePoIfInvoiced, reopenPoAfterInvoiceReversal } from './orders.service';
 import { invoiceTolerances } from './procurement.settings';
 import { splitByWeights } from './landed-costs.service';

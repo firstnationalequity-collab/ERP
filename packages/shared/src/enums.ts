@@ -171,7 +171,7 @@ export type VendorPaymentStatus = (typeof VendorPaymentStatus)[number];
 
 /**
  * Debit note against a POSTED GOODS vendor invoice (M3 task 5b, 0032; owner 2026-11-26), DN-{FY}-{SEQ:5}:
- * DRAFT → PENDING_APPROVAL (approval matrix VENDOR_DEBIT_NOTE) → APPROVED → POSTED; a rejection returns it to DRAFT;
+ * DRAFT → PENDING_APPROVAL (approval matrix DEBIT_NOTE) → APPROVED → POSTED; a rejection returns it to DRAFT;
  * DRAFT / PENDING_APPROVAL / APPROVED → CANCELLED (reason). Creator ≠ approver.
  * POSTED → REVERSED (owner 2026-11-27, 0033): Finance Manager, reason + e-signature (REVERSED); the journal is mirrored
  * and, for a return, the return movement while the lot is still REJECTED; what it took off the invoice is open again.

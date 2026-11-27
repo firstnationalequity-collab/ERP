@@ -36,6 +36,17 @@ export function companyToday(): string {
  * Decimal string → grouped string with fixed decimals, by string manipulation only.
  * "1234567.5" → "1,234,567.50". Rounds half-up on the last kept digit.
  */
+/**
+ * Sign of a decimal string (−1, 0 or 1), read from its digits; never through a JS number (rule 10). "0.0000" → 0,
+ * "-0.01" → −1, "12.5" → 1. A string that is not a plain decimal throws.
+ */
+export function decimalSign(value: string): -1 | 0 | 1 {
+  const m = /^([-+])?(\d*)(?:\.(\d*))?$/.exec(value.trim());
+  if (!m || (m[2] === '' && (m[3] ?? '') === '')) throw new Error(`Not a decimal: ${value}`);
+  if (/^0*$/.test(`${m[2] ?? ''}${m[3] ?? ''}`)) return 0;
+  return m[1] === '-' ? -1 : 1;
+}
+
 export function formatDecimal(value: string | null | undefined, decimals = 2): string {
   if (value === null || value === undefined || value === '') return '';
   const m = /^(-)?(\d+)(?:\.(\d+))?$/.exec(value.trim());

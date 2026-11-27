@@ -26,6 +26,7 @@ import { nextDocNo } from '../../core/settings/numbering.service';
 import { assertAvlApproved, assertPurchItems, assertPurchVendor, purchItems, purchVendors } from '../masters/purch-refs.service';
 import { rateOn } from '../finance/rates.service';
 import * as repo from './procurement.repo';
+import { userNames } from '../../core/access/access.service';
 import { allowBulkFgPurchase } from './procurement.settings';
 // Cycle with requisitions.service (it creates POs): used only inside functions, never at module load.
 import { freePrLinesOfCancelledPo } from './requisitions.service';
@@ -99,7 +100,7 @@ async function toDtos(q: Queryable, companyId: string, rows: repo.PoRow[]): Prom
   const [vendors, items, names, approvals, prLines] = await Promise.all([
     purchVendors(q, companyId, rows.map((r) => r.vendorId)),
     purchItems(q, companyId, lines.map((l) => l.itemId)),
-    repo.userNames(q, rows.map((r) => r.createdBy)),
+    userNames(q, rows.map((r) => r.createdBy)),
     latestApprovalIds(q, companyId, PO_TABLE, rows.map((r) => r.id)),
     repo.prLinesByIds(q, companyId, lines.flatMap((l) => { const pl = l.prLineId ?? l.releasedPrLineId; return pl ? [pl] : []; })),
   ]);

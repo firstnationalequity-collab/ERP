@@ -122,7 +122,7 @@ export const Permissions = {
   'fin.invoice.reverse': action('Reverse a posted vendor invoice nothing is paid against, with an e-signature (Finance Manager; owner 2026-11-26)'),
   'fin.payment.reverse': action('Reverse a posted vendor payment (bounced cheque, wrong payment), with an e-signature (Finance Manager; owner 2026-11-26)'),
   'fin.debit_note.manage': action('Enter vendor debit notes; post price-claim and short-supply notes (owner 2026-11-26)'),
-  'fin.debit_note.approve': action('Approve vendor debit notes (approval matrix VENDOR_DEBIT_NOTE)'),
+  'fin.debit_note.approve': action('Approve vendor debit notes (approval matrix DEBIT_NOTE)'),
   'fin.debit_note.reverse': action('Reverse a posted vendor debit note, with an e-signature (Finance Manager; owner 2026-11-27)'),
   'fin.master.manage': action('Chart of accounts, cost centres, tax codes, posting rules'),
   'fin.approval_rules.countersign': action('Countersign changes to the approval matrix (Finance Manager)'),

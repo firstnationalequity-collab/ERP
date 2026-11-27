@@ -42,7 +42,7 @@ import { journalsOfSource, postJournal, reverseJournal, type JournalLineInput, t
 import { assertTaxRateConfirmed } from '../masters/catalog.service';
 import { assertPurchVendor, purchTaxCodes, purchVendors, type PurchTaxCodeRef, type PurchVendorRef } from '../masters/purch-refs.service';
 import * as repo from './invoices.repo';
-import { userNames } from './procurement.repo';
+import { userNames } from '../../core/access/access.service';
 import { filerCheckMaxDays } from './procurement.settings';
 
 export const PAYMENT_TABLE = 'purch.vendor_payments';

@@ -58,7 +58,8 @@ import { rateOn } from '../finance/rates.service';
 import { assertPurchVendor, purchItems, purchVendors } from '../masters/purch-refs.service';
 import * as grnRepo from './grns.repo';
 import * as repo from './landed-costs.repo';
-import { poLinesOf, userNames } from './procurement.repo';
+import { poLinesOf } from './procurement.repo';
+import { userNames } from '../../core/access/access.service';
 import { invoicedOnCharges } from './invoices.repo';
 
 /** Foreign amount POSTED vendor invoices billed on a charge (task 5). */

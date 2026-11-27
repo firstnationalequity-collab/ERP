@@ -5,6 +5,14 @@ import type { PermissionKey } from '@albert/shared';
 import type { Queryable } from '../../db/client';
 import { permissions, rolePermissions, roles, userRoles, users } from '../../db/schema/core';
 
+/** Display names of users by id (for "created by", "posted by" … on documents of any module). */
+export async function userNames(q: Queryable, ids: string[]): Promise<Map<string, string>> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return new Map();
+  const rows = await q.select({ id: users.id, name: users.fullName }).from(users).where(inArray(users.id, unique));
+  return new Map(rows.map((r) => [r.id, r.name]));
+}
+
 export type RoleRow = typeof roles.$inferSelect;
 
 const userColumns = {

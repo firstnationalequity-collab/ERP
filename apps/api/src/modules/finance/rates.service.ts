@@ -8,6 +8,7 @@ import { db, withTransaction, type Queryable } from '../../db/client';
 import { AppError } from '../../core/errors';
 import { txContext, type AuthContext } from '../../core/auth/auth.service';
 import * as repo from './rates.repo';
+import { userNames } from '../../core/access/access.service';
 import { getSetting, registerSetting } from '../../core/settings/app-settings.service';
 
 /** Owner 2026-11-25 (answer 3): how old the latest rate may be, in days, before a document is refused. */
@@ -41,8 +42,14 @@ function toDto(r: repo.ExchangeRateRow & { updatedByName: string }): ExchangeRat
   };
 }
 
+/** The rows with the name of who last set each rate (core/access). */
+async function withNames(rows: repo.ExchangeRateRow[]): Promise<(repo.ExchangeRateRow & { updatedByName: string })[]> {
+  const names = await userNames(db, rows.map((r) => r.updatedBy));
+  return rows.map((r) => ({ ...r, updatedByName: names.get(r.updatedBy) ?? '' }));
+}
+
 export async function listRates(auth: AuthContext, query: ExchangeRateQuery): Promise<ExchangeRateDto[]> {
-  return (await repo.listRates(db, auth.companyId, query)).map(toDto);
+  return (await withNames(await repo.listRates(db, auth.companyId, query))).map(toDto);
 }
 
 /** Create the day's rate, or correct it (a correction needs a reason, kept in the audit log). */
@@ -62,7 +69,7 @@ export async function setRate(auth: AuthContext, input: SetExchangeRateRequest):
     }
     await repo.updateRate(tx, existing.id, { rate, source: input.source });
   });
-  const [row] = await repo.listRates(db, auth.companyId, { currency: input.currency, dateFrom: input.rateDate, dateTo: input.rateDate });
+  const [row] = await withNames(await repo.listRates(db, auth.companyId, { currency: input.currency, dateFrom: input.rateDate, dateTo: input.rateDate }));
   if (!row) throw new AppError('NOT_FOUND', 'Exchange rate not found');
   return toDto(row);
 }

@@ -25,7 +25,7 @@ import { DataTable, statusFilter } from '../../components/DataTable';
 import { PageHeader } from '../../components/PageHeader';
 import { RefSelect } from '../../components/RefSelect';
 import { StatusTag } from '../../components/StatusTag';
-import { companyToday, formatDate, formatDecimal, formatRate, toBusinessDate } from '../../lib/format';
+import { companyToday, decimalSign, formatDate, formatDecimal, formatRate, toBusinessDate } from '../../lib/format';
 import { GrnLandedCosts } from './LandedCostPage';
 
 const grnKey = ['purch', 'grns'];
@@ -132,7 +132,7 @@ function GrnEditor({ grn, onClose, onSaved }: { grn: GrnDto | null; onClose(): v
       // One line per PO line still open, with its open quantity proposed.
       setLines(
         r.lines
-          .filter((l) => Number(l.maxQty) > 0)
+          .filter((l) => decimalSign(l.maxQty) > 0)
           .map((l, i) => ({ key: i, poLineId: l.poLineId, qty: l.openQty !== '0.0000' ? l.openQty : l.maxQty, containers: 1, approvedSourceId: l.sources.length === 1 ? l.sources[0]!.id : null })),
       );
     } catch (err) {

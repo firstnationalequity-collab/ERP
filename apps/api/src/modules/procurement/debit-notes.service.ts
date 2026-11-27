@@ -58,7 +58,7 @@ import { assertPurchVendor, purchItems, purchTaxCodes, purchVendors } from '../m
 import * as grnRepo from './grns.repo';
 import * as invRepo from './invoices.repo';
 import * as repo from './debit-notes.repo';
-import { userNames } from './procurement.repo';
+import { userNames } from '../../core/access/access.service';
 import { splitByWeights } from './landed-costs.service';
 
 export const DEBIT_NOTE_TABLE = 'purch.debit_notes';
