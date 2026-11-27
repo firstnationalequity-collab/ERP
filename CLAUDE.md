@@ -72,6 +72,8 @@ DB schemas per module: `core`, `master`, `inv`, `sales`, `purch`, `qc`, `prod`, 
 8. Do one or two tasks per chat. When context gets long, finish the current task, update the Handoff and stop.
 9. After a task that adds screens, update docs/demo/M<n>.md: a click-through script for the owner (demo user, steps, expected result, 3–5 things that must be refused), under 40 lines.
 10. Continue without waiting unless a test fails, the docs don't cover something, or a rule would need to change.
+11. Don't wait for owner answers. When a choice is needed, use your recommended answer, build it, and record it in `docs/verification-list.md` (one line each: date · milestone · what was decided · why · who must verify: Finance/QA/QC/Production/Warehouse/Sales/Management · how to verify). Also keep the "PENDING OWNER" row in decisions.md.
+    Stop and ask only if: a non-negotiable rule would change; posted data or a key table structure would change in a way that is hard to migrate later; or a test/CI fails and you cannot fix it.
 
 ## Never
 - Never add features outside the current milestone without asking.
@@ -79,4 +81,4 @@ DB schemas per module: `core`, `master`, `inv`, `sales`, `purch`, `qc`, `prod`, 
 - Never commit secrets. Config comes from env vars validated in `apps/api/src/config/env.ts`.
 - Never use `any`, `@ts-ignore`, or disable lint rules to get past an error.
 - Never run destructive DB commands (drop, truncate, reset) against anything except the local/test database.
-- Never record a decision as the owner's unless the owner stated it in this chat. If you must pick a default to keep moving, write it in decisions.md with 'Decided by: agent default — PENDING OWNER', list it under 'Open questions for the owner' in the Handoff, and tell me in your reply. Never cite a requirement, document or ID that does not exist in the repo.
+- Never record a decision as the owner's unless the owner stated it in this chat. If you must pick a default to keep moving, write it in decisions.md with 'Decided by: agent default — PENDING OWNER', list it in `docs/verification-list.md` (the Handoff's 'Open questions for the owner' points there), and tell me in your reply. Never cite a requirement, document or ID that does not exist in the repo.
