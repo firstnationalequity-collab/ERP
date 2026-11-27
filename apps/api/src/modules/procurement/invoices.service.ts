@@ -17,7 +17,7 @@
 // proportion to what is open; the rest → exchange gain/loss. AP keeps the invoice currency and foreign amount.
 // Posting date = invoice date (open period, rule 11). A fully received PO whose receipts are all billed → CLOSED.
 // Reversal (M3 task 5b, owner 2026-11-26): a Finance Manager (fin.invoice.reverse) reverses a POSTED invoice that no
-// payment (not cancelled / reversed) and no debit note (not cancelled) names, with an e-signature (REVERSED) and a
+// payment and no debit note (neither cancelled nor reversed; owner 2026-11-27: debit note first) names, with an e-signature (REVERSED) and a
 // reason: the journal is mirrored on the reversal day (open period), the GRN quantities and charges are open for
 // billing again, and a CLOSED PO goes back to RECEIVED.
 import { Decimal } from 'decimal.js';
@@ -793,7 +793,7 @@ export async function reverseVendorInvoice(auth: AuthContext, id: string, input:
       throw new AppError('IN_USE', `${row.docNo} is paid on ${on.payments.join(', ')}; reverse or cancel the payment first`, { payments: on.payments });
     }
     if (on.debitNotes.length) {
-      throw new AppError('IN_USE', `${row.docNo} has debit note ${on.debitNotes.join(', ')}; it is no longer reversed`, { debitNotes: on.debitNotes });
+      throw new AppError('IN_USE', `${row.docNo} has debit note ${on.debitNotes.join(', ')}; reverse the debit note first`, { debitNotes: on.debitNotes });
     }
     const entry = (await journalsOfSource(tx, auth.companyId, INVOICE_DOC_TYPE, id)).find((j) => j.status === 'POSTED' && j.reversalOf === null);
     if (!entry) throw new AppError('VALIDATION_FAILED', `${row.docNo} has no posted journal to reverse`);

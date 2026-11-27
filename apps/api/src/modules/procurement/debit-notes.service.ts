@@ -18,6 +18,11 @@
 //     RETURN_TO_VENDOR movement of the lot (linked on the line), and its LOT_RETURNED journal: Dr AP (vendor) / Cr
 //     inventory (the lot's value) / Dr-Cr price variance (billed value − lot value) / Cr input tax. The lot becomes
 //     RETURNED when it is empty.
+// Reversal (owner 2026-11-27; 0033): a Finance Manager (fin.debit_note.reverse) reverses a POSTED note with an
+// e-signature (REVERSED) and a reason, on the reversal day (an open period): the journal is mirrored and, for a return,
+// the return movement too (stock back into the lot, with the QA witness's signature for that movement, rule 1 / 0020)
+// while the lot is still REJECTED; a lot the return emptied is RETURNED and never moves again
+// (LOT_RETURN_NOT_REVERSIBLE). What the note took off the invoice is open again; the invoice may then be reversed.
 import { Decimal } from 'decimal.js';
 import {
   DebitNoteStatus,
@@ -29,18 +34,26 @@ import {
   type DebitNoteReason,
   type Page,
   type PostDebitNoteRequest,
+  type ReverseDebitNoteRequest,
   type UpdateDebitNoteRequest,
 } from '@albert/shared';
 import { db, withTransaction, type Queryable, type Tx } from '../../db/client';
 import { AppError } from '../../core/errors';
 import { companyToday } from '../../core/dates';
 import { txContext, type AuthContext, type RequestMeta } from '../../core/auth/auth.service';
-import { verifyWitness } from '../../core/esign/esign.service';
+import { recordSignature, verifySignature, verifyWitness } from '../../core/esign/esign.service';
 import { defineTransitions, recordInitialStatus, transition } from '../../core/transition/transition';
 import { cancelApproval, latestApprovalIds, registerApprovalHandler, startApproval } from '../../core/approvals/approvals.service';
 import { nextDocNo } from '../../core/settings/numbering.service';
-import { closeDisposedLot, disposalSubject, lockLotHolding, lotsByIds, postMovement } from '../../engines/inventory';
-import { journalsOfSource, postJournal, postStockJournal, type JournalLineInput } from '../../engines/posting';
+import {
+  closeDisposedLot,
+  disposalSubject,
+  lockLotHolding,
+  lotsByIds,
+  postMovement,
+  reverseMovements,
+} from '../../engines/inventory';
+import { journalsOfSource, postJournal, postStockJournal, reverseJournal, reverseStockJournal, type JournalLineInput } from '../../engines/posting';
 import { assertPurchVendor, purchItems, purchTaxCodes, purchVendors } from '../masters/purch-refs.service';
 import * as grnRepo from './grns.repo';
 import * as invRepo from './invoices.repo';
@@ -53,6 +66,7 @@ export const DEBIT_NOTE_DOC_TYPE = 'DEBIT_NOTE'; // number series, journal sourc
 const MANAGE_KEY = 'fin.debit_note.manage' as const;
 const APPROVE_KEY = 'fin.debit_note.approve' as const;
 const DISPOSE_KEY = 'inv.lot.dispose' as const;
+const REVERSE_KEY = 'fin.debit_note.reverse' as const;
 
 export const DebitNoteMoves = defineTransitions<DebitNoteStatus>({
   entityTable: DEBIT_NOTE_TABLE,
@@ -66,6 +80,8 @@ export const DebitNoteMoves = defineTransitions<DebitNoteStatus>({
     { from: 'DRAFT', to: 'CANCELLED', permission: MANAGE_KEY, reasonRequired: true },
     { from: 'PENDING_APPROVAL', to: 'CANCELLED', permission: MANAGE_KEY, reasonRequired: true },
     { from: 'APPROVED', to: 'CANCELLED', permission: MANAGE_KEY, reasonRequired: true },
+    // Owner 2026-11-27: the Finance Manager reverses a posted note with an e-signature.
+    { from: 'POSTED', to: 'REVERSED', permission: REVERSE_KEY, esign: ['REVERSED'], reasonRequired: true },
   ],
 });
 /** A return note is posted by the Warehouse Manager's witnessed disposal (rule 1): its own key for the move. */
@@ -88,7 +104,7 @@ async function lockNote(tx: Tx, companyId: string, id: string): Promise<repo.Deb
 
 function assertStatus(row: repo.DebitNoteRow, ...allowed: DebitNoteStatus[]): void {
   if (!allowed.includes(row.status)) {
-    throw new AppError(row.status === 'POSTED' || row.status === 'CANCELLED' ? 'RECORD_LOCKED' : 'INVALID_TRANSITION',
+    throw new AppError(['POSTED', 'CANCELLED', 'REVERSED'].includes(row.status) ? 'RECORD_LOCKED' : 'INVALID_TRANSITION',
       `Debit note ${row.docNo} is ${row.status}`, { status: row.status });
   }
 }
@@ -271,11 +287,15 @@ async function toDtos(q: Queryable, companyId: string, rows: repo.DebitNoteRow[]
     purchItems(q, companyId, grnLines.map((g) => g.itemId)),
     lotsByIds(q, companyId, lines.flatMap((l) => (l.lotId ? [l.lotId] : []))),
     purchTaxCodes(q, companyId, lines.flatMap((l) => (l.taxCodeId ? [l.taxCodeId] : []))),
-    userNames(q, rows.flatMap((r) => [r.createdBy, r.submittedBy, r.postedBy].filter((u): u is string => u !== null))),
+    userNames(q, rows.flatMap((r) => [r.createdBy, r.submittedBy, r.postedBy, r.reversedBy].filter((u): u is string => u !== null))),
     latestApprovalIds(q, companyId, DEBIT_NOTE_TABLE, ids),
   ]);
   const journals = new Map(
-    await Promise.all(rows.filter((r) => r.status === 'POSTED').map(async (r) => [r.id, await journalsOfSource(q, companyId, DEBIT_NOTE_DOC_TYPE, r.id)] as const)),
+    await Promise.all(
+      rows
+        .filter((r) => r.status === 'POSTED' || r.status === 'REVERSED')
+        .map(async (r) => [r.id, await journalsOfSource(q, companyId, DEBIT_NOTE_DOC_TYPE, r.id)] as const),
+    ),
   );
   return rows.map((r) => {
     const v = vendors.get(r.vendorId);
@@ -305,6 +325,11 @@ async function toDtos(q: Queryable, companyId: string, rows: repo.DebitNoteRow[]
       postedByName: r.postedBy ? (names.get(r.postedBy) ?? '') : null,
       postedAt: r.postedAt ? r.postedAt.toISOString() : null,
       journalDocNo: journals.get(r.id)?.find((j) => j.reversalOf === null && j.event !== 'ROUNDING_DIFFERENCE')?.docNo ?? null,
+      reversedByName: r.reversedBy ? (names.get(r.reversedBy) ?? '') : null,
+      reversedAt: r.reversedAt ? r.reversedAt.toISOString() : null,
+      reversalDate: r.reversalDate,
+      reversalReason: r.reversalReason,
+      reversalJournalDocNo: journals.get(r.id)?.find((j) => j.reversalOf !== null && j.event !== 'ROUNDING_DIFFERENCE')?.docNo ?? null,
       createdBy: r.createdBy,
       createdByName: names.get(r.createdBy) ?? '',
       createdAt: r.createdAt.toISOString(),
@@ -587,4 +612,83 @@ async function postReturn(auth: AuthContext, pre: repo.DebitNoteRow, input: Post
     });
   });
   return getDebitNote(auth, pre.id);
+}
+
+// ---------------------------------------------------------------- reversal (owner 2026-11-27; 0033)
+
+/**
+ * A Finance Manager reverses a POSTED note with an e-signature (REVERSED) and a reason, dated today (an open period).
+ * A price claim / short supply: its VENDOR_DEBIT_NOTE journal is mirrored. A return: its RETURN_TO_VENDOR movement is
+ * reversed (stock back into the lot at the location it left, with the QA witness's signature for that movement, rule
+ * 1 / 0020) and its LOT_RETURNED journal mirrored, only while the lot is still REJECTED. What the note took off the
+ * invoice is open again. The DB (0033) re-checks.
+ */
+export async function reverseDebitNote(auth: AuthContext, id: string, input: ReverseDebitNoteRequest, meta: RequestMeta): Promise<DebitNoteDto> {
+  if (input.signature.meaning !== 'REVERSED') throw new AppError('VALIDATION_FAILED', 'Reversing a debit note needs the meaning REVERSED');
+  const pre = await repo.findNote(db, auth.companyId, id);
+  if (!pre) throw new AppError('NOT_FOUND', 'Debit note not found');
+  assertStatus(pre, 'POSTED');
+  const isReturn = pre.reason === 'RETURN_TO_VENDOR';
+  if (!isReturn && input.witness) throw new AppError('VALIDATION_FAILED', 'Only the reversal of a return note moves stock (witness)');
+  const [line] = isReturn ? await repo.linesOf(db, [pre.id]) : [];
+  if (isReturn) {
+    if (!line?.lotId || !line.qty || !line.movementId) throw new AppError('VALIDATION_FAILED', `${pre.docNo} has no return movement to reverse`);
+    await assertLotTakesReturnBack(db, auth.companyId, pre.docNo, line.lotId);
+    if (!input.witness) {
+      throw new AppError('WITNESS_REQUIRED', 'Reversing a return puts the lot back into stock: it needs the QA witness e-signature (qa.lot.witness)', {
+        permission: 'qa.lot.witness',
+      });
+    }
+  }
+  const proof = await verifySignature(auth, input.signature, meta);
+  // Rule 1 / 0020: the witness signs for exactly this reversal movement, at this terminal, before the transaction.
+  const witness = isReturn ? await verifyWitness(auth, input.witness!, meta, disposalSubject('RETURN_TO_VENDOR', line!.lotId!, line!.qty!, true)) : null;
+  const reason = input.signature.reason;
+  await withTransaction(txContext(auth, `reverse debit note: ${reason}`), async (tx) => {
+    const row = await lockNote(tx, auth.companyId, id);
+    assertStatus(row, 'POSTED');
+    const date = companyToday();
+    const journals = await journalsOfSource(tx, auth.companyId, DEBIT_NOTE_DOC_TYPE, id);
+    const entry = journals.find((j) => j.status === 'POSTED' && j.reversalOf === null && j.event === (isReturn ? 'LOT_RETURNED' : 'VENDOR_DEBIT_NOTE'));
+    if (!entry) throw new AppError('VALIDATION_FAILED', `${row.docNo} has no posted journal to reverse`);
+    const why = `${row.docNo} reversed: ${reason}`;
+    if (isReturn) {
+      await assertLotTakesReturnBack(tx, auth.companyId, row.docNo, line!.lotId!);
+      const movements = await reverseMovements(tx, auth, {
+        refDocType: DEBIT_NOTE_DOC_TYPE,
+        refDocId: id,
+        movementIds: [line!.movementId!],
+        date,
+        witness: witness!,
+      });
+      await reverseStockJournal(tx, auth, { entryId: entry.id, movements, reason: why, key: REVERSE_KEY });
+    } else {
+      await reverseJournal(tx, auth, { entryId: entry.id, date, reason: why });
+    }
+    const signature = await recordSignature(tx, proof, { table: DEBIT_NOTE_TABLE, id }, ['REVERSED']);
+    await transition(tx, DebitNoteMoves, {
+      entityId: id,
+      to: 'REVERSED',
+      actor: auth,
+      signature,
+      reason,
+      alsoSet: { reversed_by: auth.userId, reversed_at: new Date().toISOString(), reversal_date: date, reversal_reason: reason },
+    });
+  });
+  return getDebitNote(auth, id);
+}
+
+/**
+ * Rule 1: a lot changes status only as the rules allow, and nothing moves a RETURNED or DESTROYED lot back. Stock goes
+ * back only into a lot that is still REJECTED; otherwise the note stays posted (the owner decides the correction).
+ */
+async function assertLotTakesReturnBack(q: Queryable, companyId: string, docNo: string, lotId: string): Promise<void> {
+  const lot = (await lotsByIds(q, companyId, [lotId])).get(lotId);
+  if (!lot || lot.status !== 'REJECTED') {
+    throw new AppError(
+      'LOT_RETURN_NOT_REVERSIBLE',
+      `${docNo} cannot be reversed: lot ${lot?.lotNo ?? lotId} is ${lot?.status ?? 'missing'}, and only a lot that is still REJECTED takes the returned stock back`,
+      { lotId, lotStatus: lot?.status ?? null },
+    );
+  }
 }

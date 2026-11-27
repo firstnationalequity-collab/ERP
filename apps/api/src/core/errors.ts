@@ -25,6 +25,7 @@ const statusFor: Partial<Record<ErrorCode, number>> = {
   PERIOD_OUT_OF_ORDER: 409,
   RECORD_LOCKED: 409,
   IN_USE: 409,
+  LOT_RETURN_NOT_REVERSIBLE: 409,
   DUPLICATE_REQUEST: 409,
   /** A stored file no longer matches its recorded SHA-256: never serve it. */
   FILE_INTEGRITY_FAILED: 500,

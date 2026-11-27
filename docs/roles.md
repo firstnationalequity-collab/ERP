@@ -94,6 +94,7 @@ Design context: `docs/architecture.md` §3 and §4.
 | `fin.invoice.match_release` | action | Release a vendor invoice held in MATCH_EXCEPTION, with an e-signature (owner Q5) | new (M3 task 5; Finance Manager only) |
 | `fin.invoice.reverse` | action | Reverse a posted vendor invoice nothing is paid or debited against, e-signature + reason (owner 2026-11-26) | new (M3 task 5b; Finance Manager) |
 | `fin.payment.reverse` | action | Reverse a posted vendor payment (bounced cheque, wrong payment), e-signature + reason (owner 2026-11-26) | new (M3 task 5b; Finance Manager) |
+| `fin.debit_note.reverse` | action | Reverse a posted vendor debit note, e-signature + reason; a return also needs the QA witness (owner 2026-11-27) | new (M3, 0033; Finance Manager) |
 | `fin.debit_note.manage` | action | Enter vendor debit notes; post price-claim and short-supply notes (owner 2026-11-26) | new (M3 task 5b; Accountant) |
 | `fin.debit_note.approve` | action | Approve vendor debit notes (approval matrix DEBIT_NOTE) | new (M3 task 5b; Finance Manager) |
 | `fin.bank.reconcile` | action | Bank reconciliation | existing |
@@ -116,7 +117,7 @@ Every role except SYSTEM also holds `core.approval.inbox` (not repeated below). 
 | 4 | Accountant | `fin.view`, `fin.report.view`, `purch.view`, `master.view` | `fin.journal.manage`, `fin.invoice.manage`, `fin.bank.reconcile`, `fin.debit_note.manage` |
 | 5 | AR Officer | `fin.view`, `sales.view`, `fg.view`, `master.view` | `fin.invoice.manage`, `fin.receipt.manage` |
 | 6 | AP Officer | `fin.view`, `purch.view`, `master.view` | `fin.payment.manage` |
-| 7 | Finance Manager | `fin.view`, `fin.report.view`, `fin.costing.view`, `sales.view`, `purch.view`, `inv.stock.view`, `master.view` | `fin.payment.approve`, `sales.order.credit_override`, `sales.quotation.approve` (discount > 5% second step), `purch.po.approve`, `inv.adjustment.approve`, `core.period.manage`, `core.period.close`, `fin.approval_rules.countersign`, `fin.master.manage`, `fin.rate.manage`, `purch.landed_cost.correct`, `fin.invoice.match_release`, `fin.invoice.reverse`, `fin.payment.reverse`, `fin.debit_note.approve` |
+| 7 | Finance Manager | `fin.view`, `fin.report.view`, `fin.costing.view`, `sales.view`, `purch.view`, `inv.stock.view`, `master.view` | `fin.payment.approve`, `sales.order.credit_override`, `sales.quotation.approve` (discount > 5% second step), `purch.po.approve`, `inv.adjustment.approve`, `core.period.manage`, `core.period.close`, `fin.approval_rules.countersign`, `fin.master.manage`, `fin.rate.manage`, `purch.landed_cost.correct`, `fin.invoice.match_release`, `fin.invoice.reverse`, `fin.payment.reverse`, `fin.debit_note.approve`, `fin.debit_note.reverse` |
 | 8 | Purchase Officer | `purch.view`, `master.view`, `inv.stock.view` | `purch.pr.manage`, `purch.po.manage`, `master.vendor.manage`, `purch.landed_cost.manage` |
 | 9 | Purchase Manager | `purch.view`, `master.view`, `inv.stock.view` | `purch.po.approve`, `master.vendor.approve`, `master.item.manage` |
 | 10 | Storekeeper | `inv.stock.view`, `purch.view`, `prod.view`, `fg.view`, `master.view` | `purch.grn.post`, `inv.movement.post`, `inv.label.print`, `fg.delivery.manage`, `fg.dispatch.post` |

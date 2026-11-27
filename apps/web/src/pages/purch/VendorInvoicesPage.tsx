@@ -326,7 +326,7 @@ function InvoiceDrawer({ id, onClose, onChanged }: { id: string; onClose(): void
               <Button
                 danger
                 disabled={settledAgainst(inv)}
-                title={settledAgainst(inv) ? 'Paid or debited: reverse the payment first; a debited invoice is not reversed' : undefined}
+                title={settledAgainst(inv) ? 'Paid or debited: reverse the payment or the debit note first' : undefined}
                 onClick={() => setReversing(true)}
               >
                 Reverse

@@ -13,6 +13,7 @@ import {
   CreateDebitNoteRequest,
   DebitNoteListQuery,
   PostDebitNoteRequest,
+  ReverseDebitNoteRequest,
   PostVendorPaymentRequest,
   ReverseVendorDocumentRequest,
   UpdateDebitNoteRequest,
@@ -244,6 +245,10 @@ r.post('/debit-notes/:id/submit', requirePermission('fin.debit_note.manage'), on
 }));
 r.post('/debit-notes/:id/post', requireAnyPermission('fin.debit_note.manage', 'inv.lot.dispose'), idempotent(), asyncHandler(async (req, res) => {
   res.json(await notes.postDebitNote(authOf(req), idOf(req), PostDebitNoteRequest.parse(req.body ?? {}), requestMeta(req)));
+}));
+// Owner 2026-11-27: a Finance Manager reverses a posted debit note (a return also needs the QA witness).
+r.post('/debit-notes/:id/reverse', requirePermission('fin.debit_note.reverse'), idempotent(), asyncHandler(async (req, res) => {
+  res.json(await notes.reverseDebitNote(authOf(req), idOf(req), ReverseDebitNoteRequest.parse(req.body), requestMeta(req)));
 }));
 r.post('/debit-notes/:id/cancel', requirePermission('fin.debit_note.manage'), once, asyncHandler(async (req, res) => {
   res.json(await notes.cancelDebitNote(authOf(req), idOf(req), PurchActionRequest.parse(req.body).reason));

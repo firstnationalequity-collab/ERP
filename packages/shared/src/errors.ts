@@ -71,6 +71,8 @@ export const ErrorCodes = [
   'AMOUNT_EXCEEDS_OPEN',
   /** A warning the actor must acknowledge first, e.g. a vendor's filer status checked too long ago (owner 2026-11-26; 0032). */
   'ACKNOWLEDGEMENT_REQUIRED',
+  /** A return debit note is not reversed: its lot is no longer REJECTED (the return emptied it: RETURNED; or destroyed) (owner 2026-11-27; 0033). */
+  'LOT_RETURN_NOT_REVERSIBLE',
   'CREDIT_LIMIT_EXCEEDED',
   'OPEN_DEVIATION',
   'DUPLICATE_REQUEST',

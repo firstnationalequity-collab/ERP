@@ -90,6 +90,8 @@ export const JournalReversalKeys: Readonly<Partial<Record<PostingEvent, Permissi
   // Owner 2026-11-26 (task 5b): a Finance Manager reverses vendor invoices and payments.
   VENDOR_INVOICE: 'fin.invoice.reverse',
   VENDOR_PAYMENT: 'fin.payment.reverse',
+  // Owner 2026-11-27: a Finance Manager reverses posted debit notes.
+  VENDOR_DEBIT_NOTE: 'fin.debit_note.reverse',
 };
 
 /**
@@ -99,6 +101,8 @@ export const JournalReversalKeys: Readonly<Partial<Record<PostingEvent, Permissi
 export const JournalReversalAlternativeKeys: Readonly<Partial<Record<PostingEvent, readonly PermissionKey[]>>> = {
   LANDED_COST: ['purch.grn.reverse'],
   IMPORT_TAX: ['purch.grn.reverse'],
+  // Owner 2026-11-27: the Finance Manager's reversal of a return debit note reverses its LOT_RETURNED journal.
+  LOT_RETURNED: ['fin.debit_note.reverse'],
 };
 
 type Posting = { event: PostingEvent; counter: AccountRole };
@@ -429,11 +433,14 @@ export interface ReverseStockInput {
   /** The reversal rows returned by engines/inventory reverseMovements(), all on one date. */
   movements: readonly PostedMovement[];
   reason: string;
+  /** As ReverseInput.key (JournalReversalAlternativeKeys). */
+  key?: PermissionKey;
 }
 
 /**
  * Reverses a stock journal together with its movements: the reversal rows must mirror movements of the journal's
- * source document and carry exactly its amount, so the GL keeps equal to the ledger. Then the rounding sweep
+ * source document and carry exactly its INVENTORY amount, so the GL keeps equal to the ledger. A journal posted with
+ * otherLines (e.g. a return debit note's AP / price variance / input tax) is mirrored whole. Then the rounding sweep
  * (a mirror can leave a few paisa on a lot it empties).
  */
 export async function reverseStockJournal(tx: Tx, actor: Actor, input: ReverseStockInput): Promise<StockPosting> {
@@ -444,7 +451,7 @@ export async function reverseStockJournal(tx: Tx, actor: Actor, input: ReverseSt
   }
   const event = oneEvent(movements);
   const { doc, date } = oneDocumentAndDate(movements);
-  const key = reversalKey(event);
+  const key = reversalKey(event, input.key);
   const valued = movements.filter(hasValue);
   const amount = valued.reduce((s, m) => s.plus(new Decimal(m.value).abs()), new Decimal(0));
 
@@ -467,9 +474,10 @@ export async function reverseStockJournal(tx: Tx, actor: Actor, input: ReverseSt
       }
     }
     const lines = await repo.linesOf(tx, original.id);
-    const total = lines.reduce((s, l) => s.plus(l.debit), new Decimal(0));
+    const inventory = await repo.accountsOfRole(tx, actor.companyId, 'INVENTORY');
+    const total = lines.filter((l) => inventory.has(l.accountId)).reduce((s, l) => s.plus(l.debit).plus(l.credit), new Decimal(0));
     if (!total.equals(amount)) throw mismatch(`the journal carries ${total.toFixed(2)}, the movements ${amount.toFixed(2)}`);
-    entry = await reverseJournal(tx, actor, { entryId: original.id, date, reason: input.reason });
+    entry = await reverseJournal(tx, actor, { entryId: original.id, date, reason: input.reason, ...(input.key ? { key: input.key } : {}) });
   }
   const rounding = await sweep(tx, actor, key, movements, doc, date);
   return { entry, rounding };

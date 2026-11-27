@@ -78,7 +78,7 @@ export async function debitedOnInvoiceLines(
   exceptNoteId?: string,
 ): Promise<Map<string, { amount: string; shortQty: string; returnQty: string }>> {
   if (invoiceLineIds.length === 0) return new Map();
-  const where: SQL[] = [inArray(debitNoteLines.invoiceLineId, [...new Set(invoiceLineIds)]), notInArray(debitNotes.status, ['DRAFT', 'CANCELLED'])];
+  const where: SQL[] = [inArray(debitNoteLines.invoiceLineId, [...new Set(invoiceLineIds)]), notInArray(debitNotes.status, ['DRAFT', 'CANCELLED', 'REVERSED'])];
   if (exceptNoteId) where.push(ne(debitNotes.id, exceptNoteId));
   const rows = await q
     .select({

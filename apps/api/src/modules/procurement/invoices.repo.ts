@@ -67,7 +67,7 @@ export type PaymentValues = Omit<
  * Was the document in force on `asOf`: POSTED (posted on or before), or REVERSED after that day (owner 2026-11-26:
  * the ageing as of a past date still shows an invoice or payment reversed later).
  */
-function inForce(t: typeof vendorInvoices | typeof vendorPayments, asOf?: string): SQL {
+function inForce(t: typeof vendorInvoices | typeof vendorPayments | typeof debitNotes, asOf?: string): SQL {
   if (!asOf) return eq(t.status, 'POSTED');
   return and(lte(t.postingDate, asOf), or(eq(t.status, 'POSTED'), and(eq(t.status, 'REVERSED'), gt(t.reversalDate, asOf))))!;
 }
@@ -240,7 +240,7 @@ export async function invoicesNaming(q: Queryable, f: { grnLineIds: string[]; la
   return rows.map((r) => r.docNo);
 }
 
-/** Payments (neither CANCELLED nor REVERSED) and debit notes (not CANCELLED) naming an invoice: it is not reversed. */
+/** Payments and debit notes (neither CANCELLED nor REVERSED) naming an invoice: it is not reversed (owner 2026-11-27: debit note first). */
 export async function documentsOnInvoice(q: Queryable, invoiceId: string): Promise<{ payments: string[]; debitNotes: string[] }> {
   const pays = await q
     .selectDistinct({ docNo: vendorPayments.docNo })
@@ -250,19 +250,18 @@ export async function documentsOnInvoice(q: Queryable, invoiceId: string): Promi
   const notes = await q
     .select({ docNo: debitNotes.docNo })
     .from(debitNotes)
-    .where(and(eq(debitNotes.invoiceId, invoiceId), ne(debitNotes.status, 'CANCELLED')));
+    .where(and(eq(debitNotes.invoiceId, invoiceId), notInArray(debitNotes.status, ['CANCELLED', 'REVERSED'])));
   return { payments: pays.map((p) => p.docNo), debitNotes: notes.map((n) => n.docNo) };
 }
 
-/** Taken off invoices by POSTED debit notes (posted on or before `asOf` when given): invoice currency and PKR. */
+/** Taken off invoices by debit notes in force (POSTED; as of `asOf`: posted by then, not reversed by then): invoice currency and PKR. */
 export async function debitedOnInvoices(
   q: Queryable,
   invoiceIds: string[],
   asOf?: string,
 ): Promise<Map<string, { foreign: string; pkr: string }>> {
   if (invoiceIds.length === 0) return new Map();
-  const where: SQL[] = [inArray(debitNotes.invoiceId, [...new Set(invoiceIds)]), eq(debitNotes.status, 'POSTED')];
-  if (asOf) where.push(lte(debitNotes.postingDate, asOf));
+  const where: SQL[] = [inArray(debitNotes.invoiceId, [...new Set(invoiceIds)]), inForce(debitNotes, asOf)];
   const rows = await q
     .select({
       invoiceId: debitNotes.invoiceId,

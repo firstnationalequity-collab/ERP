@@ -298,6 +298,11 @@ export const debitNotes = purch.table('debit_notes', {
   postingDate: date('posting_date', { mode: 'string' }),
   postedBy: bigintString('posted_by'),
   postedAt: tstz('posted_at'),
+  // 0033 (owner 2026-11-27): POSTED → REVERSED.
+  reversedBy: bigintString('reversed_by'),
+  reversedAt: tstz('reversed_at'),
+  reversalDate: date('reversal_date', { mode: 'string' }),
+  reversalReason: text('reversal_reason'),
   ...auditColumns(),
 });
 

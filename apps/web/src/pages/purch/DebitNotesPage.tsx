@@ -3,6 +3,8 @@
 // line's REJECTED lot), submits it to the approval matrix (DEBIT_NOTE; whoever drafted or submitted it cannot
 // approve), then posts it. A return note is posted by the Warehouse Manager with a QA witness e-signature (rule 1):
 // the lot leaves the location and is RETURNED when empty. The note reduces what is open on the invoice.
+// A Finance Manager reverses a posted note with an e-signature (owner 2026-11-27); reversing a return puts the stock
+// back into the lot (QA witness at the same terminal) and is refused once the lot is RETURNED.
 import { useState } from 'react';
 import dayjs from 'dayjs';
 import { Alert, App, Button, DatePicker, Descriptions, Drawer, Input, InputNumber, Modal, Radio, Space, Table, Typography } from 'antd';
@@ -21,6 +23,7 @@ import { api, errorText, newIdempotencyKey } from '../../api/client';
 import { useAuth } from '../../auth/AuthContext';
 import { DataTable, statusFilter } from '../../components/DataTable';
 import { PageHeader } from '../../components/PageHeader';
+import { ESignModal } from '../../components/ESignModal';
 import { ReasonModal } from '../../components/ReasonModal';
 import { RefSelect } from '../../components/RefSelect';
 import { StatusTag } from '../../components/StatusTag';
@@ -187,6 +190,7 @@ function NoteDrawer({ id, onClose, onChanged }: { id: string; onClose(): void; o
   const [editing, setEditing] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [returning, setReturning] = useState(false);
+  const [reversing, setReversing] = useState(false);
   const detail = useQuery({ queryKey: [...debitNotesKey, 'detail', id], queryFn: () => api<DebitNoteDto>(`/purch/debit-notes/${id}`) });
   const n = detail.data;
   const reload = async () => {
@@ -211,13 +215,14 @@ function NoteDrawer({ id, onClose, onChanged }: { id: string; onClose(): void; o
       },
     });
 
+  const posted = n?.status === 'POSTED' || n?.status === 'REVERSED';
   const lineCols = [
     { title: '#', dataIndex: 'lineNo', width: 40 },
     { title: 'Invoice line', render: (_: unknown, l: DebitNoteLineDto) => `${l.invoiceLineNo} · ${l.itemCode ?? ''} · ${l.grnDocNo ?? ''} · lot ${l.lotNo ?? ''}` },
     { title: 'Qty', render: (_: unknown, l: DebitNoteLineDto) => (l.qty ? formatDecimal(l.qty, 4) : '—') },
     { title: `Amount (${n?.currency ?? ''})`, render: (_: unknown, l: DebitNoteLineDto) => formatDecimal(l.amount) },
     { title: 'Tax', render: (_: unknown, l: DebitNoteLineDto) => (l.taxCode ? `${l.taxCode} ${formatDecimal(l.taxAmount)}` : '—') },
-    ...(n?.status === 'POSTED'
+    ...(posted
       ? [
           { title: 'PKR', render: (_: unknown, l: DebitNoteLineDto) => formatDecimal(l.amountPkr) },
           ...(isReturn
@@ -252,6 +257,9 @@ function NoteDrawer({ id, onClose, onChanged }: { id: string; onClose(): void; o
             {can('inv.lot.dispose') && n.status === 'APPROVED' && isReturn && (
               <Button type="primary" onClick={() => setReturning(true)}>Post return (QA witness)</Button>
             )}
+            {can('fin.debit_note.reverse') && n.status === 'POSTED' && (
+              <Button danger onClick={() => setReversing(true)}>Reverse</Button>
+            )}
           </Space>
         )
       }
@@ -259,6 +267,15 @@ function NoteDrawer({ id, onClose, onChanged }: { id: string; onClose(): void; o
       {n && (
         <>
           {n.status === 'PENDING_APPROVAL' && <Alert style={{ marginBottom: 12 }} type="info" showIcon message="Waiting for approval (My approvals)" />}
+          {n.status === 'REVERSED' && (
+            <Alert
+              style={{ marginBottom: 12 }}
+              type="error"
+              showIcon
+              message={`Reversed on ${formatDate(n.reversalDate)} by ${n.reversedByName}`}
+              description={`${n.reversalReason} · journal ${n.reversalJournalDocNo ?? '—'}. What it took off the invoice is open again${isReturn ? '; the returned quantity is back in the lot' : ''}.`}
+            />
+          )}
           <Descriptions size="small" column={2} bordered>
             <Descriptions.Item label="Reason">{REASON_LABEL[n.reason]}</Descriptions.Item>
             <Descriptions.Item label="Status"><StatusTag status={n.status} /></Descriptions.Item>
@@ -278,6 +295,28 @@ function NoteDrawer({ id, onClose, onChanged }: { id: string; onClose(): void; o
       )}
       {editing && n && <NoteEditor note={n} onClose={() => setEditing(false)} onSaved={async () => { await reload(); }} />}
       {returning && n && <ReturnPostModal note={n} self={user?.username} onClose={() => setReturning(false)} onPosted={async () => { setReturning(false); void message.success('Return posted'); await reload(); }} />}
+      <ESignModal
+        open={reversing}
+        title={`Reverse ${n?.docNo ?? ''}`}
+        meaning="REVERSED"
+        summary={
+          isReturn
+            ? 'Mirrors the journal today and puts the returned quantity back into the lot (still REJECTED) at the location it left. A QA witness signs for the stock movement. Refused once the lot is RETURNED.'
+            : 'Mirrors the journal today; what the note took off the invoice is open again. Give the reason (e.g. claim withdrawn).'
+        }
+        countersign={isReturn ? 'required' : 'none'}
+        countersignBy="QA witness"
+        countersignNote="The QA witness (another person, holding qa.lot.witness) enters their own user name and password here."
+        okText="Reverse debit note"
+        onCancel={() => setReversing(false)}
+        onSubmit={async (r) => {
+          const witness = r.countersign ? { ...r.countersign, meaning: 'WITNESSED' as const } : undefined;
+          await api(`/purch/debit-notes/${id}/reverse`, { method: 'POST', body: { signature: r.signature, ...(witness ? { witness } : {}) }, idempotencyKey: newIdempotencyKey() });
+          void message.success('Debit note reversed');
+          setReversing(false);
+          await reload();
+        }}
+      />
       <ReasonModal
         open={cancelling}
         title={`Cancel ${n?.docNo ?? ''}?`}

@@ -330,6 +330,14 @@ export type UpdateDebitNoteRequest = z.infer<typeof UpdateDebitNoteRequest>;
 export const PostDebitNoteRequest = z.object({ locationId: id.optional(), witness: WitnessSignRequest.optional() }).strict();
 export type PostDebitNoteRequest = z.infer<typeof PostDebitNoteRequest>;
 
+/**
+ * Owner 2026-11-27: a Finance Manager reverses a POSTED debit note with an e-signature (meaning REVERSED) and a reason.
+ * A return note also reverses its return movement (stock back into the REJECTED lot), which needs the QA witness
+ * signature for that movement (rule 1, 0020), entered at the same terminal.
+ */
+export const ReverseDebitNoteRequest = z.object({ signature: ESignRequest, witness: WitnessSignRequest.optional() }).strict();
+export type ReverseDebitNoteRequest = z.infer<typeof ReverseDebitNoteRequest>;
+
 export const DebitNoteListQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(25),
@@ -388,6 +396,12 @@ export interface DebitNoteDto {
   postedByName: string | null;
   postedAt: string | null;
   journalDocNo: string | null;
+  /** REVERSED (owner 2026-11-27): who, when, the reversal's date, reason and journal. */
+  reversedByName: string | null;
+  reversedAt: string | null;
+  reversalDate: string | null;
+  reversalReason: string | null;
+  reversalJournalDocNo: string | null;
   createdBy: string;
   createdByName: string;
   createdAt: string;

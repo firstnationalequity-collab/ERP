@@ -686,3 +686,171 @@ describe('task 5b: the remaining refusals', () => {
     expect([invRev.status, invRev.body.error.code]).toEqual([409, 'INVALID_TRANSITION']);
   });
 });
+
+// ---------------------------------------------------------------- owner 2026-11-27: debit-note reversal (0033)
+
+describe('debit note reversal (owner 2026-11-27): Finance Manager, e-signature; unwinding order debit note → invoice', () => {
+  it('price claim: refusals; the journal is mirrored, the invoice amounts re-open, then the invoice can be reversed', async () => {
+    const v = await vendor('V-DNREV');
+    const { poId, grnLineId } = await received('10', '100', v);
+    const inv = await invoice(poId, grnLineId, '10', '100', { tax: true }); // 1,180
+    const lineId = inv.lines[0]!.id;
+    const note = await approvedNote({ invoiceId: inv.id, reason: 'PRICE_CLAIM', dnDate: DN_DATE, lines: [{ invoiceLineId: lineId, amount: '50' }] });
+    expect((await act('acct', `/purch/debit-notes/${note.id}/post`)).body.status).toBe('POSTED');
+
+    // The invoice is not reversed while the note is in force.
+    const held = await act('fm', `/purch/vendor-invoices/${inv.id}/reverse`, sign('REVERSED', 'Wrong PO'));
+    expect([held.status, held.body.error.code]).toEqual([409, 'IN_USE']);
+    expect(held.body.error.message).toMatch(/reverse the debit note first/);
+
+    // Refusals: not the Finance Manager, the wrong meaning, a wrong password, a witness on a claim, a note not posted.
+    expect((await act('acct', `/purch/debit-notes/${note.id}/reverse`, sign('REVERSED', 'Claim withdrawn'))).status).toBe(403);
+    const meaning = await act('fm', `/purch/debit-notes/${note.id}/reverse`, sign('APPROVED', 'Claim withdrawn'));
+    expect([meaning.status, meaning.body.error.code]).toEqual([400, 'VALIDATION_FAILED']);
+    const bad = await act('fm', `/purch/debit-notes/${note.id}/reverse`, { signature: { password: 'wrong', meaning: 'REVERSED', reason: 'Claim withdrawn' } });
+    expect([bad.status, bad.body.error.code]).toEqual([403, 'ESIGN_FAILED']);
+    const withWitness = await act('fm', `/purch/debit-notes/${note.id}/reverse`, { ...sign('REVERSED', 'Claim withdrawn'), witness: witness() });
+    expect([withWitness.status, withWitness.body.error.code]).toEqual([400, 'VALIDATION_FAILED']);
+    const draft = await call('acct', 'post', '/purch/debit-notes', { invoiceId: inv.id, reason: 'PRICE_CLAIM', dnDate: DN_DATE, lines: [{ invoiceLineId: lineId, amount: '1' }] });
+    const notPosted = await act('fm', `/purch/debit-notes/${draft.body.id}/reverse`, sign('REVERSED', 'Not posted'));
+    expect([notPosted.status, notPosted.body.error.code]).toEqual([409, 'INVALID_TRANSITION']);
+    await call('acct', 'post', `/purch/debit-notes/${draft.body.id}/cancel`, { reason: 'Not needed' });
+
+    const rev = await act('fm', `/purch/debit-notes/${note.id}/reverse`, sign('REVERSED', 'Claim withdrawn by the vendor'));
+    expect([rev.status, rev.body.error]).toEqual([200, undefined]);
+    expect(rev.body).toMatchObject({ status: 'REVERSED', reversalDate: TODAY, reversalReason: 'Claim withdrawn by the vendor', reversedByName: 'Test ap5b_fm' });
+    expect(rev.body.reversalJournalDocNo).toMatch(/^SJ-/);
+    expect(rev.body.reversalJournalDocNo).not.toBe(rev.body.journalDocNo);
+    for (const l of await journalOf('DEBIT_NOTE', note.id)) expect(l.dr).toBe(l.cr);
+    const sig = await client.query(`SELECT meaning, reason FROM core.e_signatures WHERE record_table = 'purch.debit_notes' AND record_id = $1`, [note.id]);
+    expect(sig.rows).toEqual([{ meaning: 'REVERSED', reason: 'Claim withdrawn by the vendor' }]);
+    const hist = await client.query(
+      `SELECT from_status, to_status FROM core.status_history WHERE entity_table = 'purch.debit_notes' AND entity_id = $1 ORDER BY id DESC LIMIT 1`,
+      [note.id],
+    );
+    expect(hist.rows[0]).toEqual({ from_status: 'POSTED', to_status: 'REVERSED' });
+
+    // The invoice amounts are open again; the ageing as of the note date still shows the claim, today it does not.
+    expect((await call('acct', 'get', `/purch/vendor-invoices/${inv.id}`)).body).toMatchObject({ debitedAmount: '0.00', openAmount: '1180.00' });
+    expect((await call('acct', 'get', `/purch/vendor-invoices/${inv.id}/debitable`)).body.lines[0]).toMatchObject({ debitedAmount: '0.00', amountOpen: '1000.00' });
+    expect((await call('acct', 'get', `/purch/ap-ageing?asOf=${DN_DATE}&vendorId=${v}`)).body.totals.total).toBe('1121.00');
+    expect((await call('acct', 'get', `/purch/ap-ageing?vendorId=${v}`)).body.totals.total).toBe('1180.00');
+    expect((await call('acct', 'get', `/purch/vendors/${v}/ledger`)).body.closing).toBe('1180.00');
+
+    const twice = await act('fm', `/purch/debit-notes/${note.id}/reverse`, sign('REVERSED', 'Again'));
+    expect([twice.status, twice.body.error.code]).toEqual([409, 'RECORD_LOCKED']);
+    // Debit note first, then the invoice.
+    expect((await act('fm', `/purch/vendor-invoices/${inv.id}/reverse`, sign('REVERSED', 'Wrong PO'))).body.status).toBe('REVERSED');
+
+    // The DB: a reversed note never changes; a posted one is not reversed without the e-signature.
+    await expect(raw(`UPDATE purch.debit_notes SET notes = 'x' WHERE id = $1`, [note.id], users.fm!)).rejects.toThrow(/RECORD_LOCKED/);
+    const r2 = await received('2', '100', v);
+    const inv2 = await invoice(r2.poId, r2.grnLineId, '2', '100');
+    const n2 = await approvedNote({ invoiceId: inv2.id, reason: 'PRICE_CLAIM', dnDate: DN_DATE, lines: [{ invoiceLineId: inv2.lines[0]!.id, amount: '10' }] });
+    expect((await act('acct', `/purch/debit-notes/${n2.id}/post`)).body.status).toBe('POSTED');
+    await expect(
+      inTx(users.fm!, async () => {
+        await history('purch.debit_notes', n2.id, 'POSTED', 'REVERSED', users.fm!);
+        await client.query(
+          `UPDATE purch.debit_notes SET status = 'REVERSED', reversed_by = $2, reversed_at = now(), reversal_date = $3, reversal_reason = 'raw' WHERE id = $1`,
+          [n2.id, users.fm, TODAY],
+        );
+      }),
+    ).rejects.toThrow(/ESIGN_FAILED/);
+    await expect(raw(`UPDATE purch.debit_notes SET notes = 'x' WHERE id = $1`, [n2.id], users.fm!)).rejects.toThrow(/changes only by its reversal/);
+  });
+
+  it('return: the movement is reversed with a QA witness while the lot is REJECTED; a lot the return emptied refuses', async () => {
+    const v = await vendor('V-RETREV');
+    const { poId, grnLineId, lotId } = await received('10', '100', v);
+    const inv = await invoice(poId, grnLineId, '10', '100');
+    const lineId = inv.lines[0]!.id;
+    await inTx(users.qa!, async () => {
+      await history('inv.lots', lotId, 'APPROVED', 'REJECTED', users.qa!);
+      await client.query(`UPDATE inv.lots SET status = 'REJECTED' WHERE id = $1`, [lotId]);
+    });
+    const held = async () => (await client.query(`SELECT coalesce(sum(qty), 0)::text AS q FROM inv.stock_balances WHERE lot_id = $1`, [lotId])).rows[0]!.q as string;
+    const lotStatus = async () => (await client.query(`SELECT status FROM inv.lots WHERE id = $1`, [lotId])).rows[0]!.status as string;
+    const body = { invoiceId: inv.id, reason: 'RETURN_TO_VENDOR', dnDate: DN_DATE, lines: [{ invoiceLineId: lineId, qty: '4' }] };
+    const part = await approvedNote(body);
+    const posted = await act('wm', `/purch/debit-notes/${part.id}/post`, { locationId: ids.loc, witness: witness() });
+    expect(posted.body.status).toBe('POSTED');
+    const movementId = posted.body.lines[0].movementId as string;
+    expect([await held(), await lotStatus()]).toEqual(['6.0000', 'REJECTED']);
+
+    // Refusals: the Warehouse Manager does not reverse it; no witness; a witness who is not QA.
+    expect((await act('wm', `/purch/debit-notes/${part.id}/reverse`, sign('REVERSED', 'Vendor refused the return'))).status).toBe(403);
+    const noWitness = await act('fm', `/purch/debit-notes/${part.id}/reverse`, sign('REVERSED', 'Vendor refused the return'));
+    expect([noWitness.status, noWitness.body.error.code]).toEqual([403, 'WITNESS_REQUIRED']);
+    const notQa = await act('fm', `/purch/debit-notes/${part.id}/reverse`, { ...sign('REVERSED', 'Vendor refused the return'), witness: witness('ap5b_acct') });
+    expect(notQa.status).toBe(403);
+    expect(await held()).toBe('6.0000');
+
+    const rev = await act('fm', `/purch/debit-notes/${part.id}/reverse`, { ...sign('REVERSED', 'Vendor refused the return'), witness: witness() });
+    expect([rev.status, rev.body.error]).toEqual([200, undefined]);
+    expect(rev.body).toMatchObject({ status: 'REVERSED', reversalDate: TODAY });
+    const { rows: mv } = await client.query(
+      `SELECT movement_type, qty::text, value::text, ref_doc_type, movement_date::text AS d, witness_esign_id IS NOT NULL AS witnessed
+         FROM inv.stock_movements WHERE reversal_of = $1`,
+      [movementId],
+    );
+    expect(mv).toEqual([{ movement_type: 'RETURN_TO_VENDOR', qty: '4.0000', value: '400.00', ref_doc_type: 'DEBIT_NOTE', d: TODAY, witnessed: true }]);
+    expect([await held(), await lotStatus()]).toEqual(['10.0000', 'REJECTED']);
+    for (const l of await journalOf('DEBIT_NOTE', part.id)) expect(l.dr).toBe(l.cr);
+    expect((await call('acct', 'get', `/purch/vendor-invoices/${inv.id}`)).body).toMatchObject({ debitedAmount: '0.00', openAmount: '1000.00' });
+
+    // The whole lot goes back: RETURNED, it never moves again, so that note is not reversed.
+    const all = await approvedNote({ ...body, lines: [{ invoiceLineId: lineId, qty: '10' }] });
+    expect((await act('wm', `/purch/debit-notes/${all.id}/post`, { locationId: ids.loc, witness: witness() })).body.status).toBe('POSTED');
+    expect(await lotStatus()).toBe('RETURNED');
+    const closed = await act('fm', `/purch/debit-notes/${all.id}/reverse`, { ...sign('REVERSED', 'Vendor refused the return'), witness: witness() });
+    expect([closed.status, closed.body.error.code]).toEqual([409, 'LOT_RETURN_NOT_REVERSIBLE']);
+    expect((await call('acct', 'get', `/purch/debit-notes/${all.id}`)).body.status).toBe('POSTED');
+    const invHeld = await act('fm', `/purch/vendor-invoices/${inv.id}/reverse`, sign('REVERSED', 'Wrong PO'));
+    expect([invHeld.status, invHeld.body.error.code]).toEqual([409, 'IN_USE']);
+  });
+});
+
+// ---------------------------------------------------------------- rule 11: reversals in a closed period (owner 2026-11-27)
+
+describe('rule 11: invoice, payment and debit-note reversals are refused while the period is closed', () => {
+  it('PERIOD_CLOSED from each endpoint; nothing changes; reopened, the reversal goes through', async () => {
+    const v = await vendor('V-CLOSED');
+    const a = await received('1', '100', v);
+    const invA = await invoice(a.poId, a.grnLineId, '1', '100');
+    const b = await received('1', '200', v);
+    const invB = await invoice(b.poId, b.grnLineId, '1', '200');
+    const p = await pay(v, invB.id, '200');
+    const c = await received('1', '300', v);
+    const invC = await invoice(c.poId, c.grnLineId, '1', '300');
+    const n = await approvedNote({ invoiceId: invC.id, reason: 'PRICE_CLAIM', dnDate: DN_DATE, lines: [{ invoiceLineId: invC.lines[0]!.id, amount: '30' }] });
+    expect((await act('acct', `/purch/debit-notes/${n.id}/post`)).body.status).toBe('POSTED');
+
+    // Close every open period up to today's, earliest first (periods close in order).
+    const { rows: open } = await client.query<{ id: string }>(`SELECT id FROM core.fiscal_periods WHERE status = 'OPEN' AND start_date <= $1 ORDER BY start_date`, [TODAY]);
+    for (const pr of open) {
+      const res = await call('fm', 'post', `/core/fiscal-periods/${pr.id}/close`, { reason: 'Month end' });
+      expect([res.status, res.body.error]).toEqual([200, undefined]);
+    }
+    try {
+      const refusals = [
+        await act('fm', `/purch/vendor-invoices/${invA.id}/reverse`, sign('REVERSED', 'Wrong PO')),
+        await act('fm', `/purch/vendor-payments/${p.id}/reverse`, sign('REVERSED', 'Cheque bounced')),
+        await act('fm', `/purch/debit-notes/${n.id}/reverse`, sign('REVERSED', 'Claim withdrawn')),
+      ];
+      for (const r of refusals) expect([r.status, r.body.error.code]).toEqual([422, 'PERIOD_CLOSED']);
+      expect((await call('acct', 'get', `/purch/vendor-invoices/${invA.id}`)).body.status).toBe('POSTED');
+      expect((await call('ap', 'get', `/purch/vendor-payments/${p.id}`)).body.status).toBe('POSTED');
+      expect((await call('acct', 'get', `/purch/debit-notes/${n.id}`)).body.status).toBe('POSTED');
+      const sigs = await client.query(`SELECT count(*)::int AS n FROM core.e_signatures WHERE meaning = 'REVERSED' AND record_id = ANY($1::text[])`, [[invA.id, p.id, n.id]]);
+      expect(sigs.rows[0]!.n).toBe(0);
+    } finally {
+      // Reopen latest first (Finance Manager e-signature, owner Q2).
+      for (const pr of [...open].reverse()) {
+        const res = await call('fm', 'post', `/core/fiscal-periods/${pr.id}/reopen`, sign('APPROVED', 'Test: reopen after the closed-period check'));
+        expect([res.status, res.body.error]).toEqual([200, undefined]);
+      }
+    }
+    expect((await act('fm', `/purch/debit-notes/${n.id}/reverse`, sign('REVERSED', 'Claim withdrawn'))).body.status).toBe('REVERSED');
+  });
+});

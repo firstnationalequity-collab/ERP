@@ -80,6 +80,15 @@ export async function entriesOfSource(q: Queryable, companyId: string, sourceTyp
     .orderBy(asc(journalEntries.id));
 }
 
+/** Every account a posting rule (active or not, any event) maps to a role: e.g. the INVENTORY accounts. */
+export async function accountsOfRole(q: Queryable, companyId: string, role: AccountRole): Promise<Set<string>> {
+  const rows = await q
+    .selectDistinct({ accountId: postingRules.accountId })
+    .from(postingRules)
+    .where(and(eq(postingRules.companyId, companyId), eq(postingRules.accountRole, role)));
+  return new Set(rows.map((r) => r.accountId));
+}
+
 /** One vendor's lines on the accounts of a role (POSTED and REVERSED entries both stand: a reversal is its own entry). */
 export async function vendorSubledger(
   q: Queryable,

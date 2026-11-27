@@ -68,7 +68,7 @@ export const DEFAULT_APPROVAL_RULES: {
   },
   { docType: 'SO_CREDIT', measure: 'AMOUNT_PKR', bands: [{ lower: '0', upper: null, steps: [[1, 'FINANCE_MANAGER']] }] },
   { docType: 'VENDOR_PAYMENT', measure: 'AMOUNT_PKR', bands: [{ lower: null, upper: null, steps: [[1, 'FINANCE_MANAGER']] }] },
-  // Owner 2026-11-26: the approval matrix applies to debit notes (band: agent default, like payments; PENDING OWNER).
+  // Owner 2026-11-26: the approval matrix applies to debit notes; one band, Finance Manager (Owner — confirmed 2026-11-27).
   { docType: 'DEBIT_NOTE', measure: 'AMOUNT_PKR', bands: [{ lower: null, upper: null, steps: [[1, 'FINANCE_MANAGER']] }] },
   {
     docType: 'STOCK_ADJUSTMENT',
