@@ -31,6 +31,7 @@ import { DebitNotesPage } from './pages/purch/DebitNotesPage';
 import { ApAgeingPage, VendorLedgerPage } from './pages/purch/PayablesPages';
 import { SpecsPage } from './pages/qc/SpecsPage';
 import { SamplesPage } from './pages/qc/SamplesPage';
+import { DispositionPage } from './pages/qc/DispositionPage';
 
 export function App() {
   const { user, restoring } = useAuth();
@@ -77,6 +78,7 @@ export function App() {
         <Route path="/qc/specs" element={<RequirePermission anyOf={['qc.view']}><SpecsPage /></RequirePermission>} />
         <Route path="/qc/samples" element={<RequirePermission anyOf={['qc.view']}><SamplesPage /></RequirePermission>} />
         <Route path="/qc/review" element={<RequirePermission anyOf={['qc.view']}><SamplesPage reviewQueue /></RequirePermission>} />
+        <Route path="/qc/lots" element={<RequirePermission anyOf={['qc.view']}><DispositionPage /></RequirePermission>} />
         <Route path="/fin/exchange-rates" element={<RequirePermission anyOf={['fin.view', 'purch.view']}><ExchangeRatesPage /></RequirePermission>} />
         <Route path="/fin/journals" element={<RequirePermission anyOf={['fin.view']}><JournalsPage /></RequirePermission>} />
         <Route path="/fin/accounts" element={<RequirePermission anyOf={['fin.view', 'master.view']}><AccountsPage /></RequirePermission>} />

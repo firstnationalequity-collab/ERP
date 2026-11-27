@@ -12,6 +12,7 @@ import type { Actor } from '../../../core/transition/transition';
 import type { AuthContext } from '../../../core/auth/auth.service';
 import { PROOF_TTL_MS, verifyWitness, type SignatureProof } from '../../../core/esign/esign.service';
 import { createTestUser, TEST_PASSWORD } from '../../../test/factories';
+import { rejectLotForTest } from '../../../test/lot-fixtures';
 import { companyToday } from '../../../core/dates';
 import {
   allocateFefo,
@@ -140,12 +141,17 @@ async function dispose(type: DisposalMovementType, lotId: string, qty: string, o
   });
 }
 
-/** Lot with `qty` received and APPROVED. */
+/** Lot with `qty` received and APPROVED: an item without QC (created APPROVED; 0037 needs a real QC decision otherwise). */
 async function approvedLot(qty: string, o: Partial<NewLot> = {}): Promise<string> {
-  const l = await lot(o);
+  const l = await lot({ itemId: ids.rmOk, ...o });
   await post({ lotId: l.id, qty });
-  await setLot(l.id, 'UNDER_TEST', 'APPROVED');
   return l.id;
+}
+/** A material lot with `qty` received, then REJECTED the legitimate way (QA hold, QC Manager disposition). */
+async function rejectedLot(qty: string): Promise<string> {
+  const id = await approvedLot(qty);
+  await rejectLotForTest(id, { qaUserId: actors.qa!.userId, qcManagerUserId: actors.qcm!.userId });
+  return id;
 }
 
 async function ledger(lotId: string) {
@@ -168,6 +174,7 @@ beforeAll(async () => {
   actors.sup = await actorFor('e_sup', ['PRODUCTION_SUPERVISOR']);
   actors.op = await actorFor('e_op', ['PRODUCTION_OPERATOR']);
   actors.analyst = await actorFor('e_qca', ['QC_ANALYST']);
+  actors.qcm = await actorFor('e_qcm', ['QC_MANAGER']);
   actors.wm = await actorFor('e_wm', ['WAREHOUSE_MANAGER']);
   actors.qa = await actorFor('e_qa', ['QA_MANAGER']);
   actors.fm = await actorFor('e_fm', ['FINANCE_MANAGER']);
@@ -192,16 +199,18 @@ beforeAll(async () => {
       await history('master.customers', ids[code]!, null, 'ACTIVE');
     }
   });
-  for (const [key, code, type, category, activate] of [
-    ['rm', 'RM-1', 'RM', ids.category, true],
-    ['rm2', 'RM-2', 'RM', ids.category, true],
-    ['fg', 'FG-1', 'FG', ids.fgCategory, true],
-    ['draft', 'RM-D', 'RM', ids.category, false],
+  // rmOk / rm2 need no QC: their GRN lots start APPROVED (answer 4), so tests get APPROVED stock without a QC decision (0037).
+  for (const [key, code, type, category, activate, qcRequired] of [
+    ['rm', 'RM-1', 'RM', ids.category, true, true],
+    ['rmOk', 'RM-OK', 'RM', ids.category, true, false],
+    ['rm2', 'RM-2', 'RM', ids.category, true, false],
+    ['fg', 'FG-1', 'FG', ids.fgCategory, true, true],
+    ['draft', 'RM-D', 'RM', ids.category, false, true],
   ] as const) {
     await inTx(wm, async () => {
       ids[key] = await one(
-        `INSERT INTO master.items (code, name, type, category_id, base_uom_id, status) VALUES ($1, $1, $2, $3, $4, 'DRAFT') RETURNING id`,
-        [code, type, category, ids.uom],
+        `INSERT INTO master.items (code, name, type, category_id, base_uom_id, status, qc_required) VALUES ($1, $1, $2, $3, $4, 'DRAFT', $5) RETURNING id`,
+        [code, type, category, ids.uom, qcRequired],
       );
       await history('master.items', ids[key]!, null, 'DRAFT', wm);
     });
@@ -355,17 +364,18 @@ describe('postMovement', () => {
     const l = await lot();
     await post({ lotId: l.id, qty: '10' });
     await expect(post({ type: 'ISSUE', lotId: l.id, qty: '1' })).rejects.toMatchObject({ code: 'LOT_NOT_APPROVED', details: { status: 'QUARANTINE' } });
-    await setLot(l.id, 'UNDER_TEST', 'APPROVED');
+    await setLot(l.id, 'UNDER_TEST');
     await expect(post({ lotId: l.id, qty: '1' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
-    await setLot(l.id, 'HOLD');
-    await expect(post({ type: 'ISSUE', lotId: l.id, qty: '1' })).rejects.toMatchObject({ code: 'LOT_NOT_APPROVED', details: { status: 'HOLD' } });
+    await expect(post({ type: 'ISSUE', lotId: l.id, qty: '1' })).rejects.toMatchObject({ code: 'LOT_NOT_APPROVED', details: { status: 'UNDER_TEST' } });
+    const held = await approvedLot('10');
+    await setLot(held, 'HOLD');
+    await expect(post({ type: 'ISSUE', lotId: held, qty: '1' })).rejects.toMatchObject({ code: 'LOT_NOT_APPROVED', details: { status: 'HOLD' } });
   });
 
   it('a REJECTED lot leaves only by a witnessed destroy / return; the last one closes it; a destroyed lot never moves', async () => {
-    const l = await lot();
-    await post({ lotId: l.id, qty: '10' });
+    const l = { id: await approvedLot('10') };
     await expect(dispose('DESTROY', l.id, '1')).rejects.toMatchObject({ code: 'INVALID_TRANSITION' });
-    await setLot(l.id, 'UNDER_TEST', 'REJECTED');
+    await rejectLotForTest(l.id, { qaUserId: actors.qa!.userId, qcManagerUserId: actors.qcm!.userId });
     await expect(post({ type: 'ADJUSTMENT_OUT', lotId: l.id, qty: '1' })).rejects.toMatchObject({ code: 'LOT_NOT_APPROVED' });
     const rtv = await dispose('RETURN_TO_VENDOR', l.id, '4');
     expect(rtv.witness).toMatchObject({ userId: actors.qa!.userId, meaning: 'WITNESSED', recordTable: 'inv.lots', recordId: l.id, subject: `RETURN_TO_VENDOR lot ${l.id} qty 4.0000` });
@@ -385,16 +395,11 @@ describe('postMovement', () => {
   });
 
   describe('disposal witness (rule 1; owner 2026-11-19)', () => {
-    const rejected = async (qty = '10') => {
-      const l = await lot();
-      await post({ lotId: l.id, qty });
-      await setLot(l.id, 'UNDER_TEST', 'REJECTED');
-      return l.id;
-    };
+    const rejected = (qty = '10') => rejectedLot(qty);
     const postWith = (lotId: string, witness: SignatureProof | undefined, o: Partial<MovementInput> = {}, poster = 'wm') =>
       as(poster, (tx, a) => postMovement(tx, a, base({ type: 'DESTROY', lotId, qty: '1', ...(witness ? { witness } : {}), ...o })));
     const written = async (lotId: string) =>
-      (await raw<{ n: string }>(`SELECT count(*)::text AS n FROM core.e_signatures WHERE record_table = 'inv.lots' AND record_id = $1`, [lotId]))[0]!.n;
+      (await raw<{ n: string }>(`SELECT count(*)::text AS n FROM core.e_signatures WHERE record_table = 'inv.lots' AND record_id = $1 AND meaning = 'WITNESSED'`, [lotId]))[0]!.n;
 
     it('refuses a disposal without a witness, and a witness on any other movement', async () => {
       const id = await rejected();
@@ -519,8 +524,7 @@ describe('transfer', () => {
   });
 
   it('refuses the same location, too much, an inactive target, a REJECTED lot', async () => {
-    const l = await lot();
-    await post({ lotId: l.id, qty: '2' });
+    const l = { id: await approvedLot('2') };
     const t = (o: Partial<Parameters<typeof transfer>[2]>) =>
       as('store', (tx, a) =>
         transfer(tx, a, { lotId: l.id, fromLocationId: ids.loc1!, toLocationId: ids.loc2!, qty: '1', date: '2026-11-18', refDocType: 'TRANSFER', refDocId: '2', ...o }),
@@ -528,7 +532,7 @@ describe('transfer', () => {
     await expect(t({ toLocationId: ids.loc1 })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
     await expect(t({ qty: '3' })).rejects.toMatchObject({ code: 'INSUFFICIENT_STOCK' });
     await expect(t({ toLocationId: ids.locOff })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
-    await setLot(l.id, 'UNDER_TEST', 'REJECTED');
+    await rejectLotForTest(l.id, { qaUserId: actors.qa!.userId, qcManagerUserId: actors.qcm!.userId });
     await expect(t({})).rejects.toMatchObject({ code: 'LOT_NOT_APPROVED' });
   });
 });
@@ -560,9 +564,8 @@ describe('reverseMovements', () => {
   });
 
   it('cannot reverse a receipt whose stock has already been issued', async () => {
-    const l = await lot();
+    const l = await lot({ itemId: ids.rmOk });
     const receipt = await post({ lotId: l.id, qty: '5' });
-    await setLot(l.id, 'UNDER_TEST', 'APPROVED');
     await post({ type: 'ISSUE', lotId: l.id, qty: '1' });
     await expect(reverse([receipt.id])).rejects.toMatchObject({ code: 'INSUFFICIENT_STOCK' });
   });
@@ -573,10 +576,10 @@ describe('reservations', () => {
   const res = (lotId: string, qty: string, n = '1') => as('store', (tx, a) => reserve(tx, a, { lotId, qty, ...doc(n) }));
 
   it('reserve only APPROVED lots (rule 2) and never more than the free stock', async () => {
-    const l = await lot();
-    await post({ lotId: l.id, qty: '50' });
-    await expect(res(l.id, '1')).rejects.toMatchObject({ code: 'LOT_NOT_APPROVED', details: { status: 'QUARANTINE' } });
-    await setLot(l.id, 'UNDER_TEST', 'APPROVED');
+    const q = await lot();
+    await post({ lotId: q.id, qty: '50' });
+    await expect(res(q.id, '1')).rejects.toMatchObject({ code: 'LOT_NOT_APPROVED', details: { status: 'QUARANTINE' } });
+    const l = { id: await approvedLot('50') };
     await res(l.id, '30', '1');
     const again = await res(l.id, '10', '1');
     expect(again.qty).toBe('40.0000');
@@ -609,7 +612,8 @@ describe('reservations', () => {
 
 describe('FEFO', () => {
   it('offers usable lots earliest expiry first, net of other reservations, and allocates across them', async () => {
-    const mk = async (qty: string, o: Partial<NewLot>, status: string[] = ['UNDER_TEST', 'APPROVED']) => {
+    // rm2 needs no QC: its lots start APPROVED; HOLD stands for "not APPROVED".
+    const mk = async (qty: string, o: Partial<NewLot>, status: string[] = []) => {
       const l = await lot({ itemId: ids.rm2, ...o });
       await post({ lotId: l.id, qty });
       await setLot(l.id, ...status);
@@ -620,7 +624,7 @@ describe('FEFO', () => {
     const early = await mk('10', { expiryDate: '2027-01-31' });
     await mk('10', { expiryDate: '2026-11-18' }); // expires today: not offered
     await mk('10', { expiryDate: '2029-01-31', retestDate: '2026-11-01' }); // retest date passed
-    await mk('10', { expiryDate: '2026-12-31' }, ['UNDER_TEST']); // not APPROVED
+    await mk('10', { expiryDate: '2026-12-31' }, ['HOLD']); // not APPROVED
     await mk('10', { expiryDate: '2026-12-15', ownerCustomerId: ids.TOLL1, unitCost: '0' }); // toll stock
     await as('store', (tx, a) => reserve(tx, a, { lotId: early, qty: '4', refDocType: 'PROD_ORDER', refDocId: '31' }));
     await as('store', (tx, a) => reserve(tx, a, { lotId: late, qty: '3', refDocType: 'PROD_ORDER', refDocId: '32' }));
@@ -652,7 +656,6 @@ describe('FEFO', () => {
     await as('store', (tx, a) =>
       transfer(tx, a, { lotId: l.id, fromLocationId: ids.loc1!, toLocationId: ids.loc2!, qty: '3', date: '2026-11-18', refDocType: 'TRANSFER', refDocId: '40' }),
     );
-    await setLot(l.id, 'UNDER_TEST', 'APPROVED');
     const [first] = await as('store', (tx, a) =>
       fefoCandidates(tx, a.companyId, { itemId: ids.rm2!, purpose: 'ISSUE', asOf: '2026-11-18', locationIds: [ids.loc2!] }),
     );

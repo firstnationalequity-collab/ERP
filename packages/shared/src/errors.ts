@@ -80,6 +80,16 @@ export const ErrorCodes = [
   'CREDIT_LIMIT_EXCEEDED',
   /** The item has no APPROVED QC specification (M4; 0034). */
   'SPEC_NOT_APPROVED',
+  /** Disposition (M4 task 3; 0037): a test of the specification has no result yet. */
+  'QC_RESULTS_INCOMPLETE',
+  /** Disposition: some results of the sample are not reviewed yet. */
+  'QC_RESULTS_NOT_REVIEWED',
+  /** Approval refused: the latest result of a test failed. */
+  'QC_TEST_FAILED',
+  /** Rejection from UNDER_TEST refused: none of the latest results failed (architecture §4: any test failed). */
+  'QC_RESULTS_PASSED',
+  /** QC does not approve or reject a finished-goods lot; QA decides (build-plan M4). */
+  'FG_LOT_QA_DECIDES',
   'OPEN_DEVIATION',
   'DUPLICATE_REQUEST',
   'INTERNAL_ERROR',

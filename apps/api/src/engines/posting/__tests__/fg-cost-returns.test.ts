@@ -121,7 +121,6 @@ const expectGlEqualsLedger = async () => {
 async function approvedRm(qty: string, unitCost: string): Promise<string> {
   const l = await as('store', (tx, a) => createLot(tx, a, { source: 'GRN', itemId: ids.rm!, lotNo: `RM-${++seq}`, unitCost }));
   await postWithJournal('store', { lotId: l.id, qty });
-  await setLot(l.id, 'UNDER_TEST', 'APPROVED');
   return l.id;
 }
 
@@ -189,8 +188,9 @@ beforeAll(async () => {
   for (const [key, code, type, category] of [['rm', 'RM-Q', 'RM', ids.rmCategory], ['fg', 'FG-Q', 'FG', ids.fgCategory]] as const) {
     await inTx(wm, async () => {
       ids[key] = await one(
-        `INSERT INTO master.items (code, name, type, category_id, base_uom_id, status) VALUES ($1, $1, $2, $3, $4, 'DRAFT') RETURNING id`,
-        [code, type, category, ids.uom],
+        // The RM needs no QC: its GRN lots start APPROVED (answer 4); a QC decision needs a real sample (0037).
+        `INSERT INTO master.items (code, name, type, category_id, base_uom_id, status, qc_required) VALUES ($1, $1, $2, $3, $4, 'DRAFT', $5) RETURNING id`,
+        [code, type, category, ids.uom, type !== 'RM'],
       );
       await history('master.items', ids[key]!, null, 'DRAFT', wm);
     });

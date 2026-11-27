@@ -271,3 +271,21 @@ export async function lotIdsOfItems(q: Queryable, companyId: string, itemIds: st
   const rows = await q.select({ id: lots.id }).from(lots).where(and(eq(lots.companyId, companyId), inArray(lots.itemId, itemIds)));
   return rows.map((r) => r.id);
 }
+
+/** Ids of the lots in these statuses, oldest first, at most `limit`. */
+export async function lotIdsByStatus(q: Queryable, companyId: string, statuses: LotStatus[], limit: number): Promise<string[]> {
+  if (statuses.length === 0) return [];
+  const rows = await q
+    .select({ id: lots.id })
+    .from(lots)
+    .where(and(eq(lots.companyId, companyId), inArray(lots.status, statuses)))
+    .orderBy(asc(lots.id))
+    .limit(limit);
+  return rows.map((r) => r.id);
+}
+
+/** Sets the QC values of an approved lot (only with its QC disposition in the same transaction; DB guard 0037). */
+export async function setLotQcValues(tx: Tx, lotId: string, values: { assayPct?: string; waterPct?: string; retestDate?: string }): Promise<void> {
+  if (Object.keys(values).length === 0) return;
+  await tx.update(lots).set(values).where(eq(lots.id, lotId));
+}

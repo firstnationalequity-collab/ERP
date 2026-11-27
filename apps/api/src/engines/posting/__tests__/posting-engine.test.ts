@@ -45,19 +45,6 @@ async function actorFor(username: string, roleCodes: string[]): Promise<Actor> {
 const as = <T>(who: string, work: (tx: Tx, actor: Actor) => Promise<T>) =>
   withTransaction({ userId: actors[who]!.userId, companyId: '1' }, (tx) => work(tx, actors[who]!));
 
-async function setLot(lotId: string, ...path: string[]): Promise<void> {
-  await withTransaction(systemContext('test'), async (tx) => {
-    const { rows } = await tx.execute<{ status: string }>(sql`SELECT status FROM inv.lots WHERE id = ${lotId}`);
-    let from = rows[0]!.status;
-    for (const to of path) {
-      await tx.execute(sql`INSERT INTO core.status_history (entity_table, entity_id, from_status, to_status, actor_id)
-                           VALUES ('inv.lots', ${lotId}, ${from}, ${to}, 1)`);
-      await tx.execute(sql`UPDATE inv.lots SET status = ${to} WHERE id = ${lotId}`);
-      from = to;
-    }
-  });
-}
-
 const newLot = (o: Partial<NewLot> = {}) =>
   as('store', (tx, a) => createLot(tx, a, { source: 'GRN', itemId: ids.rm!, lotNo: `P-${++seq}`, unitCost: '10.00', ...o }));
 
@@ -81,10 +68,10 @@ const postWithJournal = (o: Partial<MovementInput>, who = 'store') =>
     return { m, ...posting };
   });
 
-async function receivedLot(qty: string, o: Partial<NewLot> = {}, approve = true): Promise<string> {
+/** Lot with `qty` received; the items need no QC, so it is APPROVED from creation (0037). */
+async function receivedLot(qty: string, o: Partial<NewLot> = {}): Promise<string> {
   const l = await newLot(o);
   await postWithJournal({ lotId: l.id, qty });
-  if (approve) await setLot(l.id, 'UNDER_TEST', 'APPROVED');
   return l.id;
 }
 
@@ -138,7 +125,8 @@ beforeAll(async () => {
   for (const [key, code, category] of [['rm', 'RM-1', ids.category], ['api', 'API-1', ids.apiCategory]] as const) {
     await inTx(wm, async () => {
       ids[key] = await one(
-        `INSERT INTO master.items (code, name, type, category_id, base_uom_id, status) VALUES ($1, $1, 'RM', $2, $3, 'DRAFT') RETURNING id`,
+        // No QC needed: GRN lots start APPROVED (answer 4); a QC decision needs a real sample (0037).
+        `INSERT INTO master.items (code, name, type, category_id, base_uom_id, status, qc_required) VALUES ($1, $1, 'RM', $2, $3, 'DRAFT', false) RETURNING id`,
         [code, category, ids.uom],
       );
       await history('master.items', ids[key]!, null, 'DRAFT', wm);

@@ -297,6 +297,33 @@ export async function lotStock(q: Queryable, companyId: string, lotId: string): 
     .sort((a, b) => byNumber(a.locationId, b.locationId));
 }
 
+/** Read-only, for work queues: ids of the lots in these statuses, oldest first (at most `limit`). */
+export async function lotIdsByStatus(q: Queryable, companyId: string, statuses: LotStatus[], limit = 500): Promise<string[]> {
+  return repo.lotIdsByStatus(q, companyId, statuses, limit);
+}
+
+/** The lot locked FOR UPDATE, for a status decision taken on its current state (QC disposition). */
+export async function lockLotForDecision(tx: Tx, companyId: string, lotId: string): Promise<Lot> {
+  return lockLotOrFail(tx, companyId, lotId);
+}
+
+/**
+ * QC approval (M4 task 3; 0037): writes the assay, water and new retest date found by QC onto the lot. The database
+ * refuses it unless the QC Manager's APPROVED disposition of this lot, carrying the same values, was written in the
+ * same transaction. Values not given are left as they are.
+ */
+export async function recordLotQcValues(
+  tx: Tx,
+  lotId: string,
+  values: { assayPct: string | null; waterPct: string | null; retestDate: string | null },
+): Promise<void> {
+  await repo.setLotQcValues(tx, lotId, {
+    ...(values.assayPct !== null ? { assayPct: values.assayPct } : {}),
+    ...(values.waterPct !== null ? { waterPct: values.waterPct } : {}),
+    ...(values.retestDate !== null ? { retestDate: values.retestDate } : {}),
+  });
+}
+
 export async function getLot(q: Queryable, companyId: string, lotId: string): Promise<Lot> {
   const lot = await repo.findLot(q, companyId, lotId);
   if (!lot) throw new AppError('NOT_FOUND', `Lot ${lotId} not found`);

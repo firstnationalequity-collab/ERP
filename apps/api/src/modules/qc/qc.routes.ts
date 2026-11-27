@@ -4,7 +4,10 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 import {
+  ApproveLotRequest,
   ApproveSpecRequest,
+  DispositionListQuery,
+  RejectLotRequest,
   CreateSpecRequest,
   EnterResultsRequest,
   RejectSpecRequest,
@@ -20,6 +23,7 @@ import { asyncHandler, authOf, requestMeta } from '../../core/auth/middleware';
 import { idempotent } from '../../core/idempotency/idempotency';
 import * as specs from './specs.service';
 import * as samples from './samples.service';
+import * as dispositions from './dispositions.service';
 
 const IdParam = z.object({ id: z.string().regex(/^\d+$/, 'Invalid id') });
 const idOf = (req: Request) => IdParam.parse(req.params).id;
@@ -65,4 +69,15 @@ r.post('/samples/:id/results', requirePermission('qc.result.enter'), once, async
 }));
 r.post('/samples/:id/review', requirePermission('qc.result.review'), once, asyncHandler(async (req, res) => {
   res.json(await samples.reviewResults(authOf(req), idOf(req), ReviewResultsRequest.parse(req.body), requestMeta(req)));
+}));
+
+// ---------------------------------------------------------------- lot disposition (M4 task 3; 0037)
+// QC Manager approves or rejects a material lot with an e-signature on the lot (qc.lot.change_status). FG lots: QA.
+r.get('/lots', VIEW, asyncHandler(async (req, res) => { res.json(await dispositions.listDispositionLots(authOf(req), DispositionListQuery.parse(req.query))); }));
+r.get('/lots/:id', VIEW, asyncHandler(async (req, res) => { res.json(await dispositions.getDispositionLot(authOf(req), idOf(req))); }));
+r.post('/lots/:id/approve', requirePermission('qc.lot.change_status'), once, asyncHandler(async (req, res) => {
+  res.json(await dispositions.approveLot(authOf(req), idOf(req), ApproveLotRequest.parse(req.body), requestMeta(req)));
+}));
+r.post('/lots/:id/reject', requirePermission('qc.lot.change_status'), once, asyncHandler(async (req, res) => {
+  res.json(await dispositions.rejectLot(authOf(req), idOf(req), RejectLotRequest.parse(req.body), requestMeta(req)));
 }));

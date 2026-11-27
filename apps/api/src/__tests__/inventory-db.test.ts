@@ -7,11 +7,13 @@ import { InboundMovementTypes, StockMovementType } from '@albert/shared';
 import { databaseUrl } from '../config/env';
 import { runSeed } from '../db/seed/run';
 import { createTestUser } from '../test/factories';
+import { rejectLotForTest } from '../test/lot-fixtures';
 
 const client = new pg.Client({ connectionString: databaseUrl });
 let wm: string; // Warehouse Manager: creates items
 let qa: string; // QA Manager: activates GMP items; QA witness for disposals (qa.lot.witness)
 let fm: string; // Finance Manager: periods; holds no qa.lot.witness
+let qcm: string; // QC Manager: rejects lots in fixtures (0037)
 const ids: Record<string, string> = {};
 let seq = 0;
 
@@ -38,11 +40,11 @@ const history = (table: string, id: string, from: string | null, to: string, act
     table, id, from, to, actor,
   ]);
 
-async function activeItem(code: string, type: string): Promise<string> {
+async function activeItem(code: string, type: string, qcRequired = true): Promise<string> {
   const id = await tx(async () => {
     const itemId = await one(
-      `INSERT INTO master.items (code, name, type, category_id, base_uom_id, status) VALUES ($1, $1, $2, $3, $4, 'DRAFT') RETURNING id`,
-      [code, type, ids.category, ids.uom],
+      `INSERT INTO master.items (code, name, type, category_id, base_uom_id, status, qc_required) VALUES ($1, $1, $2, $3, $4, 'DRAFT', $5) RETURNING id`,
+      [code, type, ids.category, ids.uom, qcRequired],
     );
     await history('master.items', itemId, null, 'DRAFT', wm);
     return itemId;
@@ -60,24 +62,28 @@ interface LotOptions {
   owner?: string;
   /** Default: PRODUCTION_OUTPUT for the FG item, else GRN. */
   source?: string;
+  /** A GRN lot of the item without QC, created APPROVED (answer 4): APPROVED stock without a QC decision (0037). */
+  approved?: boolean;
 }
-/** A new QUARANTINE lot, as the engine creates it. */
+/** A new QUARANTINE lot (APPROVED with `approved`), as the engine creates it. */
 function newLot(opts: LotOptions = {}): Promise<string> {
   seq += 1;
+  const status = opts.approved ? 'APPROVED' : 'QUARANTINE';
   return tx(async () => {
     const id = await one(
       `INSERT INTO inv.lots (item_id, lot_no, status, unit_cost, owner_type, owner_customer_id, source)
-       VALUES ($1, $2, 'QUARANTINE', $3, $4, $5, $6) RETURNING id`,
+       VALUES ($1, $2, $7, $3, $4, $5, $6) RETURNING id`,
       [
-        opts.item ?? ids.rm,
+        opts.approved ? ids.rmOk : (opts.item ?? ids.rm),
         `L-${seq}`,
         opts.unitCost ?? '10',
         opts.owner ? 'CUSTOMER' : 'OWN',
         opts.owner ?? null,
         opts.source ?? (opts.item === ids.fg ? 'PRODUCTION_OUTPUT' : 'GRN'),
+        status,
       ],
     );
-    await history('inv.lots', id, null, 'QUARANTINE');
+    await history('inv.lots', id, null, status);
     return id;
   });
 }
@@ -139,6 +145,7 @@ beforeAll(async () => {
   wm = await createTestUser({ username: 'wm001', roleCodes: ['WAREHOUSE_MANAGER'] });
   qa = await createTestUser({ username: 'qam001', roleCodes: ['QA_MANAGER'] });
   fm = await createTestUser({ username: 'fm001', roleCodes: ['FINANCE_MANAGER'] });
+  qcm = await createTestUser({ username: 'qcm001', roleCodes: ['QC_MANAGER'] });
   await tx(async () => {
     ids.uom = await one(`INSERT INTO master.uoms (code, name) VALUES ('KG', 'Kilogram') RETURNING id`);
     ids.category = await one(`INSERT INTO master.item_categories (code, name) VALUES ('RM', 'Raw material') RETURNING id`);
@@ -157,6 +164,7 @@ beforeAll(async () => {
   });
   ids.rm = await activeItem('RM-1', 'RM');
   ids.fg = await activeItem('FG-1', 'FG');
+  ids.rmOk = await activeItem('RM-OK', 'RM', false);
   ids.draft = await tx(async () => {
     const id = await one(
       `INSERT INTO master.items (code, name, type, category_id, base_uom_id, status) VALUES ('RM-D', 'Draft', 'RM', $1, $2, 'DRAFT') RETURNING id`,
@@ -238,8 +246,8 @@ describe('lots', () => {
   });
 
   it('only a finished-goods lot is RELEASED', async () => {
-    const rm = await newLot();
-    await expect(setLot(rm, 'UNDER_TEST', 'APPROVED', 'RELEASED')).rejects.toThrow(/only a finished-goods lot/);
+    const rm = await newLot({ approved: true });
+    await expect(setLot(rm, 'RELEASED')).rejects.toThrow(/only a finished-goods lot/);
     const fg = await newLot({ item: ids.fg });
     await setLot(fg, 'UNDER_TEST', 'APPROVED', 'RELEASED');
   });
@@ -252,7 +260,7 @@ describe('stock ledger and balances', () => {
       await insertMove('RECEIPT', lot, '250.5', { value: '2505' });
       expect(await balance(lot)).toBe('250.5000');
     });
-    await setLot(lot, 'UNDER_TEST', 'APPROVED');
+    await setLot(lot, 'UNDER_TEST');
     await expect(move('RECEIPT', lot, '1')).rejects.toThrow(/starting status \(QUARANTINE/);
   });
 
@@ -262,11 +270,12 @@ describe('stock ledger and balances', () => {
     await expect(move('ISSUE', lot, '-10')).rejects.toThrow(/LOT_NOT_APPROVED/);
     await setLot(lot, 'UNDER_TEST');
     await expect(move('ISSUE', lot, '-10')).rejects.toThrow(/LOT_NOT_APPROVED/);
-    await setLot(lot, 'APPROVED');
-    await move('ISSUE', lot, '-10');
-    expect(await balance(lot)).toBe('90.0000');
-    await setLot(lot, 'HOLD');
-    await expect(move('ISSUE', lot, '-10')).rejects.toThrow(/LOT_NOT_APPROVED/);
+    const ok = await newLot({ approved: true });
+    await move('RECEIPT', ok, '100');
+    await move('ISSUE', ok, '-10');
+    expect(await balance(ok)).toBe('90.0000');
+    await setLot(ok, 'HOLD');
+    await expect(move('ISSUE', ok, '-10')).rejects.toThrow(/LOT_NOT_APPROVED/);
   });
 
   it('dispatches only RELEASED finished goods (rule 2: LOT_NOT_RELEASED)', async () => {
@@ -281,9 +290,8 @@ describe('stock ledger and balances', () => {
   });
 
   it('never lets stock go negative (rule 3): INSUFFICIENT_STOCK, and the CHECK as backstop', async () => {
-    const lot = await newLot();
+    const lot = await newLot({ approved: true });
     await move('RECEIPT', lot, '5');
-    await setLot(lot, 'UNDER_TEST', 'APPROVED');
     await expect(move('ISSUE', lot, '-5.0001')).rejects.toThrow(/INSUFFICIENT_STOCK/);
     await expect(move('ISSUE', lot, '-1', { location: ids.loc2 })).rejects.toThrow(/INSUFFICIENT_STOCK/);
     expect(await balance(lot)).toBe('5.0000');
@@ -383,18 +391,20 @@ describe('rejected lots (rule 1)', () => {
     );
     await client.query(`UPDATE inv.lots SET status = $1 WHERE id = $2`, [to, lot]);
   }
+  /** QA holds the lot, the QC Manager rejects it with a disposition (0037). */
+  const reject = (lot: string) => rejectLotForTest(lot, { qaUserId: qa, qcManagerUserId: qcm });
   const rejectedLot = async (qty: string) => {
-    const lot = await newLot();
+    const lot = await newLot({ approved: true });
     await move('RECEIPT', lot, qty);
-    await setLot(lot, 'UNDER_TEST', 'REJECTED');
+    await reject(lot);
     return lot;
   };
 
   it('leave only by a witnessed DESTROY / RETURN_TO_VENDOR; closed only when empty, with that signature; then never move', async () => {
-    const lot = await newLot();
+    const lot = await newLot({ approved: true });
     await move('RECEIPT', lot, '20');
     await expect(dispose('DESTROY', lot, '-20')).rejects.toThrow(/only a REJECTED lot/);
-    await setLot(lot, 'UNDER_TEST', 'REJECTED');
+    await reject(lot);
     await expect(move('TRANSFER_OUT', lot, '-5')).rejects.toThrow(/LOT_NOT_APPROVED: .*REJECTED/);
     await expect(move('ADJUSTMENT_OUT', lot, '-5')).rejects.toThrow(/LOT_NOT_APPROVED/);
     const first = await dispose('DESTROY', lot, '-15');
@@ -502,10 +512,11 @@ describe('reservations', () => {
     tx(() => client.query(`INSERT INTO inv.stock_reservations (lot_id, qty, ref_doc_type, ref_doc_id) VALUES ($1, $2, 'PROD_ORDER', $3)`, [lot, qty, ref]));
 
   it('reserve only APPROVED lots (rule 2)', async () => {
-    const lot = await newLot();
+    const q = await newLot();
+    await move('RECEIPT', q, '50');
+    await expect(reserve(q, '10')).rejects.toThrow(/LOT_NOT_APPROVED/);
+    const lot = await newLot({ approved: true });
     await move('RECEIPT', lot, '50');
-    await expect(reserve(lot, '10')).rejects.toThrow(/LOT_NOT_APPROVED/);
-    await setLot(lot, 'UNDER_TEST', 'APPROVED');
     await reserve(lot, '10');
     await setLot(lot, 'HOLD');
     await expect(
@@ -516,9 +527,8 @@ describe('reservations', () => {
   });
 
   it('never exceed the lot stock, so reserved stock cannot be issued elsewhere', async () => {
-    const lot = await newLot();
+    const lot = await newLot({ approved: true });
     await move('RECEIPT', lot, '50');
-    await setLot(lot, 'UNDER_TEST', 'APPROVED');
     await expect(reserve(lot, '50.0001')).rejects.toThrow(/INSUFFICIENT_STOCK/);
     await reserve(lot, '40', 1);
     await expect(move('ISSUE', lot, '-11')).rejects.toThrow(/INSUFFICIENT_STOCK: .*reserved/);
@@ -532,9 +542,8 @@ describe('reservations', () => {
   });
 
   it('keep their lot and document and are never deleted', async () => {
-    const lot = await newLot();
+    const lot = await newLot({ approved: true });
     await move('RECEIPT', lot, '5');
-    await setLot(lot, 'UNDER_TEST', 'APPROVED');
     await reserve(lot, '1', 7);
     await expect(tx(() => client.query(`UPDATE inv.stock_reservations SET ref_doc_id = 8 WHERE lot_id = $1`, [lot]))).rejects.toThrow(/keeps its lot/);
     await expect(tx(() => client.query(`DELETE FROM inv.stock_reservations WHERE lot_id = $1`, [lot]))).rejects.toThrow(/APPEND_ONLY/);
@@ -571,9 +580,8 @@ describe('movement valuation (0015)', () => {
   });
 
   it('gives the movement that empties a lot the residual value, so the lot ends at exactly zero', async () => {
-    const lot = await newLot({ unitCost: '0.03' });
+    const lot = await newLot({ approved: true, unitCost: '0.03' });
     await move('RECEIPT', lot, '1', { unitCost: '0.03', value: '0.03' });
-    await setLot(lot, 'UNDER_TEST', 'APPROVED');
     await move('ISSUE', lot, '-0.5', { unitCost: '0.03', value: '-0.02' }); // 0.015 → 0.02
     // The last 0.5 is nominally 0.02 too, but only 0.01 is left on the lot.
     await expect(move('ISSUE', lot, '-0.5', { unitCost: '0.03', value: '-0.02' })).rejects.toThrow(/valued -0.01, not -0.02/);
@@ -582,9 +590,8 @@ describe('movement valuation (0015)', () => {
   });
 
   it('never takes more value out than the lot still holds while stock remains', async () => {
-    const lot = await newLot({ unitCost: '0.03' });
+    const lot = await newLot({ approved: true, unitCost: '0.03' });
     await move('RECEIPT', lot, '1', { unitCost: '0.03', value: '0.03' });
-    await setLot(lot, 'UNDER_TEST', 'APPROVED');
     await move('ISSUE', lot, '-0.5', { unitCost: '0.03', value: '-0.02' });
     await move('ISSUE', lot, '-0.25', { unitCost: '0.03', value: '-0.01' }); // 0.0075 → 0.01 = all that is left
     await expect(move('ISSUE', lot, '-0.2', { unitCost: '0.03', value: '-0.01' })).rejects.toThrow(/valued 0.00, not -0.01/);
@@ -642,9 +649,8 @@ describe('empty lots hold no value (0016)', () => {
 
   /** 1 @ 3.33, issue 0.5, return 0.5, issue 0.5 → 0.5 / 1.66; returns the lot and the return row. */
   async function paisaLot(): Promise<{ lot: string; ret: string }> {
-    const lot = await newLot({ unitCost: '3.33' });
+    const lot = await newLot({ approved: true, unitCost: '3.33' });
     await move('RECEIPT', lot, '1', { unitCost: '3.33', value: '3.33' });
-    await setLot(lot, 'UNDER_TEST', 'APPROVED');
     await move('ISSUE', lot, '-0.5', { unitCost: '3.33', value: '-1.67' });
     const ret = await move('ISSUE_RETURN', lot, '0.5', { unitCost: '3.33', value: '1.67' });
     await move('ISSUE', lot, '-0.5', { unitCost: '3.33', value: '-1.67' });

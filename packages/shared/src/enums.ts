@@ -207,9 +207,10 @@ export type LandedCostTaxRole = (typeof LandedCostTaxRole)[number];
 /**
  * QC sample request (owner 2026-11-25 Q1: created OPEN with each GRN lot; FG output in M6).
  * OPEN → SAMPLED (M4 task 2, 0036): the analyst took the sample (lot → UNDER_TEST, SAMPLE_ISSUE movements, spec pinned).
+ * SAMPLED → CLOSED (M4 task 3, 0037): the QC Manager approved or rejected the lot on its reviewed results.
  * CANCELLED: its GRN was reversed before any sample was taken (owner 2026-11-25, answer 5; 0028).
  */
-export const SampleRequestStatus = ['OPEN', 'SAMPLED', 'CANCELLED'] as const;
+export const SampleRequestStatus = ['OPEN', 'SAMPLED', 'CLOSED', 'CANCELLED'] as const;
 export type SampleRequestStatus = (typeof SampleRequestStatus)[number];
 
 /**

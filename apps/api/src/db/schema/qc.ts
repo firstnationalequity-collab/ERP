@@ -1,7 +1,7 @@
 // Drizzle description of the `qc` schema. Source of truth: src/db/migrations/0027_grn.sql (sample requests), 0034 (specs),
-// 0036 (sampling, results, reviews).
+// 0036 (sampling, results, reviews), 0037 (dispositions).
 import { sql } from 'drizzle-orm';
-import { boolean, integer, numeric, pgSchema, text } from 'drizzle-orm/pg-core';
+import { boolean, date, integer, numeric, pgSchema, text } from 'drizzle-orm/pg-core';
 import type { QcResultType, QcSpecStatus, SampleRequestStatus } from '@albert/shared';
 import { auditColumns, bigintString, companyId, identityId, tstz } from './columns';
 
@@ -82,5 +82,23 @@ export const specTests = qc.table('spec_tests', {
   unit: text('unit'),
   isAssay: boolean('is_assay').notNull().default(false),
   isWater: boolean('is_water').notNull().default(false),
+  ...auditColumns(),
+});
+
+/** 0037: insert-only; the QC Manager's APPROVED / REJECTED decision on a lot, with their e-signature on the lot. */
+export const dispositions = qc.table('dispositions', {
+  id: identityId(),
+  companyId: companyId(),
+  lotId: bigintString('lot_id').notNull(),
+  sampleRequestId: bigintString('sample_request_id'),
+  fromStatus: text('from_status').$type<'UNDER_TEST' | 'HOLD'>().notNull(),
+  decision: text('decision').$type<'APPROVED' | 'REJECTED'>().notNull(),
+  assayPct: numeric('assay_pct', { precision: 9, scale: 4 }),
+  waterPct: numeric('water_pct', { precision: 9, scale: 4 }),
+  retestDate: date('retest_date', { mode: 'string' }),
+  reason: text('reason').notNull(),
+  esignId: bigintString('esign_id').notNull(),
+  decidedBy: bigintString('decided_by').notNull().default(sql`core.current_user_id()`),
+  decidedAt: tstz('decided_at').notNull().defaultNow(),
   ...auditColumns(),
 });

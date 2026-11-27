@@ -169,6 +169,8 @@ Only **APPROVED** material lots can be issued or reserved; only **RELEASED** FG 
 
 **QC sampling** (owner 2026-11-27; 0035, 0036): taking a sample (`qc.result.enter`) moves the lot QUARANTINE / RETEST_DUE → UNDER_TEST and posts SAMPLE_ISSUE rows (sample type TEST or RETENTION) out of the lot, only from a QUARANTINE / UNDER_TEST lot; a sample row is never reversed. The request pins the APPROVED spec version; results are insert-only with pass computed from the limits; reviewer ≠ analyst, e-signature REVIEWED.
 
+**QC disposition** (M4 task 3; 0037; defaults in decisions.md 2026-11-27): the QC Manager (`qc.lot.change_status`) signs on the lot (APPROVED / REJECTED, reason = the signature reason); each decision is an insert-only `qc.dispositions` row and closes the sample request (SAMPLED → CLOSED). Approve: every pinned spec test has a reviewed result, the latest of each passed, expiry not reached; the latest assay / water results are written onto the lot (4 decimals); a reached retest date needs the next one. Reject: a reviewed failed result (UNDER_TEST), or a material lot on HOLD. Never an FG lot (`FG_LOT_QA_DECIDES`). The decider entered none of the results. The DB refuses these lot moves, and any change of assay / water / retest date, without the disposition in the same transaction.
+
 **Master statuses** (M2; through core/transition like every status, rule 7; decisions 2026-11-18):
 
 | Record | Moves | Permission key | Condition |

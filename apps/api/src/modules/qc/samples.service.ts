@@ -39,18 +39,23 @@ import * as repo from './sample-requests.repo';
 
 const ENTER_KEY = 'qc.result.enter';
 const REVIEW_KEY = 'qc.result.review';
+const DECIDE_KEY = 'qc.lot.change_status';
 
 /** OPEN → SAMPLED: the analyst takes the sample. */
 export const SamplingMoves = defineTransitions<SampleRequestStatus>({
   entityTable: SAMPLE_REQUEST_TABLE,
   statuses: SampleRequestStatus,
-  moves: [{ from: 'OPEN', to: 'SAMPLED', permission: ENTER_KEY }],
+  moves: [
+    { from: 'OPEN', to: 'SAMPLED', permission: ENTER_KEY },
+    // M4 task 3 (0037): the QC Manager's disposition of the lot closes its request.
+    { from: 'SAMPLED', to: 'CLOSED', permission: DECIDE_KEY, reasonRequired: true },
+  ],
 });
 
 /**
  * The lot moves QC makes with sampling and results (architecture §4): QUARANTINE / RETEST_DUE → UNDER_TEST when the
  * sample is taken; UNDER_TEST → HOLD automatically with a failed result on an FG lot (owner 2026-11-18). QC Manager
- * disposition (APPROVED / REJECTED) is task 3.
+ * disposition (UNDER_TEST → APPROVED / REJECTED, material HOLD → REJECTED) is dispositions.service.ts (task 3).
  */
 export const QcLotMoves = defineTransitions<LotStatus>({
   entityTable: LOT_TABLE,
@@ -59,6 +64,10 @@ export const QcLotMoves = defineTransitions<LotStatus>({
     { from: 'QUARANTINE', to: 'UNDER_TEST', permission: ENTER_KEY, reasonRequired: true },
     { from: 'RETEST_DUE', to: 'UNDER_TEST', permission: ENTER_KEY, reasonRequired: true },
     { from: 'UNDER_TEST', to: 'HOLD', permission: ENTER_KEY, reasonRequired: true },
+    // M4 task 3 (0037; dispositions.service.ts): QC Manager disposition of a material lot, e-signature on the lot.
+    { from: 'UNDER_TEST', to: 'APPROVED', permission: DECIDE_KEY, esign: ['APPROVED'], reasonRequired: true },
+    { from: 'UNDER_TEST', to: 'REJECTED', permission: DECIDE_KEY, esign: ['REJECTED'], reasonRequired: true },
+    { from: 'HOLD', to: 'REJECTED', permission: DECIDE_KEY, esign: ['REJECTED'], reasonRequired: true },
   ],
 });
 

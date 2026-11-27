@@ -26,6 +26,7 @@ export const MENU: MenuEntry[] = [
   { key: 'qc-specs', label: 'Specifications', path: '/qc/specs', group: 'Quality control', anyOf: ['qc.view'] },
   { key: 'qc-samples', label: 'Sample queue', path: '/qc/samples', group: 'Quality control', anyOf: ['qc.view'] },
   { key: 'qc-review', label: 'Results review', path: '/qc/review', group: 'Quality control', anyOf: ['qc.view'] },
+  { key: 'qc-lots', label: 'Lot disposition', path: '/qc/lots', group: 'Quality control', anyOf: ['qc.view'] },
   { key: 'items', label: 'Items', path: '/master/items', group: 'Masters', anyOf: ['master.view'] },
   { key: 'formulas', label: 'Master formulas', path: '/master/formulas', group: 'Masters', anyOf: ['master.view'] },
   { key: 'products', label: 'Products', path: '/master/products', group: 'Masters', anyOf: ['master.view'] },

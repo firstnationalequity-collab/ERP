@@ -18,6 +18,7 @@ import { permissionKeysForUser } from '../core/auth/auth.repo';
 import type { Actor } from '../core/transition/transition';
 import { verifyWitness } from '../core/esign/esign.service';
 import { createTestUser, TEST_PASSWORD } from '../test/factories';
+import { rejectLotForTest } from '../test/lot-fixtures';
 import {
   closeBatchCost,
   closeDisposedLot,
@@ -174,6 +175,8 @@ beforeAll(async () => {
   actors.wm = await actorFor('d_wm', ['WAREHOUSE_MANAGER']);
   actors.qca = await actorFor('d_qca', ['QC_ANALYST']);
   const qa = await createTestUser({ username: 'd_qa', roleCodes: ['QA_MANAGER'] });
+  ids.qaUser = qa;
+  ids.qcmUser = (await actorFor('d_qcm', ['QC_MANAGER'])).userId;
   const wm = actors.wm.userId;
   const fm = actors.fm.userId;
 
@@ -193,15 +196,18 @@ beforeAll(async () => {
     ids.cust = await one(`INSERT INTO master.customers (code, name, ntn, status) VALUES ('CUST1', 'Customer', '7654321', 'ACTIVE') RETURNING id`);
     await history('master.customers', ids.cust, null, 'ACTIVE');
   });
-  for (const [key, code, type, category] of [
-    ['rm', 'RM-1', 'RM', ids.rmCategory],
-    ['api', 'API-1', 'API', ids.apiCategory],
-    ['fg', 'FG-1', 'FG', ids.fgCategory],
+  // rmOk / apiOk need no QC: their GRN lots start APPROVED (answer 4), so fixtures get APPROVED stock without a QC decision (0037).
+  for (const [key, code, type, category, qcRequired] of [
+    ['rm', 'RM-1', 'RM', ids.rmCategory, true],
+    ['rmOk', 'RM-OK', 'RM', ids.rmCategory, false],
+    ['api', 'API-1', 'API', ids.apiCategory, true],
+    ['apiOk', 'API-OK', 'API', ids.apiCategory, false],
+    ['fg', 'FG-1', 'FG', ids.fgCategory, true],
   ] as const) {
     await inTx(wm, async () => {
       ids[key] = await one(
-        `INSERT INTO master.items (code, name, type, category_id, base_uom_id, status) VALUES ($1, $1, $2, $3, $4, 'DRAFT') RETURNING id`,
-        [code, type, category, ids.uom],
+        `INSERT INTO master.items (code, name, type, category_id, base_uom_id, status, qc_required) VALUES ($1, $1, $2, $3, $4, 'DRAFT', $5) RETURNING id`,
+        [code, type, category, ids.uom, qcRequired],
       );
       await history('master.items', ids[key]!, null, 'DRAFT', wm);
     });
@@ -288,9 +294,8 @@ describe('M2 Done when', () => {
   });
 
   it('3. negative stock is refused by the database', async () => {
-    const lot = await newLot('store', { lotNo: 'DW-NEG', unitCost: '2.00' });
+    const lot = await newLot('store', { itemId: ids.rmOk, lotNo: 'DW-NEG', unitCost: '2.00' });
     await postDoc('store', [{ lotId: lot.id, qty: '3' }], 'GRN');
-    await setLot(lot.id, 'UNDER_TEST', 'APPROVED');
     // Engine first (clear error), nothing written.
     await expect(postDoc('store', [{ type: 'ISSUE', lotId: lot.id, qty: '3.0001' }])).rejects.toMatchObject({ code: 'INSUFFICIENT_STOCK' });
     // Around the engine: the ledger trigger refuses the row ...
@@ -315,9 +320,8 @@ describe('M2 Done when', () => {
   it('4. customer-owned (toll) stock moves at zero value and posts no journal (rule 12)', async () => {
     const journals = async () => (await q<{ n: string }>(`SELECT count(*)::text AS n FROM fin.journal_entries`))[0]!.n;
     const before = await journals();
-    const lot = await newLot('store', { lotNo: 'DW-TOLL', ownerCustomerId: ids.toll });
+    const lot = await newLot('store', { itemId: ids.rmOk, lotNo: 'DW-TOLL', ownerCustomerId: ids.toll });
     const rec = await postDoc('store', [{ lotId: lot.id, qty: '50' }], 'GRN');
-    await setLot(lot.id, 'UNDER_TEST', 'APPROVED');
     const iss = await postDoc('store', [{ type: 'ISSUE', lotId: lot.id, qty: '20' }], 'PROD_ORDER');
     const fg = await as('sup', (tx, a) => createLot(tx, a, { source: 'PRODUCTION_OUTPUT', itemId: ids.fg!, lotNo: 'DW-TOLL-FG', ownerCustomerId: ids.toll, unitCost: '0' }));
     const out = await postDoc('sup', [{ type: 'OUTPUT', lotId: fg.id, qty: '200', value: '0.00' }], 'PROD_ORDER');
@@ -337,9 +341,9 @@ describe('M2 Done when', () => {
 
   it('5. GL inventory = Σ ledger movement values after every movement type (per inventory account)', async () => {
     // RECEIPT — RM and API (API on its own stock account).
-    const rmA = await newLot('store', { lotNo: 'DW-A', unitCost: '3.33' });
+    const rmA = await newLot('store', { itemId: ids.rmOk, lotNo: 'DW-A', unitCost: '3.33' });
     await postDoc('store', [{ lotId: rmA.id, qty: '100' }], 'GRN'); // 333.00
-    const api = await newLot('store', { lotNo: 'DW-P', itemId: ids.api, unitCost: '1234.56' });
+    const api = await newLot('store', { lotNo: 'DW-P', itemId: ids.apiOk, unitCost: '1234.56' });
     const recApi = await postDoc('store', [{ lotId: api.id, qty: '10' }], 'GRN'); // 12345.60
     expect(lineView(recApi.entry!)).toEqual([['1315', '12345.60', '0.00'], ['2120', '0.00', '12345.60']]);
     await expectGlEqualsLedger('RECEIPT');
@@ -362,8 +366,6 @@ describe('M2 Done when', () => {
     await expectGlEqualsLedger('TRANSFER');
 
     // ISSUE (two categories, one production order, one journal) and ISSUE_RETURN.
-    await setLot(rmA.id, 'UNDER_TEST', 'APPROVED');
-    await setLot(api.id, 'UNDER_TEST', 'APPROVED');
     const order = doc();
     const issue = await as('store', async (tx, a) => {
       const ms = [
@@ -422,12 +424,12 @@ describe('M2 Done when', () => {
     await expectGlEqualsLedger('reversal of an adjustment');
 
     // DESTROY and RETURN_TO_VENDOR of REJECTED lots (Warehouse Manager, inv.lot.dispose, QA witness qa.lot.witness).
-    const rej = await newLot('store', { lotNo: 'DW-B', unitCost: '5.00' });
+    const rej = await newLot('store', { itemId: ids.rmOk, lotNo: 'DW-B', unitCost: '5.00' });
     await postDoc('store', [{ lotId: rej.id, qty: '10' }], 'GRN');
-    const vend = await newLot('store', { lotNo: 'DW-C', unitCost: '7.77' });
+    const vend = await newLot('store', { itemId: ids.rmOk, lotNo: 'DW-C', unitCost: '7.77' });
     await postDoc('store', [{ lotId: vend.id, qty: '4' }], 'GRN');
-    await setLot(rej.id, 'UNDER_TEST', 'REJECTED');
-    await setLot(vend.id, 'UNDER_TEST', 'REJECTED');
+    await rejectLotForTest(rej.id, { qaUserId: ids.qaUser!, qcManagerUserId: ids.qcmUser! });
+    await rejectLotForTest(vend.id, { qaUserId: ids.qaUser!, qcManagerUserId: ids.qcmUser! });
     await expect(postDoc('wm', [{ type: 'DESTROY', lotId: rej.id, qty: '10' }], 'DISPOSAL')).rejects.toMatchObject({ code: 'WITNESS_REQUIRED' });
     const destroy = await disposeDoc('DESTROY', rej.id, '10');
     expect(lineView(destroy.entry!)).toEqual([['1310', '0.00', '50.00'], ['6200', '50.00', '0.00']]);
@@ -449,9 +451,8 @@ describe('M2 Done when', () => {
     }
 
     // ROUNDING_SWEEP: a reversal that empties a lot leaves -0.01; swept to 5400 in the same transaction.
-    const d = await newLot('store', { lotNo: 'DW-D', unitCost: '3.33' });
+    const d = await newLot('store', { itemId: ids.rmOk, lotNo: 'DW-D', unitCost: '3.33' });
     await postDoc('store', [{ lotId: d.id, qty: '1' }], 'GRN');
-    await setLot(d.id, 'UNDER_TEST', 'APPROVED');
     await postDoc('store', [{ type: 'ISSUE', lotId: d.id, qty: '0.5' }]); // -1.67
     const ret: StockPosting & { movements: PostedMovement[] } = await postDoc('store', [{ type: 'ISSUE_RETURN', lotId: d.id, qty: '0.5' }]); // +1.67
     await postDoc('store', [{ type: 'ISSUE', lotId: d.id, qty: '0.5' }]); // -1.67 → 0.5 / 1.66
