@@ -32,19 +32,19 @@ export interface DevSeedReport {
 
 export const demoUsername = (roleCode: string): string => `demo.${roleCode.toLowerCase()}`;
 
-/** The guard: development only, never a database whose name says production. */
-export function assertDevTarget(nodeEnv: string | undefined, databaseUrl: string): void {
+/** The guard: development only, never a database whose name says production. Also used by db:seed:demo-data. */
+export function assertDevTarget(nodeEnv: string | undefined, databaseUrl: string, command = 'db:seed:dev'): void {
   if (nodeEnv !== 'development') {
-    throw new Error(`db:seed:dev refused: NODE_ENV is "${nodeEnv ?? ''}", it must be "development"`);
+    throw new Error(`${command} refused: NODE_ENV is "${nodeEnv ?? ''}", it must be "development"`);
   }
   let dbName: string;
   try {
     dbName = decodeURIComponent(new URL(databaseUrl).pathname.replace(/^\//, ''));
   } catch {
-    throw new Error('db:seed:dev refused: DATABASE_URL is not a valid URL');
+    throw new Error(`${command} refused: DATABASE_URL is not a valid URL`);
   }
-  if (!dbName) throw new Error('db:seed:dev refused: DATABASE_URL names no database');
-  if (/prod/i.test(dbName)) throw new Error(`db:seed:dev refused: database "${dbName}" looks like production`);
+  if (!dbName) throw new Error(`${command} refused: DATABASE_URL names no database`);
+  if (/prod/i.test(dbName)) throw new Error(`${command} refused: database "${dbName}" looks like production`);
 }
 
 export async function runDevSeed(opts: DevSeedOptions): Promise<DevSeedReport> {
